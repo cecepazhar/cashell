@@ -324,6 +324,44 @@ mod tests {
         );
     }
 
+    /// Hermetic end-to-end test: build a real git repo in a temp dir,
+    /// verify the scan + git2 status pipeline works.
+    #[test]
+    fn test_scan_and_status_real_repo() {
+        let base = std::env::temp_dir().join(format!("cashell_e2e_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let repo_dir = base.join("myrepo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+
+        // Init a real git repo
+        let repo = git2::Repository::init(&repo_dir).unwrap();
+
+        // Write a file
+        std::fs::write(repo_dir.join("dirty.txt"), b"hello").unwrap();
+
+        // Verify scan finds it
+        let found = scan_repos(&base, 1, &[]);
+        assert_eq!(found.len(), 1, "scan_repos should find exactly 1 repo");
+        assert!(found[0].ends_with("myrepo"));
+
+        // Verify status has expected values
+        let st = get_repo_status(&repo_dir).unwrap();
+        assert_eq!(st.repo, "myrepo");
+        assert!(!st.clean, "repo with untracked file should not be clean");
+        assert_eq!(st.untracked, 1, "expected 1 untracked file");
+
+        // Add to index
+        let mut idx = repo.index().unwrap();
+        idx.add_path(std::path::Path::new("dirty.txt")).unwrap();
+        idx.write().unwrap();
+
+        let st2 = get_repo_status(&repo_dir).unwrap();
+        assert_eq!(st2.staged, 1, "staged file should show up");
+        assert!(!st2.clean);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn test_repo_status_empty() {
         let tmp = std::env::temp_dir().join("cashell_test_empty");
