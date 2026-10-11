@@ -63,39 +63,66 @@ pub struct ProductsConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DeployConfig {
-    pub coolify: CoolifyConfig,
-    pub apps: std::collections::HashMap<String, AppConfig>,
+    pub coolify: Option<CoolifyConfig>,
+    #[serde(default)]
+    pub apps: std::collections::HashMap<String, AppDeployConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoolifyConfig {
-    pub base_url: Option<String>,
+    #[serde(default)]
+    pub base_url: String,
     #[serde(default)]
     pub api_token: String,
-    pub timeout_seconds: Option<u64>,
+    #[serde(default = "default_coolify_timeout")]
+    pub timeout_seconds: u64,
+}
+
+fn default_coolify_timeout() -> u64 {
+    120
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AppConfig {
+pub struct AppDeployConfig {
+    #[serde(default)]
     pub uuid: String,
-    #[serde(default = "default_app_type")]
-    pub type_: String,
+    #[serde(rename = "type", default = "default_app_type")]
+    pub app_type: String,
 }
 
 fn default_app_type() -> String {
     "application".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceConfig {
     #[serde(default = "default_scan_dirs")]
     pub scan_dirs: Vec<String>,
-    #[serde(default)]
+    #[serde(default = "default_ignore_patterns")]
     pub ignore_patterns: Vec<String>,
+}
+
+impl Default for WorkspaceConfig {
+    fn default() -> Self {
+        Self {
+            scan_dirs: default_scan_dirs(),
+            ignore_patterns: default_ignore_patterns(),
+        }
+    }
 }
 
 fn default_scan_dirs() -> Vec<String> {
     vec!["~/Product".to_string(), "~/Project".to_string()]
+}
+
+fn default_ignore_patterns() -> Vec<String> {
+    vec![
+        "target".to_string(),
+        "node_modules".to_string(),
+        ".git".to_string(),
+        "_archive".to_string(),
+        "tmp".to_string(),
+    ]
 }
 
 /// AI layer config (REQ-P2-02). All fields serde-defaulted so old configs load.

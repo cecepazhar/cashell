@@ -32,7 +32,11 @@ pub enum Commands {
     /// Config file operations
     Config(ConfigCommand),
 
+    /// Git repository operations
+    Git(GitCommand),
+
     /// Show git status for all tracked repositories
+    #[command(name = "git-status")]
     GitStatus(GitStatusCommand),
 
     /// Deploy an application via Coolify
@@ -101,6 +105,18 @@ pub enum VaultMode {
 }
 
 #[derive(Parser, Debug, Clone)]
+pub struct GitCommand {
+    #[command(subcommand)]
+    pub mode: GitMode,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum GitMode {
+    /// Show status for all tracked repositories
+    Status(GitStatusCommand),
+}
+
+#[derive(Parser, Debug, Clone)]
 pub struct GitStatusCommand {
     /// Show only changed (dirty/unpushed) repos
     #[arg(long)]
@@ -110,8 +126,8 @@ pub struct GitStatusCommand {
     #[arg(long)]
     pub json: bool,
 
-    /// Maximum depth to search for git repos (0 = unlimited)
-    #[arg(long, default_value = "0")]
+    /// Maximum depth to search for git repos (default 2, 0 = unlimited)
+    #[arg(long, default_value = "2")]
     pub depth: u32,
 }
 

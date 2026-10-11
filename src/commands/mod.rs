@@ -4,6 +4,7 @@ pub mod auth;
 pub mod config;
 pub mod deploy;
 pub mod doctor;
+pub mod git;
 pub mod git_status;
 pub mod product;
 pub mod product_new;

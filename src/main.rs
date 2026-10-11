@@ -25,9 +25,13 @@ fn main() -> Result<()> {
         Commands::Product(cmd) => commands::product::run(&cmd)?,
         Commands::Version(cmd) => commands::version::run(&cmd)?,
         Commands::Config(cmd) => commands::config::run(&cmd)?,
+        Commands::Git(cmd) => {
+            let code = commands::git::run(&cmd, &cfg)?;
+            std::process::exit(code);
+        }
         Commands::GitStatus(cmd) => {
-            let exit_code = commands::git_status::run(&cmd, &cfg)?;
-            std::process::exit(exit_code);
+            let code = commands::git_status::run(&cmd, &cfg)?;
+            std::process::exit(code);
         }
         Commands::Deploy(cmd) => {
             let result = commands::deploy::run(&cmd, &cfg)?;

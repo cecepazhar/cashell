@@ -16,17 +16,17 @@ pub struct DeployResult {
     pub error: Option<String>,
 }
 
-/// Spawn an ANSI spinner on stderr; returns a handle to stop it.
+/// Spawn an ASCII spinner on stderr; returns a handle to stop it.
 fn start_spinner(message: &'static str) -> Arc<AtomicBool> {
     let done = Arc::new(AtomicBool::new(false));
     let flag = done.clone();
     std::thread::spawn(move || {
-        let frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        let frames = ['|', '/', '-', '\\'];
         let mut i = 0;
         while !flag.load(Ordering::Relaxed) {
             eprint!("\r{} {}", frames[i % frames.len()], message);
             let _ = std::io::Write::flush(&mut std::io::stderr());
-            std::thread::sleep(Duration::from_millis(100));
+            std::thread::sleep(Duration::from_millis(150));
             i += 1;
         }
         eprint!("\r\x1b[2K");
@@ -68,7 +68,6 @@ fn poll_deployment(
 
 pub fn run(cmd: &DeployCommand, cfg: &Config) -> Result<DeployResult> {
     let apps = &cfg.deploy.apps;
-    let coolify = &cfg.deploy.coolify;
 
     // Validate slug
     let app = apps
@@ -89,14 +88,19 @@ pub fn run(cmd: &DeployCommand, cfg: &Config) -> Result<DeployResult> {
         });
     }
 
-    let base_url = coolify
-        .base_url
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("Coolify base_url not configured"))?;
+    let coolify = cfg
+        .deploy
+        .coolify
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Coolify config not set ([deploy.coolify])"))?;
+    let base_url = &coolify.base_url;
+    if base_url.is_empty() {
+        anyhow::bail!("Coolify base_url not configured");
+    }
     let token = resolve_token(&coolify.api_token)?;
 
     let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(coolify.timeout_seconds.unwrap_or(60)))
+        .timeout(Duration::from_secs(coolify.timeout_seconds))
         .build()?;
 
     let start = std::time::Instant::now();
@@ -129,21 +133,28 @@ pub fn run(cmd: &DeployCommand, cfg: &Config) -> Result<DeployResult> {
 
     output::info(&format!("Deployment started: {deployment_uuid}"));
 
-    // Spinner + poll loop
+    // Spinner + poll loop (max 120 attempts @ 3s)
     let spinner = start_spinner("Deploying…");
     let mut last_status = String::new();
+    let mut app_url: Option<String> = None;
+    let mut attempts = 0u32;
     let outcome = loop {
+        if attempts >= 120 {
+            break Ok(None);
+        }
+        attempts += 1;
         match poll_deployment(&client, base_url, &token, &deployment_uuid) {
-            Ok((status, _url, _commit)) => {
+            Ok((status, url, _commit)) => {
                 if status != last_status {
                     last_status = status.clone();
                     output::info(&format!("Status: {status}"));
                 }
+                if url.is_some() {
+                    app_url = url;
+                }
                 match status.as_str() {
-                    "finished" | "running:healthy" | "success" => break Ok(true),
-                    "failed" | "error" | "cancelled" => {
-                        break Ok(false);
-                    }
+                    "finished" | "success" => break Ok(Some(true)),
+                    "failed" | "error" | "cancelled" => break Ok(Some(false)),
                     _ => std::thread::sleep(Duration::from_secs(3)),
                 }
             }
@@ -154,17 +165,28 @@ pub fn run(cmd: &DeployCommand, cfg: &Config) -> Result<DeployResult> {
 
     let duration_seconds = start.elapsed().as_secs_f64();
     match outcome {
-        Ok(true) => Ok(DeployResult {
-            success: true,
-            deployment_uuid: Some(deployment_uuid),
-            duration_seconds,
-            error: None,
-        }),
-        Ok(false) => Ok(DeployResult {
+        Ok(Some(true)) => {
+            if let Some(url) = &app_url {
+                output::info(&format!("App URL: {url}"));
+            }
+            Ok(DeployResult {
+                success: true,
+                deployment_uuid: Some(deployment_uuid),
+                duration_seconds,
+                error: None,
+            })
+        }
+        Ok(Some(false)) => Ok(DeployResult {
             success: false,
             deployment_uuid: Some(deployment_uuid),
             duration_seconds,
             error: Some(format!("Deployment failed with status: {last_status}")),
+        }),
+        Ok(None) => Ok(DeployResult {
+            success: false,
+            deployment_uuid: Some(deployment_uuid),
+            duration_seconds,
+            error: Some("Deployment timed out after 120 polls (360s)".to_string()),
         }),
         Err(e) => Err(e),
     }

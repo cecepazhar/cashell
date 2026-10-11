@@ -24,4 +24,18 @@ mod tests {
 
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    #[test]
+    fn config_defaults_check() {
+        let cfg = Config::default();
+        assert_eq!(cfg.workspace.scan_dirs, vec!["~/Product", "~/Project"]);
+        assert!(cfg
+            .workspace
+            .ignore_patterns
+            .contains(&"target".to_string()));
+        assert!(cfg
+            .workspace
+            .ignore_patterns
+            .contains(&"node_modules".to_string()));
+    }
 }
