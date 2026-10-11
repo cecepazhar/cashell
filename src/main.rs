@@ -13,11 +13,13 @@
 use anyhow::Result;
 use clap::Parser;
 
+use cashell::banner;
 use cashell::cli::{Cashell, Commands};
 use cashell::commands;
 
 fn main() -> Result<()> {
     let args = Cashell::parse();
+    banner::print();
     let cfg = commands::load_config(&args.config_file)?;
 
     match args.command {
