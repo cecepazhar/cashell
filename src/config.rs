@@ -64,8 +64,35 @@ pub struct ProductsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DeployConfig {
     pub coolify: Option<CoolifyConfig>,
-    #[serde(default)]
+    #[serde(default = "default_deploy_apps")]
     pub apps: std::collections::HashMap<String, AppDeployConfig>,
+}
+
+fn default_deploy_apps() -> std::collections::HashMap<String, AppDeployConfig> {
+    let mut m = std::collections::HashMap::new();
+    // Default CA ecosystem apps. Replace UUIDs with real Coolify instance UUIDs.
+    m.insert(
+        "caterm".to_string(),
+        AppDeployConfig {
+            uuid: "caterm-app-uuid".to_string(),
+            app_type: "application".to_string(),
+        },
+    );
+    m.insert(
+        "fathstore".to_string(),
+        AppDeployConfig {
+            uuid: "fathstore-app-uuid".to_string(),
+            app_type: "application".to_string(),
+        },
+    );
+    m.insert(
+        "gcc".to_string(),
+        AppDeployConfig {
+            uuid: "gcc-app-uuid".to_string(),
+            app_type: "application".to_string(),
+        },
+    );
+    m
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
