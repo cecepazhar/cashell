@@ -18,10 +18,10 @@ use cashell::cli::{Cashell, Commands};
 use cashell::commands;
 
 fn main() -> Result<()> {
-    let args = Cashell::parse();
+    // Brandmark before clap; no-op in pipes, safe even if parse exits early.
     banner::print();
+    let args = Cashell::parse();
     let cfg = commands::load_config(&args.config_file)?;
-
     match args.command {
         Commands::Auth(cmd) => commands::auth::run(&cmd)?,
         Commands::Product(cmd) => commands::product::run(&cmd)?,
