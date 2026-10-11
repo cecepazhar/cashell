@@ -12,6 +12,20 @@ pub enum ProductAction {
     Info { slug: String },
     /// Interactive TUI browser (ratatui)
     Browse,
+    /// Scaffold a new CA product workspace
+    New {
+        /// Product slug (lowercase, alphanumeric, hyphens)
+        slug: String,
+        /// Template kind: desktop | cli | service
+        #[arg(long, default_value = "desktop")]
+        template: String,
+        /// Custom target directory (default: ~/Product/<slug>)
+        #[arg(long)]
+        dir: Option<std::path::PathBuf>,
+        /// Force overwrite if target directory is not empty
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Parser, Debug)]
@@ -82,7 +96,28 @@ pub fn run(cmd: &ProductCommand) -> Result<()> {
         ProductAction::List => cmd_list(),
         ProductAction::Info { slug } => cmd_info(slug),
         ProductAction::Browse => tui::run_product_browser(),
+        ProductAction::New {
+            slug,
+            template,
+            dir,
+            force,
+        } => cmd_new(slug, template, dir, *force),
     }
+}
+
+fn cmd_new(
+    slug: &str,
+    template: &str,
+    dir: &Option<std::path::PathBuf>,
+    force: bool,
+) -> Result<()> {
+    let res = crate::commands::product_new::run(slug, template, dir, force, true)?;
+    if output::is_tty() {
+        crate::commands::product_new::print_summary(&res);
+    } else {
+        crate::commands::product_new::print_json(&res)?;
+    }
+    Ok(())
 }
 
 fn cmd_list() -> Result<()> {
@@ -92,10 +127,7 @@ fn cmd_list() -> Result<()> {
 
     if output::is_tty() {
         // Table mode
-        println!(
-            "\n  {:<16} {:<20} {:<12} {}",
-            "SLUG", "NAME", "STATUS", "PRICE"
-        );
+        println!("\n  {:<16} {:<20} {:<12} PRICE", "SLUG", "NAME", "STATUS");
         println!("  {}", "─".repeat(62));
         for p in items {
             println!(
