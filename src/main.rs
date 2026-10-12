@@ -18,9 +18,8 @@ use cashell::cli::{Cashell, Commands};
 use cashell::commands;
 
 fn main() -> Result<()> {
-    // Brandmark before clap; no-op in pipes, safe even if parse exits early.
-    banner::print();
     let args = Cashell::parse();
+    banner::print(args.quiet);
     let cfg = commands::load_config(&args.config_file)?;
     match args.command {
         Commands::Auth(cmd) => commands::auth::run(&cmd)?,
@@ -51,6 +50,11 @@ fn main() -> Result<()> {
             std::process::exit(code);
         }
         Commands::Ai(cmd) => cashell::ai::run(&cmd, &cfg)?,
+        Commands::Audit(cmd) => {
+            let code = commands::audit::run(&cmd, &cfg)?;
+            std::process::exit(code);
+        }
+        Commands::Review(cmd) => commands::review::run(&cmd, &cfg)?,
         Commands::R2(cmd) => {
             let code = commands::r2::run(&cmd)?;
             if code != 0 {

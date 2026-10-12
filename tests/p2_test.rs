@@ -8,7 +8,8 @@ mod tests {
     fn ai_config_defaults_present() {
         let cfg = Config::default();
         assert!(!cfg.ai.fallback_chain.is_empty());
-        assert_eq!(cfg.ai.fallback_chain[0], "omniroute");
+        assert_eq!(cfg.ai.fallback_chain[0], "9router");
+        assert!(cfg.ai.providers.contains_key("9router"));
         assert!(cfg.ai.providers.contains_key("omniroute"));
         assert!(cfg.ai.providers.contains_key("local"));
     }
@@ -18,7 +19,7 @@ mod tests {
         // A config file predating the [ai] section must still deserialize.
         let legacy = "[auth]\napi_base = \"https://api.example.com\"\n";
         let cfg: Config = toml::from_str(legacy).expect("legacy config must load");
-        assert_eq!(cfg.ai.default_provider, "omniroute");
+        assert_eq!(cfg.ai.default_provider, "9router");
     }
 
     #[test]

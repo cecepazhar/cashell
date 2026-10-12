@@ -178,7 +178,7 @@ pub struct AiProviderConfig {
 }
 
 fn default_ai_provider() -> String {
-    "omniroute".to_string()
+    "9router".to_string()
 }
 fn default_ai_timeout() -> u64 {
     30
@@ -187,12 +187,7 @@ fn default_ai_max_retries() -> u32 {
     1
 }
 fn default_fallback_chain() -> Vec<String> {
-    vec![
-        "omniroute".to_string(),
-        "openai".to_string(),
-        "anthropic".to_string(),
-        "local".to_string(),
-    ]
+    vec!["9router".to_string()]
 }
 fn default_providers() -> std::collections::HashMap<String, AiProviderConfig> {
     let mut m = std::collections::HashMap::new();
@@ -201,6 +196,10 @@ fn default_providers() -> std::collections::HashMap<String, AiProviderConfig> {
         api_key: key.to_string(),
         default_model: model.to_string(),
     };
+    m.insert(
+        "9router".to_string(),
+        mk("http://localhost:20128/v1", "", ""),
+    );
     m.insert(
         "omniroute".to_string(),
         mk(

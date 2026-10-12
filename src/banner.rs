@@ -1,30 +1,40 @@
 //! Startup banner — CA dual-wing ASCII brandmark.
 //!
-//! Mirrors the CA monoline wireframe logo: two nested chevrons
-//! flanking a centre spine. Gated on stdout being a TTY so piped
-//! output (JSON/CSV) stays pure data.
+//! Rendered in pure ASCII so it survives any terminal/locale.
+//! Gated on stdout being a TTY so piped output stays clean.
+//! Hidden when `--quiet` is set.
 
 use colored::Colorize;
 use std::io::{self, IsTerminal, Write};
 
-const LOGO: &str = "\
-   <>        <>
-  <  >  CA  <  >
-   <>        <>";
+const LOGO: &str = r"
+       /\              /\
+      /  \            /  \
+     / /\ \          / /\ \
+    / /  \ \   CA   / /  \ \
+   / /    \ \      / /    \ \
+  /_/      \_\    /_/      \_\
+";
 
-/// Print the brandmark + version line. No-op when stdout is not a TTY.
-pub fn print() {
-    if !io::stdout().is_terminal() {
+/// Print the brandmark + description + version. No-op when stdout is not a TTY
+/// or when `quiet` is true (set via `--quiet` global flag).
+pub fn print(quiet: bool) {
+    if quiet || !io::stdout().is_terminal() {
         return;
     }
     let mut out = io::stdout().lock();
     let _ = writeln!(out);
-    let _ = writeln!(out, "{}", LOGO.bright_cyan());
+    let _ = writeln!(out, "{}", LOGO.bright_cyan().bold());
+    let _ = writeln!(
+        out,
+        "{}",
+        "  Cecep Azhar · CA Ecosystem Universal Shell".bright_white()
+    );
     let _ = writeln!(
         out,
         "{}",
         format!(
-            "  cashell v{} · Cecep Saeful Azhar Hidayat, ST",
+            "  cashell v{} · Zero-knowledge, local-first sovereign CLI",
             env!("CARGO_PKG_VERSION")
         )
         .dimmed()

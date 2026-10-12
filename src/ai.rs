@@ -52,6 +52,15 @@ fn attempt_provider(
 
     let timeout = Duration::from_secs(cfg.timeout_seconds.clamp(5, 300));
     let key = resolve_secret(&p.api_key);
+
+    // 9router ships with an empty model + key on purpose: the user must set both
+    // by hand so no credential is ever baked into the defaults.
+    if name == "9router" && p.default_model.is_empty() {
+        bail!(
+            "9router model not set — run: cashell config set ai.model <model-id> \
+             (e.g. cashell config set ai.model ZA126_PRO)"
+        );
+    }
     let model = if p.default_model.is_empty() {
         "auto"
     } else {
@@ -105,7 +114,7 @@ fn attempt_provider(
         req = req.header("Authorization", format!("Bearer {key}"));
     }
     let resp = req.send()?;
-    check_status(&resp, name)?;
+    check_status(&resp, name, &key)?;
 
     if stream {
         read_sse(resp)
@@ -123,10 +132,20 @@ fn attempt_provider(
 }
 
 /// Fail fast on rate limits and server errors so the caller fails over.
-fn check_status(resp: &reqwest::blocking::Response, name: &str) -> Result<()> {
+fn check_status(resp: &reqwest::blocking::Response, name: &str, key: &str) -> Result<()> {
     let status = resp.status();
     if status.as_u16() == 429 {
         bail!("{name}: HTTP 429 rate limited");
+    }
+    if status.as_u16() == 401 || status.as_u16() == 403 {
+        if key.is_empty() {
+            bail!(
+                "{name}: HTTP {status} — API key is empty. \
+                 Set it with: cashell config set ai.api_key <key> \
+                 (use `--provider {name}` to target a non-default provider)"
+            );
+        }
+        bail!("{name}: HTTP {status} — authentication failed (401/403), check your API key");
     }
     if status.is_server_error() {
         bail!("{name}: HTTP {status}");
@@ -199,7 +218,7 @@ fn call_anthropic(
         .timeout(timeout)
         .json(&payload)
         .send()?;
-    check_status(&resp, "anthropic")?;
+    check_status(&resp, "anthropic", key)?;
     let body: serde_json::Value = resp.json()?;
     let text = body["content"][0]["text"].as_str().unwrap_or_default();
     if text.is_empty() {
@@ -223,7 +242,7 @@ fn call_ollama(
     };
     let payload = serde_json::json!({ "model": model, "prompt": prompt, "stream": false });
     let resp = client.post(&url).timeout(timeout).json(&payload).send()?;
-    check_status(&resp, "local")?;
+    check_status(&resp, "local", "")?;
     let body: serde_json::Value = resp.json()?;
     let text = body["response"].as_str().unwrap_or_default();
     if text.is_empty() {
@@ -234,10 +253,24 @@ fn call_ollama(
 
 /// Run `user_prompt` through the configured fallback chain.
 pub fn query(cfg: &Config, system_prompt: Option<&str>, user_prompt: &str) -> Result<String> {
+    query_opts(cfg, system_prompt, user_prompt, output::is_tty())
+}
+
+/// Like [`query`] but never streams to stdout — used by `audit` so raw model
+/// deltas don't interleave with the rendered report on a TTY.
+pub fn query_buffered(cfg: &Config, system_prompt: Option<&str>, user_prompt: &str) -> Result<String> {
+    query_opts(cfg, system_prompt, user_prompt, false)
+}
+
+fn query_opts(
+    cfg: &Config,
+    system_prompt: Option<&str>,
+    user_prompt: &str,
+    stream: bool,
+) -> Result<String> {
     let ai = &cfg.ai;
     let client = Client::builder().build()?;
     let start = Instant::now();
-    let stream = output::is_tty();
     let max_attempts = ai.max_retries.clamp(0, 1) + 1;
 
     for provider in &ai.fallback_chain {
@@ -325,5 +358,19 @@ mod tests {
     #[test]
     fn resolve_secret_plain_passthrough() {
         assert_eq!(resolve_secret("raw_key"), "raw_key");
+    }
+
+    #[test]
+    fn empty_9router_model_raises_actionable_error() {
+        // No network: the empty-model guard fires before any HTTP request.
+        let cfg = AiConfig::default();
+        let client = Client::builder().build().unwrap();
+        let err = attempt_provider(&client, "9router", &cfg, None, "hi", false)
+            .expect_err("empty 9router model must error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("cashell config set ai.model"),
+            "error must name the fix command, got: {msg}"
+        );
     }
 }

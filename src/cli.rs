@@ -1,6 +1,10 @@
 //! CLI argument definitions via clap derive.
 
-use crate::commands::{auth::AuthCommand, config::ConfigCommand, product::ProductCommand};
+use crate::commands::{
+    auth::AuthCommand,
+    config::ConfigCommand,
+    product::ProductCommand,
+};
 use clap::{Parser, Subcommand};
 #[derive(Parser, Debug)]
 #[command(name = "cashell")]
@@ -13,6 +17,10 @@ pub struct Cashell {
     /// Output format: text (tty) | json (pipe) | auto (detect)
     #[arg(short = 'o', long, global = true, default_value = "auto")]
     pub output_format: String,
+
+    /// Suppress the startup banner
+    #[arg(short = 'q', long, global = true)]
+    pub quiet: bool,
 
     #[command(subcommand)]
     pub command: Commands,
@@ -47,6 +55,12 @@ pub enum Commands {
 
     /// AI assistant: chat, analyze, review (REQ-P2-02)
     Ai(AiCommand),
+
+    /// AI-powered codebase auditor
+    Audit(AuditCommand),
+
+    /// Review git diff with AI
+    Review(ReviewCommand),
 
     /// Upload assets to Cloudflare R2 (REQ-P4-01)
     R2(R2Command),
@@ -180,4 +194,48 @@ pub enum AiMode {
 pub struct AiCommand {
     #[command(subcommand)]
     pub mode: AiMode,
+}
+
+#[derive(Parser, Debug, Clone)]
+pub struct AuditCommand {
+    /// Path to audit (defaults to current directory)
+    pub path: Option<String>,
+
+    /// Output in JSON format
+    #[arg(long)]
+    pub json: bool,
+
+    /// Maximum number of source files to scan (default: 40)
+    #[arg(long, default_value = "40")]
+    pub max_files: u32,
+
+    /// Write rendered report to a file
+    #[arg(long)]
+    pub out: Option<String>,
+
+    /// Include only files matching glob (optional)
+    #[arg(long)]
+    pub include: Option<String>,
+
+    /// Audit only files changed vs HEAD (git diff --name-only HEAD)
+    #[arg(long)]
+    pub changed: bool,
+
+    /// Timeout in seconds per file AI call
+    #[arg(long, default_value = "30")]
+    pub timeout: u64,
+}
+
+#[derive(Parser, Debug, Clone)]
+pub struct ReviewCommand {
+    /// Review only the currently staged diff
+    #[arg(long)]
+    pub staged: bool,
+
+    /// Review diff against this branch (default: main)
+    #[arg(long, default_value = "main")]
+    pub branch: String,
+
+    /// Optional path filter
+    pub path: Option<String>,
 }
