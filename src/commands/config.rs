@@ -70,7 +70,14 @@ fn cmd_show() -> Result<()> {
     output::kv("ai.provider", provider);
     if let Some(p) = cfg.ai.providers.get(provider.as_str()) {
         output::kv("ai.base_url", &p.base_url);
-        output::kv("ai.model", if p.default_model.is_empty() { "(unset)" } else { &p.default_model });
+        output::kv(
+            "ai.model",
+            if p.default_model.is_empty() {
+                "(unset)"
+            } else {
+                &p.default_model
+            },
+        );
         // Resolve env: indirection for display only, then mask.
         let raw_key = match p.api_key.strip_prefix("env:") {
             Some(var) => std::env::var(var).unwrap_or_default(),

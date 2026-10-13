@@ -258,8 +258,24 @@ pub fn query(cfg: &Config, system_prompt: Option<&str>, user_prompt: &str) -> Re
 
 /// Like [`query`] but never streams to stdout — used by `audit` so raw model
 /// deltas don't interleave with the rendered report on a TTY.
-pub fn query_buffered(cfg: &Config, system_prompt: Option<&str>, user_prompt: &str) -> Result<String> {
+pub fn query_buffered(
+    cfg: &Config,
+    system_prompt: Option<&str>,
+    user_prompt: &str,
+) -> Result<String> {
     query_opts(cfg, system_prompt, user_prompt, false)
+}
+
+/// Like [`query_buffered`] but reuses a caller-supplied [`Client`] instead of
+/// building one per call — a parallel caller (e.g. `audit --turbo`) shares a
+/// single connection pool across all workers.
+pub fn query_buffered_with(
+    client: &Client,
+    cfg: &Config,
+    system_prompt: Option<&str>,
+    user_prompt: &str,
+) -> Result<String> {
+    query_with_client(client, cfg, system_prompt, user_prompt, false)
 }
 
 fn query_opts(
@@ -268,8 +284,18 @@ fn query_opts(
     user_prompt: &str,
     stream: bool,
 ) -> Result<String> {
-    let ai = &cfg.ai;
     let client = Client::builder().build()?;
+    query_with_client(&client, cfg, system_prompt, user_prompt, stream)
+}
+
+fn query_with_client(
+    client: &Client,
+    cfg: &Config,
+    system_prompt: Option<&str>,
+    user_prompt: &str,
+    stream: bool,
+) -> Result<String> {
+    let ai = &cfg.ai;
     let start = Instant::now();
     let max_attempts = ai.max_retries.clamp(0, 1) + 1;
 
@@ -278,7 +304,7 @@ fn query_opts(
             if start.elapsed() >= TOTAL_BUDGET {
                 bail!("AI fallback chain exceeded the 45s wall-clock budget");
             }
-            match attempt_provider(&client, provider, ai, system_prompt, user_prompt, stream) {
+            match attempt_provider(client, provider, ai, system_prompt, user_prompt, stream) {
                 Ok(answer) => return Ok(answer),
                 Err(err) => {
                     eprintln!(

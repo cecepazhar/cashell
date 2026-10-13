@@ -1,10 +1,6 @@
 //! CLI argument definitions via clap derive.
 
-use crate::commands::{
-    auth::AuthCommand,
-    config::ConfigCommand,
-    product::ProductCommand,
-};
+use crate::commands::{auth::AuthCommand, config::ConfigCommand, product::ProductCommand};
 use clap::{Parser, Subcommand};
 #[derive(Parser, Debug)]
 #[command(name = "cashell")]
@@ -224,6 +220,15 @@ pub struct AuditCommand {
     /// Timeout in seconds per file AI call
     #[arg(long, default_value = "30")]
     pub timeout: u64,
+
+    /// Fan the file scan out across all available CPU workers (rayon)
+    #[arg(long)]
+    pub turbo: bool,
+
+    /// Cap the number of parallel workers (implies --turbo; defaults to all
+    /// available CPUs)
+    #[arg(long)]
+    pub jobs: Option<usize>,
 }
 
 #[derive(Parser, Debug, Clone)]
