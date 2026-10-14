@@ -4,6 +4,7 @@ pub mod audit;
 pub mod auth;
 pub mod config;
 pub mod deploy;
+pub mod chat;
 pub mod doctor;
 pub mod git;
 pub mod git_status;

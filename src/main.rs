@@ -68,6 +68,7 @@ fn main() -> Result<()> {
             }
         }
         Commands::Server(cmd) => commands::server::run(&cmd, &cfg)?,
+        Commands::Chat(cmd) => commands::chat::run(&cmd, &cfg)?,
     }
     Ok(())
 }

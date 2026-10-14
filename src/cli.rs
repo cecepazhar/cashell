@@ -1,6 +1,6 @@
 //! CLI argument definitions via clap derive.
 
-use crate::commands::{auth::AuthCommand, config::ConfigCommand, product::ProductCommand, server::ServerCommand};
+use crate::commands::{auth::AuthCommand, chat::ChatCommand, config::ConfigCommand, product::ProductCommand, server::ServerCommand};
 use clap::{Parser, Subcommand};
 #[derive(Parser, Debug)]
 #[command(name = "cashell")]
@@ -63,6 +63,9 @@ pub enum Commands {
 
     /// Sync or query the markdown knowledge base (REQ-P4-02)
     Vault(VaultCommand),
+
+    /// Interactive AI Chat TUI (dual panel with mouse support)
+    Chat(ChatCommand),
 
     /// Server management: stats, db, firewall, docker, ai
     Server(ServerCommand),
