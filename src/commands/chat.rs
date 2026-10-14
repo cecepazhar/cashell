@@ -35,22 +35,26 @@ pub struct ChatApp {
     input: String,
     is_processing: bool,
     chat_state: ListState,
+    stat_line: String,
 }
 
 impl ChatApp {
     fn new() -> Self {
         let mut chat_state = ListState::default();
         chat_state.select(Some(0));
+        let snap = crate::systat::snapshot();
+        let stat_line = crate::systat::status_bar_text(&snap);
         Self {
             focus: Focus::Input,
             chat_lines: vec![
                 "=== Hana AI Chat (localhost:20128) ===".to_string(),
-                "Tab: Switch Focus | Mouse Wheel: Scroll Chat | Esc: Quit".to_string(),
+                "Tab: Switch Focus | Mouse Wheel: Scroll | Esc: Quit".to_string(),
                 "Type your prompt in the left terminal pane and press Enter.".to_string(),
             ],
             input: String::new(),
             is_processing: false,
             chat_state,
+            stat_line,
         }
     }
 
@@ -78,6 +82,11 @@ impl ChatApp {
             _ => len.saturating_sub(1),
         };
         self.chat_state.select(Some(i));
+    }
+
+    fn refresh_stats(&mut self) {
+        let snap = crate::systat::snapshot();
+        self.stat_line = crate::systat::status_bar_text(&snap);
     }
 }
 
@@ -107,7 +116,14 @@ fn event_loop<B: ratatui::backend::Backend>(
     app: &mut ChatApp,
     cfg: &Config,
 ) -> Result<()> {
+    let mut last_stats_update = std::time::Instant::now();
     loop {
+        // Refresh system stats every 2s
+        if last_stats_update.elapsed() >= std::time::Duration::from_secs(2) {
+            app.refresh_stats();
+            last_stats_update = std::time::Instant::now();
+        }
+
         terminal.draw(|f| draw(f, app))?;
 
         let event = event::read()?;
@@ -198,11 +214,20 @@ fn event_loop<B: ratatui::backend::Backend>(
 fn draw(f: &mut Frame, app: &ChatApp) {
     let size = f.area();
 
+    // Vertical layout: Main area (split left/right) + Bottom Telemetry Taskbar
+    let vert_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(5), Constraint::Length(3)])
+        .split(size);
+
+    let main_chunk = vert_chunks[0];
+    let status_chunk = vert_chunks[1];
+
     // Split layout: 2 columns (Terminal / Input on Left, AI Chat on Right)
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-        .split(size);
+        .split(main_chunk);
 
     let input_chunk = chunks[0];
     let chat_chunk = chunks[1];
@@ -286,4 +311,18 @@ fn draw(f: &mut Frame, app: &ChatApp) {
         .highlight_symbol("▶ ");
 
     f.render_stateful_widget(chat_list, chat_inner, &mut app.chat_state.clone());
+
+    // Bottom Taskbar: Telemetry Widget
+    let status_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" System Telemetry (Auto-refresh 2s) ")
+        .border_style(Style::default().fg(Color::Green));
+    let status_inner = status_block.inner(status_chunk);
+    f.render_widget(status_block, status_chunk);
+
+    let status_para = Paragraph::new(Line::from(Span::styled(
+        &app.stat_line,
+        Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD),
+    )));
+    f.render_widget(status_para, status_inner);
 }

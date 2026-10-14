@@ -7,4 +7,5 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod output;
+pub mod systat;
 pub mod tui;
