@@ -11,6 +11,7 @@ pub mod product;
 pub mod product_new;
 pub mod r2;
 pub mod review;
+pub mod server;
 pub mod vault;
 pub mod version;
 

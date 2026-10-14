@@ -67,6 +67,7 @@ fn main() -> Result<()> {
                 std::process::exit(code);
             }
         }
+        Commands::Server(cmd) => commands::server::run(&cmd, &cfg)?,
     }
     Ok(())
 }
