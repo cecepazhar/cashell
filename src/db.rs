@@ -220,6 +220,11 @@ pub fn load_recent_chat(limit: usize) -> Result<Vec<(String, String)>> {
     Database::open()?.load_recent_chat(limit)
 }
 
+/// Open default database.
+pub fn get_db() -> Result<Database> {
+    Database::open()
+}
+
 /// Log a system event to default database.
 pub fn log_event(level: &str, source: &str, msg: &str) -> Result<()> {
     Database::open()?.log_event(level, source, msg)

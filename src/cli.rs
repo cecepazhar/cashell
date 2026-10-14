@@ -2,11 +2,11 @@
 
 use crate::commands::{
     auth::AuthCommand, chat::ChatCommand, cockpit::CockpitCommand, config::ConfigCommand,
-    product::ProductCommand, server::ServerCommand,
+    daemon::DaemonCommand, product::ProductCommand, server::ServerCommand,
 };
 use clap::{Parser, Subcommand};
 #[derive(Parser, Debug)]
-#[command(name = "cashell")]
+#[command(name = "cashell", version)]
 #[command(about = "CA ecosystem CLI — universal shell for CATerm & tools", long_about = None)]
 pub struct Cashell {
     /// Path to config file (default: ~/.config/cashell/config.toml)
@@ -78,6 +78,9 @@ pub enum Commands {
 
     /// Personal Cloud Cockpit TUI (btop + Dokploy + Settings + Hana AI)
     Cockpit(CockpitCommand),
+
+    /// 24/7 fleet & health monitoring daemon & HTTP API
+    Daemon(DaemonCommand),
 }
 
 #[derive(Parser, Debug, Clone)]

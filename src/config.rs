@@ -49,6 +49,152 @@ pub struct Config {
     pub persona: PersonaConfig,
     #[serde(default)]
     pub database: DatabaseConfig,
+    #[serde(default)]
+    pub daemon: DaemonConfig,
+}
+
+/// Daemon & multi-node orchestration configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaemonConfig {
+    #[serde(default = "default_daemon_port")]
+    pub port: u16,
+    #[serde(default = "default_daemon_token")]
+    pub token: String,
+    #[serde(default = "default_daemon_interval")]
+    pub interval_secs: u64,
+    #[serde(default = "default_daemon_retry_threshold")]
+    pub retry_threshold: u32,
+    #[serde(default = "default_ssh_key_path")]
+    pub ssh_key_path: String,
+    #[serde(default)]
+    pub telegram_bot_token: String,
+    #[serde(default)]
+    pub telegram_chat_id: String,
+    #[serde(default = "default_nodes")]
+    pub nodes: std::collections::HashMap<String, NodeConfig>,
+    #[serde(default = "default_remediation")]
+    pub remediation: std::collections::HashMap<String, String>,
+}
+
+impl Default for DaemonConfig {
+    fn default() -> Self {
+        Self {
+            port: default_daemon_port(),
+            token: default_daemon_token(),
+            interval_secs: default_daemon_interval(),
+            retry_threshold: default_daemon_retry_threshold(),
+            ssh_key_path: default_ssh_key_path(),
+            telegram_bot_token: String::new(),
+            telegram_chat_id: String::new(),
+            nodes: default_nodes(),
+            remediation: default_remediation(),
+        }
+    }
+}
+
+/// Remote node configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeConfig {
+    pub ip: String,
+    pub user: String,
+    #[serde(default)]
+    pub services: Vec<ServiceConfig>,
+}
+
+/// Service configuration on a node.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceConfig {
+    pub name: String,
+    pub port: u16,
+    #[serde(default = "default_protocol")]
+    pub protocol: String,
+}
+
+fn default_daemon_port() -> u16 {
+    8090
+}
+
+fn default_daemon_token() -> String {
+    String::new()
+}
+
+fn default_daemon_interval() -> u64 {
+    60
+}
+
+fn default_daemon_retry_threshold() -> u32 {
+    3
+}
+
+fn default_ssh_key_path() -> String {
+    "~/.ssh/id_ed25519".to_string()
+}
+
+fn default_protocol() -> String {
+    "tcp".to_string()
+}
+
+fn default_nodes() -> std::collections::HashMap<String, NodeConfig> {
+    let mut m = std::collections::HashMap::new();
+    m.insert(
+        "ypc".to_string(),
+        NodeConfig {
+            ip: "100.127.232.32".to_string(),
+            user: "cecep".to_string(),
+            services: vec![
+                ServiceConfig {
+                    name: "gitea".to_string(),
+                    port: 3000,
+                    protocol: "http".to_string(),
+                },
+                ServiceConfig {
+                    name: "nextcloud".to_string(),
+                    port: 443,
+                    protocol: "https".to_string(),
+                },
+                ServiceConfig {
+                    name: "tailscaled".to_string(),
+                    port: 22,
+                    protocol: "tcp".to_string(),
+                },
+            ],
+        },
+    );
+    m.insert(
+        "hostinger".to_string(),
+        NodeConfig {
+            ip: "100.76.150.46".to_string(),
+            user: "root".to_string(),
+            services: vec![ServiceConfig {
+                name: "tailscale-funnel".to_string(),
+                port: 8443,
+                protocol: "https".to_string(),
+            }],
+        },
+    );
+    m.insert(
+        "local".to_string(),
+        NodeConfig {
+            ip: "127.0.0.1".to_string(),
+            user: "cecepazhar".to_string(),
+            services: vec![ServiceConfig {
+                name: "9router".to_string(),
+                port: 20128,
+                protocol: "http".to_string(),
+            }],
+        },
+    );
+    m
+}
+
+fn default_remediation() -> std::collections::HashMap<String, String> {
+    let mut m = std::collections::HashMap::new();
+    m.insert("ypc.gitea".to_string(), "podman restart gitea".to_string());
+    m.insert(
+        "hostinger.tailscale-funnel".to_string(),
+        "systemctl restart cloudflared".to_string(),
+    );
+    m
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

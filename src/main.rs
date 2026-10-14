@@ -115,6 +115,9 @@ fn main() -> Result<()> {
         Some(Commands::Chat(cmd)) => {
             commands::chat::run(&cmd, &cfg)?;
         }
+        Some(Commands::Daemon(cmd)) => {
+            commands::daemon::run(&cmd, &cfg)?;
+        }
     }
     Ok(())
 }

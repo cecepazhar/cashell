@@ -5,6 +5,7 @@ pub mod auth;
 pub mod chat;
 pub mod cockpit;
 pub mod config;
+pub mod daemon;
 pub mod deploy;
 pub mod doctor;
 pub mod fix;
