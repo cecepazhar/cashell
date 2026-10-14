@@ -110,7 +110,7 @@ fn run_stats() -> Result<()> {
     // RAM
     let ram_used = sys.used_memory();   // bytes
     let ram_total = sys.total_memory();
-    let ram_pct = if ram_total > 0 { ram_used * 100 / ram_total } else { 0 };
+    let ram_pct = (ram_used * 100).checked_div(ram_total).unwrap_or(0);
 
     // Disk
     use sysinfo::Disks;
@@ -121,7 +121,7 @@ fn run_stats() -> Result<()> {
             t + d.total_space(),
         )
     });
-    let disk_pct = if disk_total > 0 { disk_used * 100 / disk_total } else { 0 };
+    let disk_pct = (disk_used * 100).checked_div(disk_total).unwrap_or(0);
 
     // Network
     use sysinfo::Networks;

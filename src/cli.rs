@@ -1,6 +1,9 @@
 //! CLI argument definitions via clap derive.
 
-use crate::commands::{auth::AuthCommand, chat::ChatCommand, config::ConfigCommand, product::ProductCommand, server::ServerCommand};
+use crate::commands::{
+    auth::AuthCommand, chat::ChatCommand, cockpit::CockpitCommand, config::ConfigCommand,
+    product::ProductCommand, server::ServerCommand,
+};
 use clap::{Parser, Subcommand};
 #[derive(Parser, Debug)]
 #[command(name = "cashell")]
@@ -19,7 +22,7 @@ pub struct Cashell {
     pub quiet: bool,
 
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -55,6 +58,9 @@ pub enum Commands {
     /// AI-powered codebase auditor
     Audit(AuditCommand),
 
+    /// Apply AI fixes for audit findings
+    Fix(FixCommand),
+
     /// Review git diff with AI
     Review(ReviewCommand),
 
@@ -69,6 +75,9 @@ pub enum Commands {
 
     /// Server management: stats, db, firewall, docker, ai
     Server(ServerCommand),
+
+    /// Personal Cloud Cockpit TUI (btop + Dokploy + Settings + Hana AI)
+    Cockpit(CockpitCommand),
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -249,4 +258,35 @@ pub struct ReviewCommand {
 
     /// Optional path filter
     pub path: Option<String>,
+}
+
+#[derive(Parser, Debug, Clone)]
+pub struct FixCommand {
+    /// Path to the audit report (`audit/Audit_YYYY-MM-DD.md`). If omitted,
+    /// the latest `.md` in the `audit/` directory is used.
+    pub report_path: Option<String>,
+
+    /// Explicit path to the audit report (alias for the positional arg).
+    #[arg(long)]
+    pub from: Option<String>,
+
+    /// Machine-readable JSON output (no TUI)
+    #[arg(long)]
+    pub json: bool,
+
+    /// Show diffs without writing any changes
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Auto-accept all prompts (CI mode, skips interactive)
+    #[arg(long)]
+    pub yes: bool,
+
+    /// Comma-separated file slugs to fix (filters which files are touched).
+    #[arg(long)]
+    pub files: Option<String>,
+
+    /// Timeout in seconds for the per-file AI call
+    #[arg(long)]
+    pub timeout: Option<u64>,
 }

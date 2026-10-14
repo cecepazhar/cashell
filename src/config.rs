@@ -45,6 +45,10 @@ pub struct Config {
     pub ai: AiConfig,
     #[serde(default)]
     pub doctor: DoctorConfig,
+    #[serde(default)]
+    pub persona: PersonaConfig,
+    #[serde(default)]
+    pub database: DatabaseConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -53,9 +57,30 @@ pub struct AuthConfig {
     pub api_base: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub const PRESET_THEMES: &[&str] = &[
+    "ca-classic",
+    "tokyo-night",
+    "monokai",
+    "nord",
+    "high-contrast",
+];
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutputConfig {
+    #[serde(default = "default_theme")]
     pub theme: String,
+}
+
+impl Default for OutputConfig {
+    fn default() -> Self {
+        Self {
+            theme: default_theme(),
+        }
+    }
+}
+
+fn default_theme() -> String {
+    "ca-classic".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -296,6 +321,58 @@ fn default_toolchain() -> Vec<String> {
         "templ".to_string(),
         "pnpm".to_string(),
     ]
+}
+
+/// AI assistant persona and user identity configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonaConfig {
+    #[serde(default = "default_user_name")]
+    pub user_name: String,
+    #[serde(default = "default_assistant_role")]
+    pub assistant_role: String,
+}
+
+impl Default for PersonaConfig {
+    fn default() -> Self {
+        Self {
+            user_name: default_user_name(),
+            assistant_role: default_assistant_role(),
+        }
+    }
+}
+
+fn default_user_name() -> String {
+    "Prof. Cecep".to_string()
+}
+
+fn default_assistant_role() -> String {
+    "Kamu adalah Hana AI / Chief Operations Assistant Fathforce & CAShell. Terse, cekatan, dan patuh pada instruksi Prof. Cecep.".to_string()
+}
+
+/// SQLite database persistence & retention policy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatabaseConfig {
+    #[serde(default = "default_retention_days")]
+    pub retention_days: u32,
+    #[serde(default = "default_auto_prune")]
+    pub auto_prune: bool,
+}
+
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            retention_days: default_retention_days(),
+            auto_prune: default_auto_prune(),
+        }
+    }
+}
+
+fn default_retention_days() -> u32 {
+    7
+}
+
+fn default_auto_prune() -> bool {
+    true
 }
 
 impl Config {

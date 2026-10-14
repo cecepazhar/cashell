@@ -19,22 +19,48 @@ use cashell::commands;
 
 fn main() -> Result<()> {
     let args = Cashell::parse();
-    banner::print(args.quiet);
     let cfg = commands::load_config(&args.config_file)?;
     match args.command {
-        Commands::Auth(cmd) => commands::auth::run(&cmd)?,
-        Commands::Product(cmd) => commands::product::run(&cmd)?,
-        Commands::Version(cmd) => commands::version::run(&cmd)?,
-        Commands::Config(cmd) => commands::config::run(&cmd)?,
-        Commands::Git(cmd) => {
+        None => {
+            if cashell::output::is_tty() {
+                commands::cockpit::run(&commands::cockpit::CockpitCommand, &cfg)?;
+            } else {
+                banner::print(args.quiet);
+                println!("cashell v{} — CA ecosystem CLI", env!("CARGO_PKG_VERSION"));
+                println!("Run 'cashell --help' for usage or run in an interactive terminal for CAS Cockpit.");
+            }
+        }
+        Some(Commands::Cockpit(cmd)) => {
+            commands::cockpit::run(&cmd, &cfg)?;
+        }
+        Some(Commands::Auth(cmd)) => {
+            banner::print(args.quiet);
+            commands::auth::run(&cmd)?;
+        }
+        Some(Commands::Product(cmd)) => {
+            banner::print(args.quiet);
+            commands::product::run(&cmd)?;
+        }
+        Some(Commands::Version(cmd)) => {
+            banner::print(args.quiet);
+            commands::version::run(&cmd)?;
+        }
+        Some(Commands::Config(cmd)) => {
+            banner::print(args.quiet);
+            commands::config::run(&cmd)?;
+        }
+        Some(Commands::Git(cmd)) => {
+            banner::print(args.quiet);
             let code = commands::git::run(&cmd, &cfg)?;
             std::process::exit(code);
         }
-        Commands::GitStatus(cmd) => {
+        Some(Commands::GitStatus(cmd)) => {
+            banner::print(args.quiet);
             let code = commands::git_status::run(&cmd, &cfg)?;
             std::process::exit(code);
         }
-        Commands::Deploy(cmd) => {
+        Some(Commands::Deploy(cmd)) => {
+            banner::print(args.quiet);
             let result = commands::deploy::run(&cmd, &cfg)?;
             if !result.success {
                 eprintln!("✗ Deployment failed: {}", result.error.unwrap_or_default());
@@ -45,34 +71,50 @@ fn main() -> Result<()> {
                 result.duration_seconds
             ));
         }
-        Commands::Doctor(cmd) => {
+        Some(Commands::Doctor(cmd)) => {
+            banner::print(args.quiet);
             let code = commands::doctor::run(&cmd, &cfg)?;
             std::process::exit(code);
         }
-        Commands::Ai(cmd) => cashell::ai::run(&cmd, &cfg)?,
-        Commands::Audit(cmd) => {
+        Some(Commands::Ai(cmd)) => {
+            banner::print(args.quiet);
+            cashell::ai::run(&cmd, &cfg)?;
+        }
+        Some(Commands::Audit(cmd)) => {
+            banner::print(args.quiet);
             let code = commands::audit::run(&cmd, &cfg, args.quiet)?;
             std::process::exit(code);
         }
-        Commands::Fix(cmd) => {
+        Some(Commands::Fix(cmd)) => {
+            banner::print(args.quiet);
             let code = commands::fix::run(&cmd, &cfg)?;
             std::process::exit(code);
         }
-        Commands::Review(cmd) => commands::review::run(&cmd, &cfg)?,
-        Commands::R2(cmd) => {
+        Some(Commands::Review(cmd)) => {
+            banner::print(args.quiet);
+            commands::review::run(&cmd, &cfg)?;
+        }
+        Some(Commands::R2(cmd)) => {
+            banner::print(args.quiet);
             let code = commands::r2::run(&cmd)?;
             if code != 0 {
                 std::process::exit(code);
             }
         }
-        Commands::Vault(cmd) => {
+        Some(Commands::Vault(cmd)) => {
+            banner::print(args.quiet);
             let code = commands::vault::run(&cmd)?;
             if code != 0 {
                 std::process::exit(code);
             }
         }
-        Commands::Server(cmd) => commands::server::run(&cmd, &cfg)?,
-        Commands::Chat(cmd) => commands::chat::run(&cmd, &cfg)?,
+        Some(Commands::Server(cmd)) => {
+            banner::print(args.quiet);
+            commands::server::run(&cmd, &cfg)?;
+        }
+        Some(Commands::Chat(cmd)) => {
+            commands::chat::run(&cmd, &cfg)?;
+        }
     }
     Ok(())
 }

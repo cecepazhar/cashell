@@ -35,6 +35,7 @@ hmac = "0.12"
 ratatui = { version = "0.29.0", features = ["crossterm"] }
 crossterm = "0.28"
 sysinfo = "0.31"
+rusqlite = { version = "0.31", features = ["bundled"] }
 
 [profile.release]
 opt-level = 3
