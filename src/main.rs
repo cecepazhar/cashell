@@ -46,12 +46,16 @@ fn main() -> Result<()> {
             ));
         }
         Commands::Doctor(cmd) => {
-            let code = commands::doctor::run(&cmd)?;
+            let code = commands::doctor::run(&cmd, &cfg)?;
             std::process::exit(code);
         }
         Commands::Ai(cmd) => cashell::ai::run(&cmd, &cfg)?,
         Commands::Audit(cmd) => {
             let code = commands::audit::run(&cmd, &cfg, args.quiet)?;
+            std::process::exit(code);
+        }
+        Commands::Fix(cmd) => {
+            let code = commands::fix::run(&cmd, &cfg)?;
             std::process::exit(code);
         }
         Commands::Review(cmd) => commands::review::run(&cmd, &cfg)?,

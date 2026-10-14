@@ -43,6 +43,8 @@ pub struct Config {
     pub workspace: WorkspaceConfig,
     #[serde(default)]
     pub ai: AiConfig,
+    #[serde(default)]
+    pub doctor: DoctorConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -237,6 +239,63 @@ impl Default for AiConfig {
             providers: default_providers(),
         }
     }
+}
+
+/// Diagnostics configuration for `cashell doctor` (REQ-P2-01).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorConfig {
+    #[serde(default = "default_doctor_target")]
+    pub target_addr: String,
+    #[serde(default = "default_doctor_target_port")]
+    pub target_port: u16,
+    #[serde(default = "default_doctor_ports")]
+    pub ports: Vec<u16>,
+    #[serde(default = "default_storage_mounts")]
+    pub storage_mounts: Vec<String>,
+    #[serde(default = "default_toolchain")]
+    pub toolchain: Vec<String>,
+}
+
+impl Default for DoctorConfig {
+    fn default() -> Self {
+        Self {
+            target_addr: default_doctor_target(),
+            target_port: default_doctor_target_port(),
+            ports: default_doctor_ports(),
+            storage_mounts: default_storage_mounts(),
+            toolchain: default_toolchain(),
+        }
+    }
+}
+
+fn default_doctor_target() -> String {
+    "100.76.150.46".to_string()
+}
+
+fn default_doctor_target_port() -> u16 {
+    443
+}
+
+fn default_doctor_ports() -> Vec<u16> {
+    vec![8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088]
+}
+
+fn default_storage_mounts() -> Vec<String> {
+    if std::path::Path::new("/run/media/cecepazhar/DATA").exists() {
+        vec!["/".to_string(), "/run/media/cecepazhar/DATA".to_string()]
+    } else {
+        vec!["/".to_string()]
+    }
+}
+
+fn default_toolchain() -> Vec<String> {
+    vec![
+        "cargo".to_string(),
+        "rustc".to_string(),
+        "go".to_string(),
+        "templ".to_string(),
+        "pnpm".to_string(),
+    ]
 }
 
 impl Config {

@@ -2,8 +2,12 @@
 //!
 //! Checks Tailscale mesh reachability, the local port matrix, storage health,
 //! and the developer toolchain. Never panics; absence is reported as Warn.
+//! All targets, ports, mounts and tools are driven by the `[doctor]` config
+//! section (with sensible built-in defaults) so users can repoint the checks
+//! at their own infrastructure without recompiling.
 
 use crate::cli::DoctorCommand;
+use crate::config::Config;
 use crate::output;
 use anyhow::Result;
 use colored::Colorize;
@@ -11,9 +15,6 @@ use serde::Serialize;
 use std::net::{SocketAddr, TcpStream};
 use std::process::Command;
 use std::time::{Duration, Instant};
-
-const VPS_ADDR: &str = "100.76.150.46";
-const PORTS: [u16; 8] = [8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "level", content = "detail", rename_all = "lowercase")]
@@ -101,7 +102,7 @@ fn probe(addr: SocketAddr, timeout: Duration) -> Option<Duration> {
     Some(start.elapsed())
 }
 
-fn check_tailscale() -> CheckResult {
+fn check_tailscale(target_addr: &str, target_port: u16) -> CheckResult {
     let has_socket = std::path::Path::new("/var/run/tailscale/tailscaled.sock").exists();
     let status_ok = Command::new("tailscale")
         .args(["status", "--json"])
@@ -118,25 +119,33 @@ fn check_tailscale() -> CheckResult {
         return CheckResult::warn("Tailscale", detail);
     }
 
-    // Mesh reachable: measure latency to the VPS.
-    let addr: SocketAddr = match format!("{VPS_ADDR}:443").parse() {
+    if target_addr.is_empty() {
+        return CheckResult::ok("Tailscale daemon up (no target configured)");
+    }
+
+    // Mesh reachable: measure latency to the target.
+    let addr: SocketAddr = match format!("{target_addr}:{target_port}").parse() {
         Ok(a) => a,
-        Err(_) => return CheckResult::warn("Tailscale", "invalid VPS address"),
+        Err(_) => return CheckResult::warn("Tailscale", format!("invalid target address: {target_addr}:{target_port}")),
     };
     match probe(addr, Duration::from_millis(500)) {
         Some(rtt) => CheckResult::ok(&format!(
-            "Tailscale — VPS {VPS_ADDR} reachable in {}ms",
+            "Tailscale — target {target_addr} reachable in {}ms",
             rtt.as_millis()
         )),
         None => CheckResult::warn(
             "Tailscale",
-            format!("daemon up but VPS {VPS_ADDR} unreachable (500ms timeout)"),
+            format!("daemon up but target {target_addr}:{target_port} unreachable (500ms timeout)"),
         ),
     }
 }
 
-fn check_ports() -> CheckResult {
-    let open: Vec<u16> = PORTS
+fn check_ports(ports: &[u16]) -> CheckResult {
+    if ports.is_empty() {
+        return CheckResult::ok("Ports — none configured");
+    }
+
+    let open: Vec<u16> = ports
         .iter()
         .copied()
         .filter(|&p| {
@@ -148,15 +157,21 @@ fn check_ports() -> CheckResult {
         })
         .collect();
 
+    let range_desc = if ports.len() > 1 {
+        format!("{}-{}", ports.first().unwrap(), ports.last().unwrap())
+    } else {
+        ports[0].to_string()
+    };
+
     if open.is_empty() {
-        CheckResult::warn("Ports 8081-8088", "no local listeners detected")
+        CheckResult::warn(&format!("Ports {range_desc}"), "no local listeners detected")
     } else {
         let list = open
             .iter()
             .map(u16::to_string)
             .collect::<Vec<_>>()
             .join(",");
-        CheckResult::ok(&format!("Ports 8081-8088 — listening: {list}"))
+        CheckResult::ok(&format!("Ports {range_desc} — listening: {list}"))
     }
 }
 
@@ -170,13 +185,16 @@ fn df_percent(path: &str, inodes: bool) -> Option<f64> {
     }
     let text = String::from_utf8_lossy(&out.stdout);
     let line = text.lines().nth(1)?; // skip header
-    let pct = line.split_whitespace().find(|f| f.ends_with('%'))?;
-    pct.trim_end_matches('%').parse().ok()
+    let token = line.split_whitespace().find(|f| f.ends_with('%') || *f == "-")?;
+    if token == "-" {
+        return None;
+    }
+    token.trim_end_matches('%').parse().ok()
 }
 
-fn check_storage() -> Vec<CheckResult> {
+fn check_storage(mounts: &[String]) -> Vec<CheckResult> {
     let mut results = Vec::new();
-    for mount in ["/", "/run/media/cecepazhar/DATA"] {
+    for mount in mounts {
         let blocks = df_percent(mount, false);
         let inodes = df_percent(mount, true);
         match (blocks, inodes) {
@@ -197,6 +215,23 @@ fn check_storage() -> Vec<CheckResult> {
                     )));
                 }
             }
+            (Some(b), None) => {
+                if mount == "/" && b > 95.0 {
+                    results.push(CheckResult::fail(
+                        &format!("Storage {mount}"),
+                        format!("{b:.0}% blocks used — critical"),
+                    ));
+                } else if b > 85.0 {
+                    results.push(CheckResult::warn(
+                        &format!("Storage {mount}"),
+                        format!("{b:.0}% blocks — above 85%"),
+                    ));
+                } else {
+                    results.push(CheckResult::ok(&format!(
+                        "Storage {mount} — {b:.0}% blocks"
+                    )));
+                }
+            }
             _ => results.push(CheckResult::warn(
                 &format!("Storage {mount}"),
                 "unable to read filesystem capacity",
@@ -206,8 +241,8 @@ fn check_storage() -> Vec<CheckResult> {
     results
 }
 
-fn check_toolchain() -> Vec<CheckResult> {
-    ["cargo", "rustc", "go", "templ", "pnpm"]
+fn check_toolchain(tools: &[String]) -> Vec<CheckResult> {
+    tools
         .iter()
         .map(|tool| {
             let out = Command::new(tool).arg("--version").output();
@@ -251,10 +286,13 @@ fn print_table(report: &DoctorReport) {
     );
 }
 
-pub fn run(cmd: &DoctorCommand) -> Result<i32> {
-    let mut checks = vec![check_tailscale(), check_ports()];
-    checks.extend(check_storage());
-    checks.extend(check_toolchain());
+pub fn run(cmd: &DoctorCommand, cfg: &Config) -> Result<i32> {
+    let mut checks = vec![
+        check_tailscale(&cfg.doctor.target_addr, cfg.doctor.target_port),
+        check_ports(&cfg.doctor.ports),
+    ];
+    checks.extend(check_storage(&cfg.doctor.storage_mounts));
+    checks.extend(check_toolchain(&cfg.doctor.toolchain));
 
     let report = DoctorReport::from_checks(checks);
     let is_json = cmd.json || !output::is_tty();
@@ -303,7 +341,7 @@ mod tests {
 
     #[test]
     fn storage_checks_do_not_panic() {
-        let results = check_storage();
-        assert_eq!(results.len(), 2);
+        let results = check_storage(&["/".to_string()]);
+        assert_eq!(results.len(), 1);
     }
 }
