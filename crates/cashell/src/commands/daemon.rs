@@ -289,7 +289,38 @@ pub fn build_router(token: String) -> Router {
         .route("/api/stats", get(stats_handler))
         .route("/api/containers", get(containers_handler))
         .route("/api/action", post(action_handler))
+        .route("/api/node/heartbeat", post(node_heartbeat_handler))
         .with_state(state)
+}
+
+async fn node_heartbeat_handler(
+    Json(hb): Json<cashell_common::Heartbeat>,
+) -> impl IntoResponse {
+    let services_json = serde_json::to_string(&hb.services).unwrap_or_else(|_| "[]".to_string());
+    let db_hb = crate::db::NodeHeartbeat {
+        node_id: hb.node_id.clone(),
+        cpu_percent: hb.cpu_pct,
+        ram_used_mb: hb.ram_used_mb as i64,
+        ram_total_mb: hb.ram_total_mb as i64,
+        disk_used_gb: hb.disk_used_gb as i64,
+        disk_total_gb: hb.disk_total_gb as i64,
+        services_json,
+        uptime_secs: hb.uptime_secs as i64,
+        version: hb.version,
+        received_at: chrono::Local::now().to_rfc3339(),
+        display_name: None,
+        ip: None,
+        signature: None,
+    };
+
+    if let Ok(db) = crate::db::get_db() {
+        let _ = db.store_heartbeat(&db_hb);
+    }
+
+    (StatusCode::OK, Json(serde_json::json!({
+        "status": "received",
+        "node_id": hb.node_id,
+    })))
 }
 
 // ── Service Probing & Multi-Node Logic ───────────────────────────────────────

@@ -1,0 +1,11 @@
+[package]
+name = "cashell-common"
+version = "0.3.0"
+edition = "2021"
+description = "Shared types for the CA ecosystem"
+authors = ["Cecep Saeful Azhar Hidayat, ST"]
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }

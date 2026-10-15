@@ -185,8 +185,9 @@ pub enum CockpitTab {
     Overview = 0,
     Services = 1,
     Audit = 2,
-    Settings = 3,
-    Chat = 4,
+    Cron = 3,
+    Settings = 4,
+    Chat = 5,
 }
 
 impl CockpitTab {
@@ -195,8 +196,9 @@ impl CockpitTab {
             0 => Self::Overview,
             1 => Self::Services,
             2 => Self::Audit,
-            3 => Self::Settings,
-            4 => Self::Chat,
+            3 => Self::Cron,
+            4 => Self::Settings,
+            5 => Self::Chat,
             _ => Self::Overview,
         }
     }
@@ -205,13 +207,14 @@ impl CockpitTab {
         self as usize
     }
 
-    pub fn titles() -> [&'static str; 5] {
+    pub fn titles() -> [&'static str; 6] {
         [
             "[1] Overview",
-            "[2] Services / Apps",
+            "[2] Fleet & Servers",
             "[3] Audit & Code",
-            "[4] Settings GUI",
-            "[5] AI Chat",
+            "[4] Cron & Jobs",
+            "[5] Settings GUI",
+            "[6] AI Chat",
         ]
     }
 }
@@ -316,6 +319,16 @@ pub struct CockpitApp {
     pub notification: Option<(String, Instant)>,
     pub is_compact: bool,
     pub overview_proc_scroll: usize,
+
+    // Virtual Pet (Tamagotchi)
+    pub show_pet_modal: bool,
+    pub pet_name_buffer: String,
+    pub pet_species_buffer: String,
+
+    // Cron Job Wizard
+    pub show_cron_wizard: bool,
+    pub cron_schedule_buffer: String,
+    pub cron_command_buffer: String,
 }
 
 impl CockpitApp {
@@ -399,6 +412,14 @@ impl CockpitApp {
             notification: None,
             is_compact: false,
             overview_proc_scroll: 0,
+
+            show_pet_modal: false,
+            pet_name_buffer: "Ciko".to_string(),
+            pet_species_buffer: "ayam".to_string(),
+
+            show_cron_wizard: false,
+            cron_schedule_buffer: "0 * * * *".to_string(),
+            cron_command_buffer: "echo 'hello'".to_string(),
         };
 
         app.refresh_audit_reports();
@@ -1060,8 +1081,8 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 return Ok(false);
             }
             KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
-                // If it's 1-5 with no prompt, allow switching tabs
-                if app.chat_input.is_empty() && ('1'..='5').contains(&c) {
+                // If it's 1-6 with no prompt, allow switching tabs
+                if app.chat_input.is_empty() && ('1'..='6').contains(&c) {
                     let idx = (c as usize) - ('1' as usize);
                     app.current_tab = CockpitTab::from_index(idx);
                 } else {
@@ -1083,6 +1104,12 @@ fn handle_key_event<B: ratatui::backend::Backend>(
 
     // 5. Global Navigation Shortcuts
     match key.code {
+        KeyCode::Esc if app.show_pet_modal => {
+            app.show_pet_modal = false;
+        }
+        KeyCode::Esc if app.show_cron_wizard => {
+            app.show_cron_wizard = false;
+        }
         KeyCode::Char('q') | KeyCode::Esc => {
             if app.inspector_open {
                 app.inspector_open = false;
@@ -1093,15 +1120,16 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Char('1') => app.current_tab = CockpitTab::Overview,
         KeyCode::Char('2') => app.current_tab = CockpitTab::Services,
         KeyCode::Char('3') => app.current_tab = CockpitTab::Audit,
-        KeyCode::Char('4') => app.current_tab = CockpitTab::Settings,
-        KeyCode::Char('5') => app.current_tab = CockpitTab::Chat,
+        KeyCode::Char('4') => app.current_tab = CockpitTab::Cron,
+        KeyCode::Char('5') => app.current_tab = CockpitTab::Settings,
+        KeyCode::Char('6') => app.current_tab = CockpitTab::Chat,
 
         KeyCode::Tab => {
-            let next_idx = (app.current_tab.to_index() + 1) % 5;
+            let next_idx = (app.current_tab.to_index() + 1) % 6;
             app.current_tab = CockpitTab::from_index(next_idx);
         }
         KeyCode::BackTab => {
-            let prev_idx = (app.current_tab.to_index() + 4) % 5;
+            let prev_idx = (app.current_tab.to_index() + 5) % 6;
             app.current_tab = CockpitTab::from_index(prev_idx);
         }
 
@@ -1116,6 +1144,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             CockpitTab::Audit => {
                 app.selected_report = app.selected_report.saturating_sub(1);
             }
+            CockpitTab::Cron => {}
             CockpitTab::Settings => {
                 app.selected_field = app.selected_field.saturating_sub(1);
             }
@@ -1138,6 +1167,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                         (app.selected_report + 1).min(app.audit_reports.len() - 1);
                 }
             }
+            CockpitTab::Cron => {}
             CockpitTab::Settings => {
                 app.selected_field = (app.selected_field + 1).min(SETTINGS_FIELDS.len() - 1);
             }
@@ -1157,6 +1187,13 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             }
         }
 
+        KeyCode::Enter if app.show_cron_wizard => {
+            if let Some(ref d) = app.db {
+                let _ = d.add_cron_job(&app.cron_schedule_buffer, &app.cron_command_buffer, "Custom task");
+                app.set_notification("✔ Saved scheduled job");
+            }
+            app.show_cron_wizard = false;
+        }
         KeyCode::Enter => match app.current_tab {
             CockpitTab::Services => {
                 app.inspector_open = !app.inspector_open;
@@ -1167,9 +1204,36 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             _ => {}
         },
 
-        KeyCode::Char('p') if app.current_tab == CockpitTab::Services => {
-            app.probe_all_ports();
-            app.set_notification("Probed all ports & services");
+        KeyCode::Char('p') => {
+            if app.current_tab == CockpitTab::Services {
+                app.probe_all_ports();
+                app.set_notification("Probed all ports & services");
+            } else {
+                app.show_pet_modal = !app.show_pet_modal;
+            }
+        }
+        KeyCode::Char('c') if app.show_pet_modal => {
+            if let Some(ref d) = app.db {
+                let _ = d.create_pet("ayam", "Ciko");
+                app.set_notification("🐣 Created pet Ayam Ciko!");
+            }
+        }
+        KeyCode::Char('f') if app.show_pet_modal => {
+            if let Some(ref d) = app.db {
+                if let Ok(Some(pet)) = d.get_active_pet() {
+                    let _ = d.add_pet_xp(pet.id, 10);
+                    app.set_notification("🍖 Fed Ciko! +10 XP");
+                }
+            }
+        }
+        KeyCode::Char('n') if app.show_pet_modal => {
+            if let Some(ref d) = app.db {
+                let _ = d.create_pet("singa", "Simba");
+                app.set_notification("🦁 Created pet Singa Simba!");
+            }
+        }
+        KeyCode::Char('n') if app.current_tab == CockpitTab::Cron => {
+            app.show_cron_wizard = true;
         }
         KeyCode::Char('i') if app.current_tab == CockpitTab::Services => {
             app.inspector_open = !app.inspector_open;
@@ -1214,6 +1278,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
             CockpitTab::Chat => app.scroll_chat_up(),
             CockpitTab::Audit => app.report_scroll = app.report_scroll.saturating_sub(2),
             CockpitTab::Services => app.selected_app = app.selected_app.saturating_sub(1),
+            CockpitTab::Cron => {},
             CockpitTab::Settings => app.selected_field = app.selected_field.saturating_sub(1),
         },
         MouseEventKind::ScrollDown => match app.current_tab {
@@ -1225,6 +1290,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                     app.selected_app = (app.selected_app + 1).min(app.apps.len() - 1);
                 }
             }
+            CockpitTab::Cron => {},
             CockpitTab::Settings => {
                 app.selected_field = (app.selected_field + 1).min(SETTINGS_FIELDS.len() - 1);
             }
@@ -1543,6 +1609,7 @@ fn draw(f: &mut Frame, app: &mut CockpitApp) {
         CockpitTab::Overview => draw_overview_tab(f, app, chunks[2]),
         CockpitTab::Services => draw_services_tab(f, app, chunks[2]),
         CockpitTab::Audit => draw_audit_tab(f, app, chunks[2]),
+        CockpitTab::Cron => draw_cron_tab(f, app, chunks[2]),
         CockpitTab::Settings => draw_settings_tab(f, app, chunks[2]),
         CockpitTab::Chat => draw_chat_tab(f, app, chunks[2]),
     }
@@ -1555,6 +1622,14 @@ fn draw(f: &mut Frame, app: &mut CockpitApp) {
 
     if app.show_help_modal {
         draw_help_modal(f, app, area);
+    }
+
+    if app.show_pet_modal {
+        draw_pet_modal(f, app, area);
+    }
+
+    if app.show_cron_wizard {
+        draw_cron_wizard(f, app, area);
     }
 }
 
@@ -1572,7 +1647,7 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         return;
     }
 
-    let title = " CAShell v0.3.0 · Sovereign Cockpit ";
+    let title = " CAShell v0.3.1 · Sovereign Cockpit ";
     let time_str = chrono::Local::now().format("%H:%M:%S").to_string();
 
     let router_badge = if app.is_9router_online {
@@ -1609,11 +1684,34 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         Style::default().fg(palette.accent),
     );
 
+    // Active Virtual Pet Badge
+    let pet_badge = if let Some(ref d) = app.db {
+        if let Ok(Some(pet)) = d.get_active_pet() {
+            let stage = crate::pet::PetStage::from_xp(pet.xp);
+            let species = crate::pet::PetSpecies::parse(&pet.species);
+            let status = crate::pet::PetStatus {
+                species,
+                name: pet.name,
+                stage,
+                xp: pet.xp,
+            };
+            Span::styled(
+                format!(" {} │", status.format_badge()),
+                Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::styled(" 🥚 No Pet (p) │", Style::default().fg(palette.text_muted))
+        }
+    } else {
+        Span::styled(" 🐥 Ciko Lv.1 │", Style::default().fg(palette.text_muted))
+    };
+
     let left_spans = vec![
         Span::styled(title, Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
     ];
 
     let right_spans = vec![
+        pet_badge,
         host_badge,
         router_badge,
         Span::raw("│"),
@@ -3083,6 +3181,175 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
+// ── Cron & Scheduled Jobs View ─────────────────────────────────────────────
+
+fn draw_cron_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(5)])
+        .split(area);
+
+    let top_bar = Paragraph::new(Line::from(vec![
+        Span::styled(" [4] CRON & SCHEDULED JOBS ", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::raw(" │ Manage automated background jobs  "),
+        Span::styled("[+ New Cron Job] (Press 'n')", Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
+    ]))
+    .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(palette.border)));
+    f.render_widget(top_bar, chunks[0]);
+
+    // Read crontab + db jobs
+    let mut items = Vec::new();
+    if let Ok(user_jobs) = crate::cron::CronEntry::read_user_crontab() {
+        for j in user_jobs {
+            items.push(ListItem::new(Line::from(vec![
+                Span::styled(format!("{:<15} ", j.schedule), Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("{:<30} ", j.command), Style::default().fg(Color::White)),
+                Span::styled("[User Crontab] ", Style::default().fg(palette.text_muted)),
+                Span::styled("● ACTIVE", Style::default().fg(palette.status_ok)),
+            ])));
+        }
+    }
+
+    if let Some(ref d) = app.db {
+        if let Ok(db_jobs) = d.get_cron_jobs() {
+            for j in db_jobs {
+                items.push(ListItem::new(Line::from(vec![
+                    Span::styled(format!("{:<15} ", j.schedule), Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD)),
+                    Span::styled(format!("{:<30} ", j.command), Style::default().fg(Color::White)),
+                    Span::styled(format!("[{}] ", j.description), Style::default().fg(palette.accent)),
+                    Span::styled("● MANAGED", Style::default().fg(palette.status_ok)),
+                ])));
+            }
+        }
+    }
+
+    if items.is_empty() {
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled("No scheduled cron jobs found. Press 'n' to create one.", Style::default().fg(palette.text_muted)),
+        ])));
+    }
+
+    let list_widget = List::new(items)
+        .block(
+            Block::default()
+                .title(" Active Scheduled Jobs ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(palette.border)),
+        );
+    f.render_widget(list_widget, chunks[1]);
+}
+
+// ── Virtual Pet (Tamagotchi) Modal ──────────────────────────────────────────
+
+fn draw_pet_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let popup_area = centered_rect(60, 60, area);
+    f.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(" 🐾 Virtual Pet (Tamagotchi Work Companion) ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    let mut lines = Vec::new();
+    if let Some(ref d) = app.db {
+        if let Ok(Some(pet)) = d.get_active_pet() {
+            let stage = crate::pet::PetStage::from_xp(pet.xp);
+            let species = crate::pet::PetSpecies::parse(&pet.species);
+            let status = crate::pet::PetStatus {
+                species,
+                name: pet.name.clone(),
+                stage,
+                xp: pet.xp,
+            };
+
+            lines.push(Line::from(""));
+            for art in status.ascii_art() {
+                lines.push(Line::from(Span::styled(*art, Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD))));
+            }
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("Nama: ", Style::default().fg(palette.text_muted)),
+                Span::styled(pet.name.clone(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Span::raw("  │  "),
+                Span::styled("Spesies: ", Style::default().fg(palette.text_muted)),
+                Span::styled(species.display_name(), Style::default().fg(palette.accent)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("Tahap: ", Style::default().fg(palette.text_muted)),
+                Span::styled(stage.display_name(), Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD)),
+                Span::raw("  │  "),
+                Span::styled("XP: ", Style::default().fg(palette.text_muted)),
+                Span::styled(format!("{}/{}", pet.xp, stage.next_threshold()), Style::default().fg(Color::Yellow)),
+            ]));
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("Siklus Hidup: ", Style::default().fg(palette.text_muted)),
+                Span::raw("Telur 🥚 → Menetas 🐣 → Kecil 🐥 → Dewasa 🐔 → Menikah 💑 → Bertelur 🥚"),
+            ]));
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("[Feed Pet (+10 XP)] (Press 'f')", Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
+                Span::raw("  "),
+                Span::styled("[New Pet] (Press 'n')", Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.highlight_bg)),
+                Span::raw("  "),
+                Span::styled("[Close] (Esc)", Style::default().fg(palette.text_muted)),
+            ]));
+        } else {
+            lines.push(Line::from(""));
+            lines.push(Line::from("Belum ada hewan peliharaan aktif."));
+            lines.push(Line::from("Pilih teman kerjamu untuk menemanimu coding!"));
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("Pilihan: Ayam, Singa, Burung, Ular, Beruang", Style::default().fg(palette.accent)),
+            ]));
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("[Buat Pet: Ayam Ciko] (Press 'c')", Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
+            ]));
+        }
+    }
+
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+// ── Cron Job Wizard Modal ───────────────────────────────────────────────────
+
+fn draw_cron_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let popup_area = centered_rect(50, 40, area);
+    f.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(" ⏰ Create New Scheduled Job ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    let text = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Schedule: ", Style::default().fg(palette.text_muted)),
+            Span::styled(&app.cron_schedule_buffer, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("Command:  ", Style::default().fg(palette.text_muted)),
+            Span::styled(&app.cron_command_buffer, Style::default().fg(Color::White)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("[Save Job] (Enter)", Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
+            Span::raw("  "),
+            Span::styled("[Cancel] (Esc)", Style::default().fg(palette.text_muted)),
+        ]),
+    ];
+    f.render_widget(Paragraph::new(text), inner);
+}
+
 // ── Unit Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -3109,6 +3376,7 @@ mod tests {
             (KeyCode::Char('#'), 2),
             (KeyCode::Char('$'), 3),
             (KeyCode::Char('%'), 4),
+            (KeyCode::Char('^'), 5),
         ];
         for (code, expected_idx) in keys {
             let shift_tab = match code {
@@ -3117,6 +3385,7 @@ mod tests {
                 KeyCode::Char('#') => Some(2),
                 KeyCode::Char('$') => Some(3),
                 KeyCode::Char('%') => Some(4),
+                KeyCode::Char('^') => Some(5),
                 _ => None,
             };
             assert_eq!(shift_tab, Some(expected_idx));
@@ -3125,11 +3394,11 @@ mod tests {
 
     #[test]
     fn test_cockpit_tabs_index_roundtrip() {
-        for idx in 0..5 {
+        for idx in 0..6 {
             let tab = CockpitTab::from_index(idx);
             assert_eq!(tab.to_index(), idx);
         }
-        assert_eq!(CockpitTab::titles().len(), 5);
+        assert_eq!(CockpitTab::titles().len(), 6);
     }
 
     #[test]
