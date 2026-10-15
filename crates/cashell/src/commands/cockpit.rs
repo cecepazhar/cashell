@@ -170,6 +170,14 @@ pub enum HitboxAction {
     VacuumDb,
     ToggleHelp,
     FocusChatInput,
+    PetOk,
+    PetCancel,
+    PetActionUp,
+    PetActionDown,
+    PetToggleHistory,
+    PetFeed,
+    PetTreat,
+    PetSwitch,
 }
 
 #[derive(Debug, Clone)]
@@ -324,6 +332,11 @@ pub struct CockpitApp {
     pub show_pet_modal: bool,
     pub pet_name_buffer: String,
     pub pet_species_buffer: String,
+    pub pet_tick: usize,
+    pub pet_selected_action: usize,
+    pub show_pet_history: bool,
+    pub pet_history_logs: Vec<crate::pet::PetActionLog>,
+    pub pet_mood: crate::pet::PetMood,
 
     // Cron Job Wizard
     pub show_cron_wizard: bool,
@@ -416,6 +429,11 @@ impl CockpitApp {
             show_pet_modal: false,
             pet_name_buffer: "Ciko".to_string(),
             pet_species_buffer: "ayam".to_string(),
+            pet_tick: 0,
+            pet_selected_action: 0,
+            show_pet_history: false,
+            pet_history_logs: Vec::new(),
+            pet_mood: crate::pet::PetMood::Idle,
 
             show_cron_wizard: false,
             cron_schedule_buffer: "0 * * * *".to_string(),
@@ -661,7 +679,37 @@ impl CockpitApp {
             self.ram_history.pop_front();
         }
 
+        // Update Pet Mood & Action History Log if mood state changed
+        let new_mood = crate::pet::determine_mood(
+            snap.cpu_pct,
+            snap.cpu_temp_c,
+            ((snap.ram_used_mb * 100) / snap.ram_total_mb.max(1)) as u8,
+            ((snap.swap_used_mb * 100) / snap.swap_total_mb.max(1)) as u8,
+        );
+
         self.latest_snap = snap;
+
+        if new_mood != self.pet_mood {
+            self.pet_mood = new_mood;
+            if let Some(ref d) = self.db {
+                let active_pet = d.get_active_pet().ok().flatten();
+                if let Some(pet) = active_pet {
+                    let mood_str = match new_mood {
+                        crate::pet::PetMood::Idle => "Recovered (Normal)",
+                        crate::pet::PetMood::Overheated => "Overheated (Sweating & Fanning)",
+                        crate::pet::PetMood::Sick => "Sick (Vomiting)",
+                        crate::pet::PetMood::Sprint => "Sprinting (High CPU)",
+                    };
+                    let _ = d.log_pet_action(pet.id, &pet.name, "Mood Shift", mood_str);
+                }
+            }
+            // Refresh history log cache in memory
+            if let Some(ref d) = self.db {
+                if let Ok(logs) = d.get_pet_history(10) {
+                    self.pet_history_logs = logs;
+                }
+            }
+        }
     }
 
     pub fn cycle_field_value(&mut self, forward: bool) {
@@ -747,6 +795,96 @@ impl CockpitApp {
         let size = self.get_db_size();
         let size_str = format_bytes(size);
         self.set_notification(format!("✓ SQLite vacuum complete (DB size: {size_str})"));
+    }
+
+    // ── Pet Action Helpers ───────────────────────────────────────────────────
+
+    pub fn execute_pet_action(&mut self) {
+        match self.pet_selected_action {
+            0 => self.feed_pet(),
+            1 => self.treat_pet(),
+            2 => self.switch_pet_species(),
+            3 => self.toggle_pet_history(),
+            _ => {}
+        }
+    }
+
+    pub fn feed_pet(&mut self) {
+        let mut notif = None;
+        if let Some(ref d) = self.db {
+            if let Ok(Some(pet)) = d.get_active_pet() {
+                let _ = d.add_pet_xp(pet.id, 10);
+                let _ = d.log_pet_action(pet.id, &pet.name, "Beri Makan", "+10 XP (Nyaman)");
+                notif = Some(format!("🍖 Beri makan {}! (+10 XP)", pet.name));
+            } else {
+                let _ = d.create_pet("ayam", "Ciko");
+                let _ = d.log_pet_action(1, "Ciko", "Adopsi", "Mengadopsi Ayam Ciko");
+                notif = Some("🐣 Mengadopsi Ayam Ciko!".to_string());
+            }
+            if let Ok(logs) = d.get_pet_history(10) {
+                self.pet_history_logs = logs;
+            }
+        }
+        if let Some(msg) = notif {
+            self.set_notification(msg);
+        }
+    }
+
+    pub fn treat_pet(&mut self) {
+        let mut notif = None;
+        if let Some(ref d) = self.db {
+            if let Ok(Some(pet)) = d.get_active_pet() {
+                self.pet_mood = crate::pet::PetMood::Idle;
+                let _ = d.log_pet_action(pet.id, &pet.name, "Perawatan", "Diberi obat & pulih");
+                notif = Some("🩺 Hewan berhasil dirawat & pulih!".to_string());
+            }
+            if let Ok(logs) = d.get_pet_history(10) {
+                self.pet_history_logs = logs;
+            }
+        }
+        if let Some(msg) = notif {
+            self.set_notification(msg);
+        }
+    }
+
+    pub fn switch_pet_species(&mut self) {
+        let species_list = ["ayam", "singa", "burung", "ular", "beruang"];
+        let names = ["Ciko", "Simba", "Rio", "Nagini", "Koda"];
+        let mut notif = None;
+        if let Some(ref d) = self.db {
+            let next_idx = match d.get_active_pet().ok().flatten() {
+                Some(p) => match p.species.as_str() {
+                    "ayam" => 1,
+                    "singa" => 2,
+                    "burung" => 3,
+                    "ular" => 4,
+                    _ => 0,
+                },
+                None => 0,
+            };
+            let next_species = species_list[next_idx];
+            let next_name = names[next_idx];
+            let _ = d.create_pet(next_species, next_name);
+            let _ = d.log_pet_action(1, next_name, "Ganti Hewan", &format!("Beralih ke {}", next_species));
+            notif = Some(format!("🔄 Beralih ke {} {}!", next_species, next_name));
+            if let Ok(logs) = d.get_pet_history(10) {
+                self.pet_history_logs = logs;
+            }
+        }
+        if let Some(msg) = notif {
+            self.set_notification(msg);
+        }
+    }
+
+    pub fn toggle_pet_history(&mut self) {
+        self.show_pet_history = !self.show_pet_history;
+        if self.show_pet_history {
+            if let Some(ref d) = self.db {
+                if let Ok(logs) = d.get_pet_history(10) {
+                    self.pet_history_logs = logs;
+                }
+            }
+        }
     }
 
     pub fn save_current_config(&mut self) {
@@ -899,6 +1037,9 @@ fn event_loop<B: ratatui::backend::Backend>(
             }
         }
 
+        // Increment pet animation tick
+        app.pet_tick = app.pet_tick.wrapping_add(1);
+
         // Draw current frame
         terminal.draw(|f| draw(f, app))?;
 
@@ -946,11 +1087,13 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Char('#') => Some(2),
         KeyCode::Char('$') => Some(3),
         KeyCode::Char('%') => Some(4),
+        KeyCode::Char('^') => Some(5),
         KeyCode::Char('1') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(0),
         KeyCode::Char('2') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(1),
         KeyCode::Char('3') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(2),
         KeyCode::Char('4') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(3),
         KeyCode::Char('5') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(4),
+        KeyCode::Char('6') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(5),
         _ => None,
     };
     if let Some(tab_idx) = shift_tab {
@@ -1110,6 +1253,9 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Esc if app.show_cron_wizard => {
             app.show_cron_wizard = false;
         }
+        KeyCode::Esc if app.show_pet_history => {
+            app.show_pet_history = false;
+        }
         KeyCode::Char('q') | KeyCode::Esc => {
             if app.inspector_open {
                 app.inspector_open = false;
@@ -1124,6 +1270,27 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Char('5') => app.current_tab = CockpitTab::Settings,
         KeyCode::Char('6') => app.current_tab = CockpitTab::Chat,
 
+        // ── Pet Play Area Controls (Hardware-Reactive Tamagotchi) ─────────────
+        KeyCode::Enter if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.execute_pet_action();
+        }
+        KeyCode::Char('f') if app.current_tab == CockpitTab::Overview => {
+            app.pet_selected_action = 0;
+            app.execute_pet_action();
+        }
+        KeyCode::Char('t') if app.current_tab == CockpitTab::Overview => {
+            app.pet_selected_action = 1;
+            app.execute_pet_action();
+        }
+        KeyCode::Char('s') if app.current_tab == CockpitTab::Overview => {
+            app.pet_selected_action = 2;
+            app.execute_pet_action();
+        }
+        KeyCode::Char('h') if app.current_tab == CockpitTab::Overview => {
+            app.pet_selected_action = 3;
+            app.execute_pet_action();
+        }
+
         KeyCode::Tab => {
             let next_idx = (app.current_tab.to_index() + 1) % 6;
             app.current_tab = CockpitTab::from_index(next_idx);
@@ -1136,6 +1303,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         // Tab-specific controls
         KeyCode::Up | KeyCode::Char('k') => match app.current_tab {
             CockpitTab::Overview => {
+                app.pet_selected_action = (app.pet_selected_action + 3) % 4;
                 app.overview_proc_scroll = app.overview_proc_scroll.saturating_sub(1);
             }
             CockpitTab::Services => {
@@ -1154,6 +1322,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         },
         KeyCode::Down | KeyCode::Char('j') => match app.current_tab {
             CockpitTab::Overview => {
+                app.pet_selected_action = (app.pet_selected_action + 1) % 4;
                 app.overview_proc_scroll = (app.overview_proc_scroll + 1).min(30);
             }
             CockpitTab::Services => {
@@ -1346,6 +1515,35 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                     }
                     HitboxAction::FocusChatInput => {
                         // Focus is already on input in Chat tab
+                    }
+                    HitboxAction::PetOk => {
+                        app.execute_pet_action();
+                    }
+                    HitboxAction::PetCancel => {
+                        app.show_pet_history = false;
+                        app.show_pet_modal = false;
+                    }
+                    HitboxAction::PetActionUp => {
+                        app.pet_selected_action = (app.pet_selected_action + 3) % 4;
+                    }
+                    HitboxAction::PetActionDown => {
+                        app.pet_selected_action = (app.pet_selected_action + 1) % 4;
+                    }
+                    HitboxAction::PetToggleHistory => {
+                        app.pet_selected_action = 3;
+                        app.execute_pet_action();
+                    }
+                    HitboxAction::PetFeed => {
+                        app.pet_selected_action = 0;
+                        app.execute_pet_action();
+                    }
+                    HitboxAction::PetTreat => {
+                        app.pet_selected_action = 1;
+                        app.execute_pet_action();
+                    }
+                    HitboxAction::PetSwitch => {
+                        app.pet_selected_action = 2;
+                        app.execute_pet_action();
                     }
                 }
             }
@@ -1693,6 +1891,7 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 species,
                 name: pet.name,
                 stage,
+                mood: app.pet_mood,
                 xp: pet.xp,
             };
             Span::styled(
@@ -1920,7 +2119,7 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(10), // Top: CPU Grid + Memory/Mount
+            Constraint::Length(12), // Top: CPU Grid + Tamagotchi Pet + Memory/Mount
             Constraint::Length(3),  // Middle: Network & Tailscale Mesh
             Constraint::Min(8),     // Bottom: Live Dokploy Fleet & Top Processes
         ])
@@ -1928,10 +2127,14 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let top_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(52), Constraint::Percentage(48)])
+        .constraints([
+            Constraint::Percentage(36), // CPU Telemetry
+            Constraint::Percentage(36), // 🐾 Tamagotchi Pet Play Arena
+            Constraint::Percentage(28), // Memory & Storage
+        ])
         .split(chunks[0]);
 
-    let snap = &app.latest_snap;
+    let snap = app.latest_snap.clone();
     let thermal_alert = snap.cpu_temp_c > 88.0;
 
     // ── Top Left: CPU & 8-Core Grid ──────────────────────────────────────────
@@ -2018,13 +2221,16 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         f.render_widget(Paragraph::new(full_cpu_lines), cpu_inner);
     }
 
-    // ── Top Right: Memory & Mount Table ──────────────────────────────────────
+    // ── Center: Tamagotchi Pet Play Arena (Animated Hardware-Reactive) ───────
+    draw_pet_play_area(f, app, top_chunks[1]);
+
+    // ── Right: Memory & Mount Table ──────────────────────────────────────────
     let mem_block = Block::default()
         .borders(Borders::ALL)
         .title(" Memory & Storage Telemetry ")
         .border_style(Style::default().fg(Color::LightBlue));
-    let mem_inner = mem_block.inner(top_chunks[1]);
-    f.render_widget(mem_block, top_chunks[1]);
+    let mem_inner = mem_block.inner(top_chunks[2]);
+    f.render_widget(mem_block, top_chunks[2]);
 
     if mem_inner.width > 10 && mem_inner.height > 3 {
         let mem_layout = Layout::default()
@@ -2343,6 +2549,250 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     );
 
     f.render_widget(table, fleet_inner);
+}
+
+// ── 🐾 Tamagotchi Pet Play Arena (Animated & Hardware Reactive) ─────────────
+
+fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let mood_color = match app.pet_mood {
+        crate::pet::PetMood::Overheated => Color::LightRed,
+        crate::pet::PetMood::Sick => Color::Magenta,
+        crate::pet::PetMood::Sprint => Color::Yellow,
+        crate::pet::PetMood::Idle => palette.accent,
+    };
+
+    let pet_opt = if let Some(ref d) = app.db {
+        d.get_active_pet().ok().flatten()
+    } else {
+        None
+    };
+
+    let (name, species_str, xp) = if let Some(ref p) = pet_opt {
+        (p.name.clone(), p.species.clone(), p.xp)
+    } else {
+        (String::new(), "ayam".to_string(), 0)
+    };
+
+    let species = crate::pet::PetSpecies::parse(&species_str);
+    let stage = crate::pet::PetStage::from_xp(xp);
+    let level = match stage {
+        crate::pet::PetStage::Egg => 0,
+        crate::pet::PetStage::Hatch => 1,
+        crate::pet::PetStage::Juvenile => 2,
+        crate::pet::PetStage::Adult => 3,
+        crate::pet::PetStage::Mating => 4,
+    };
+
+    let mood_short = match app.pet_mood {
+        crate::pet::PetMood::Idle => "☺ Normal",
+        crate::pet::PetMood::Overheated => "🥵 Kepanasan",
+        crate::pet::PetMood::Sick => "💀 Sakit/Stack",
+        crate::pet::PetMood::Sprint => "🏃 Sprint CPU",
+    };
+
+    let pet_name_display = if name.is_empty() {
+        species.display_name().to_string()
+    } else {
+        name.clone()
+    };
+
+    let title = format!(
+        " 🐾 PET PLAY ARENA [ {} | Lv.{} | {} ] ",
+        pet_name_display, level, mood_short
+    );
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::default().fg(mood_color));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if inner.width < 10 || inner.height < 5 {
+        return;
+    }
+
+    // Toggle History Log View
+    if app.show_pet_history {
+        let mut lines = vec![
+            Line::from(vec![
+                Span::styled(" 📜 RIWAYAT AKTIVITAS HEWAN ", Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD)),
+                Span::styled(" [✖ Tutup (h/Esc)] ", Style::default().fg(palette.text_muted)),
+            ]),
+            Line::from(Span::raw("─".repeat(inner.width as usize))),
+        ];
+        if app.pet_history_logs.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "Belum ada riwayat. Beri makan atau rawat hewan!",
+                Style::default().fg(palette.text_muted),
+            )));
+        } else {
+            let max_items = inner.height.saturating_sub(4) as usize;
+            for log in app.pet_history_logs.iter().take(max_items.max(1)) {
+                let time_str = log.timestamp.split('T').nth(1).unwrap_or(&log.timestamp);
+                let time_short: String = time_str.chars().take(8).collect();
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{:<8}", time_short), Style::default().fg(Color::DarkGray)),
+                    Span::styled(format!("[{}]", log.action_type), Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+                    Span::styled(format!(" {}", log.detail), Style::default().fg(Color::White)),
+                ]));
+            }
+        }
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+        return;
+    }
+
+    // Split inner into Screen Area (top) and Control Bar (bottom)
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(4),    // Animated Sprite Screen
+            Constraint::Length(1), // Nav Bar: [▲ Atas] [▼ Bawah] [✔ OK] [✖ Cancel]
+            Constraint::Length(1), // Actions: [0: Feed] [1: Treat] [2: Switch] [3: History]
+        ])
+        .split(inner);
+
+    // 1. Animated Sprite Screen
+    let status = crate::pet::PetStatus {
+        species,
+        name: pet_name_display.clone(),
+        stage,
+        mood: app.pet_mood,
+        xp,
+    };
+    let frames = status.frames();
+    let frame_idx = (app.pet_tick / 4) % frames.len();
+    let current_frame = frames[frame_idx];
+
+    // Wander offset across the sprite screen
+    let wander_offset = if app.pet_mood == crate::pet::PetMood::Sprint {
+        let screen_width = inner.width.saturating_sub(15) as usize;
+        (app.pet_tick / 2) % screen_width.max(1)
+    } else {
+        let max_w = inner.width.saturating_sub(30).min(12) as usize;
+        if max_w > 0 {
+            let cycle = (app.pet_tick / 6) % (max_w * 2);
+            if cycle < max_w {
+                cycle
+            } else {
+                max_w * 2 - cycle
+            }
+        } else {
+            0
+        }
+    };
+
+    let pad = " ".repeat(wander_offset);
+    let mut sprite_lines = Vec::new();
+    for row in current_frame {
+        sprite_lines.push(Line::from(vec![
+            Span::raw(pad.clone()),
+            Span::styled(
+                *row,
+                Style::default()
+                    .fg(match app.pet_mood {
+                        crate::pet::PetMood::Overheated => Color::LightRed,
+                        crate::pet::PetMood::Sick => Color::Magenta,
+                        crate::pet::PetMood::Sprint => Color::Yellow,
+                        crate::pet::PetMood::Idle => Color::Green,
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+    f.render_widget(Paragraph::new(sprite_lines), chunks[0]);
+
+    // 2. Navigation Bar (mouse hitboxes & keyboard shortcuts)
+    let nav_spans = vec![
+        Span::styled(" [▲ Atas] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [▼ Bawah] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [✔ OK] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [✖ Cancel] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Red).add_modifier(Modifier::BOLD)),
+    ];
+    f.render_widget(Paragraph::new(Line::from(nav_spans)), chunks[1]);
+
+    // Register hitboxes for nav bar controls
+    let nav_inner = chunks[1];
+    let _ = nav_inner;
+    let nav_x = inner.x;
+    let nav_line = Paragraph::new(Line::from(vec![
+        Span::styled(" [▲ Atas] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [▼ Bawah] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [✔ OK] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [✖ Cancel] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Red).add_modifier(Modifier::BOLD)),
+    ]));
+    let _ = nav_line;
+
+    let up_w = 9;
+    let down_w = 10;
+    let ok_w = 7;
+    let cancel_w = 12;
+    app.register_hitbox(
+        Rect { x: nav_x, y: chunks[1].y, width: up_w, height: 1 },
+        HitboxAction::PetActionUp,
+    );
+    let mut x2 = nav_x + up_w + 1;
+    app.register_hitbox(
+        Rect { x: x2, y: chunks[1].y, width: down_w, height: 1 },
+        HitboxAction::PetActionDown,
+    );
+    x2 += down_w + 1;
+    app.register_hitbox(
+        Rect { x: x2, y: chunks[1].y, width: ok_w, height: 1 },
+        HitboxAction::PetOk,
+    );
+    x2 += ok_w + 1;
+    app.register_hitbox(
+        Rect { x: x2, y: chunks[1].y, width: cancel_w, height: 1 },
+        HitboxAction::PetCancel,
+    );
+
+    // 3. Action Buttons with active selection highlight
+    let actions = [
+        "0: 🍖Feed(f)",
+        "1: 🩺Treat(t)",
+        "2: 🔄Pet(s)",
+        "3: 📜Hist(h)",
+    ];
+    let mut action_spans = Vec::new();
+    let mut act_x = inner.x;
+    for (i, act) in actions.iter().enumerate() {
+        let label = format!(" [{}] ", act);
+        let btn_w = label.len() as u16;
+        if i == app.pet_selected_action {
+            action_spans.push(Span::styled(
+                label,
+                Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Yellow).add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            action_spans.push(Span::styled(
+                label,
+                Style::default().fg(palette.text_muted),
+            ));
+        }
+        action_spans.push(Span::raw(" "));
+
+        // Register action button hitboxes
+        let action_hb = match i {
+            0 => HitboxAction::PetFeed,
+            1 => HitboxAction::PetTreat,
+            2 => HitboxAction::PetSwitch,
+            _ => HitboxAction::PetToggleHistory,
+        };
+        app.register_hitbox(
+            Rect { x: act_x, y: chunks[2].y, width: btn_w, height: 1 },
+            action_hb,
+        );
+        act_x += btn_w + 1;
+    }
+    f.render_widget(Paragraph::new(Line::from(action_spans)), chunks[2]);
 }
 
 // ── Tab 2: Services / Apps (Dokploy-style) ───────────────────────────────────
@@ -3263,11 +3713,13 @@ fn draw_pet_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 species,
                 name: pet.name.clone(),
                 stage,
+                mood: app.pet_mood,
                 xp: pet.xp,
             };
 
             lines.push(Line::from(""));
-            for art in status.ascii_art() {
+            let frames = status.frames();
+            for art in frames[0] {
                 lines.push(Line::from(Span::styled(*art, Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD))));
             }
             lines.push(Line::from(""));

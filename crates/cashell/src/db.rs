@@ -184,6 +184,14 @@ impl Database {
                  last_run DATETIME,
                  last_exit_code INTEGER,
                  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+             );
+             CREATE TABLE IF NOT EXISTS pet_action_logs (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 pet_id INTEGER,
+                 pet_name TEXT,
+                 action_type TEXT,
+                 detail TEXT,
+                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
              );",
         )?;
         Ok(())
@@ -255,6 +263,10 @@ impl Database {
         )?;
         deleted += self.conn.execute(
             "DELETE FROM cron_jobs WHERE created_at < datetime('now', ?1)",
+            params![modifier],
+        )?;
+        deleted += self.conn.execute(
+            "DELETE FROM pet_action_logs WHERE created_at < datetime('now', ?1)",
             params![modifier],
         )?;
         Ok(deleted)
@@ -518,6 +530,34 @@ impl Database {
             params![exit_code, id],
         )?;
         Ok(())
+    }
+
+    /// Log a pet interaction event.
+    pub fn log_pet_action(&self, pet_id: i64, pet_name: &str, action_type: &str, detail: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO pet_action_logs (pet_id, pet_name, action_type, detail) VALUES (?1, ?2, ?3, ?4)",
+            params![pet_id, pet_name, action_type, detail],
+        )?;
+        Ok(())
+    }
+
+    /// Get recent pet action logs.
+    pub fn get_pet_history(&self, limit: usize) -> Result<Vec<crate::pet::PetActionLog>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT created_at, action_type, detail FROM pet_action_logs ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(crate::pet::PetActionLog {
+                timestamp: row.get(0)?,
+                action_type: row.get(1)?,
+                detail: row.get(2)?,
+            })
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
     }
 
     /// Calculate total database size in bytes, including WAL and SHM journal files.

@@ -1,12 +1,8 @@
 //! Virtual Pet (Tamagotchi) Engine for cashell cockpit.
 //!
 //! Provides pet lifecycle progression (Egg -> Hatch -> Juvenile -> Adult -> Mating -> Egg),
-//! XP gain tracking, and ASCII art sprites for 5 species:
-//! - Ayam (Chicken)
-//! - Singa (Lion)
-//! - Burung (Bird)
-//! - Ular (Snake)
-//! - Beruang (Bear)
+//! XP gain tracking, ASCII art sprites, and a frame-by-frame animation engine
+//! for 5 species: Ayam, Singa, Burung, Ular, Beruang.
 
 use serde::{Deserialize, Serialize};
 
@@ -114,17 +110,34 @@ impl PetStage {
     }
 }
 
+/// The current physical/mental state of the pet, which dictates its animation frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PetMood {
+    Idle,       // Normal, comfortable
+    Overheated, // CPU temp > 80C or CPU > 85%
+    Sick,       // RAM > 85% or Swap > 90%
+    Sprint,     // High CPU load
+}
+
+/// A pet action event for the action history log.
+#[derive(Debug, Clone)]
+pub struct PetActionLog {
+    pub timestamp: String,
+    pub action_type: String,
+    pub detail: String,
+}
+
+/// Tamagotchi-style animated pet model.
 pub struct PetStatus {
     pub species: PetSpecies,
     pub name: String,
     pub stage: PetStage,
+    pub mood: PetMood,
     pub xp: i64,
 }
 
 impl PetStatus {
     pub fn format_badge(&self) -> String {
-        let emoji = self.species.emoji(&self.stage);
-        let next = self.stage.next_threshold();
         let level = match self.stage {
             PetStage::Egg => 0,
             PetStage::Hatch => 1,
@@ -132,54 +145,650 @@ impl PetStatus {
             PetStage::Adult => 3,
             PetStage::Mating => 4,
         };
-        format!("{} {} Lv.{} [{}/{}]", emoji, self.name, level, self.xp, next)
+        let mood_emoji = match self.mood {
+            PetMood::Idle => "☺",
+            PetMood::Overheated => "🥵",
+            PetMood::Sick => "💀",
+            PetMood::Sprint => "🏃",
+        };
+        format!(
+            "{} {} Lv.{} [{}]",
+            self.species.emoji(&self.stage),
+            self.name,
+            level,
+            mood_emoji
+        )
     }
 
-    pub fn ascii_art(&self) -> &'static [&'static str] {
-        match (self.species, self.stage) {
-            (PetSpecies::Ayam, PetStage::Egg) => &[
-                "   .---.   ",
-                "  /     \\  ",
-                " |  Egg  | ",
-                "  \\_____/  ",
-            ],
-            (PetSpecies::Ayam, PetStage::Hatch) => &[
-                "   .---.   ",
-                "  /(o.o)\\  ",
-                "   /   \\   ",
-                "  ''---''  ",
-            ],
-            (PetSpecies::Ayam, PetStage::Juvenile) => &[
-                "   (\\__/)  ",
-                "   (•ㅅ•)  ",
-                "   / 　 づ ",
-                "  ''   ''  ",
-            ],
-            (PetSpecies::Ayam, PetStage::Adult) => &[
-                "   _//\\_   ",
-                "  ( >.< )  ",
-                "  /|   |\\  ",
-                "   /   \\   ",
-            ],
-            (PetSpecies::Singa, PetStage::Adult) => &[
-                "  /\\_//\\   ",
-                " ( ='.'= ) ",
-                " /*\"--\"*\\  ",
-                "   \"   \"   ",
-            ],
-            (PetSpecies::Burung, PetStage::Adult) => &[
-                "   /\\_/\\   ",
-                "  ( >.< )  ",
-                "  /\"\"-\"\"\\  ",
-                "    \" \"    ",
-            ],
-            _ => &[
-                "   .---.   ",
-                "  | ~ ~ |  ",
-                "   '---'   ",
-            ],
+    /// Returns a reference to the frame array for the current mood and species.
+    pub fn frames(&self) -> &'static [&'static [&'static str]] {
+        match (self.species, self.mood) {
+            // === AYAM (CHICKEN) ANIMATIONS ===
+            (PetSpecies::Ayam, PetMood::Idle) => &AYAM_IDLE,
+            (PetSpecies::Ayam, PetMood::Overheated) => &AYAM_OVERHEATED,
+            (PetSpecies::Ayam, PetMood::Sick) => &AYAM_SICK,
+            (PetSpecies::Ayam, PetMood::Sprint) => &AYAM_SPRINT,
+
+            // === SINGA (LION) ANIMATIONS ===
+            (PetSpecies::Singa, PetMood::Idle) => &SINGA_IDLE,
+            (PetSpecies::Singa, PetMood::Overheated) => &SINGA_OVERHEATED,
+            (PetSpecies::Singa, PetMood::Sick) => &SINGA_SICK,
+            (PetSpecies::Singa, PetMood::Sprint) => &SINGA_SPRINT,
+
+            // === BURUNG (BIRD) ANIMATIONS ===
+            (PetSpecies::Burung, PetMood::Idle) => &BURUNG_IDLE,
+            (PetSpecies::Burung, PetMood::Overheated) => &BURUNG_OVERHEATED,
+            (PetSpecies::Burung, PetMood::Sick) => &BURUNG_SICK,
+            (PetSpecies::Burung, PetMood::Sprint) => &BURUNG_SPRINT,
+
+            // === ULAR (SNAKE) ANIMATIONS ===
+            (PetSpecies::Ular, PetMood::Idle) => &ULAR_IDLE,
+            (PetSpecies::Ular, PetMood::Overheated) => &ULAR_OVERHEATED,
+            (PetSpecies::Ular, PetMood::Sick) => &ULAR_SICK,
+            (PetSpecies::Ular, PetMood::Sprint) => &ULAR_SPRINT,
+
+            // === BERUANG (BEAR) ANIMATIONS ===
+            (PetSpecies::Beruang, PetMood::Idle) => &BERUANG_IDLE,
+            (PetSpecies::Beruang, PetMood::Overheated) => &BERUANG_OVERHEATED,
+            (PetSpecies::Beruang, PetMood::Sick) => &BERUANG_SICK,
+            (PetSpecies::Beruang, PetMood::Sprint) => &BERUANG_SPRINT,
         }
     }
+}
+
+// ── AYAM SPRITES (4 frames per mood, large Tamagotchi resolution) ────────────
+const AYAM_IDLE: [&[&str]; 4] = [
+    &[
+        "      ___//\\___      ",
+        "     /  (o.o)  \\     ",
+        "    (   ( > )   )    ",
+        "     \\  /---\\  /     ",
+        "      \"\"     \"\"      ",
+    ],
+    &[
+        "      ___//\\___      ",
+        "     /  (-.-)  \\     ",
+        "    (   ( > )   )    ",
+        "     \\  /---\\  /     ",
+        "      \"\"     \"\"      ",
+    ],
+    &[
+        "      ___//\\___      ",
+        "     /  (o.o)  \\     ",
+        "    (  <( > )>  )    ",
+        "     \\  /---\\  /     ",
+        "      \"\"     \"\"      ",
+    ],
+    &[
+        "      ___//\\___      ",
+        "     /  (o.o)  \\     ",
+        "    (   ( > )   )    ",
+        "     \\  /---\\  /     ",
+        "      \"\"     \"\"      ",
+    ],
+];
+
+const AYAM_OVERHEATED: [&[&str]; 4] = [
+    &[
+        "   \\ \\  _//\\_  💦  ",
+        "  (✇)  ( >.< )      ",
+        "   |\\  /|   |\\      ",
+        "       /     \\      ",
+        "       \"\"   \"\"      ",
+    ],
+    &[
+        "        _//\\_  💦💦 ",
+        "  (✇)  ( >.< ) /    ",
+        "   |\\  /|   |\\/     ",
+        "       /     \\      ",
+        "       \"\"   \"\"      ",
+    ],
+    &[
+        "   \\ \\  _//\\_  💦  ",
+        "  (✇)  ( x.x )      ",
+        "   |\\  /|   |\\      ",
+        "       /     \\      ",
+        "       \"\"   \"\"      ",
+    ],
+    &[
+        "        _//\\_  💦💦 ",
+        "  (✇)  ( >.< ) /    ",
+        "   |\\  /|   |\\/     ",
+        "       /     \\      ",
+        "       \"\"   \"\"      ",
+    ],
+];
+
+const AYAM_SICK: [&[&str]; 4] = [
+    &[
+        "      _//\\_  [+]     ",
+        "     ( @.@ )  ~      ",
+        "     /|   |\\  ~      ",
+        "      /   \\          ",
+        "     🤢   🤢         ",
+    ],
+    &[
+        "      _//\\_  [+]     ",
+        "     ( -.- )  ~      ",
+        "     /|   |\\  ~      ",
+        "      /   \\          ",
+        "     🤢   🤢         ",
+    ],
+    &[
+        "      _//\\_  [+]     ",
+        "     ( @.@ )  ~      ",
+        "     /|   |\\  ~      ",
+        "      /   \\          ",
+        "     🤢   🤢         ",
+    ],
+    &[
+        "      _//\\_  [+]     ",
+        "     ( -.- )  ~      ",
+        "     /|   |\\  ~      ",
+        "      /   \\          ",
+        "     🤢   🤢         ",
+    ],
+];
+
+const AYAM_SPRINT: [&[&str]; 4] = [
+    &[
+        "       ___//\\___ >>  ",
+        "      /  (o.o)  \\    ",
+        "     (   ( > )   )   ",
+        "      \\  /---\\  /    ",
+        "       //     \\\\     ",
+    ],
+    &[
+        "   >>  ___//\\___     ",
+        "      /  (o.o)  \\    ",
+        "     (   ( > )   )   ",
+        "      \\  /---\\  /    ",
+        "       \\\\     //     ",
+    ],
+    &[
+        "       ___//\\___ >>  ",
+        "      /  (o.o)  \\    ",
+        "     (   ( > )   )   ",
+        "      \\  /---\\  /    ",
+        "       //     \\\\     ",
+    ],
+    &[
+        "   >>  ___//\\___     ",
+        "      /  (o.o)  \\    ",
+        "     (   ( > )   )   ",
+        "      \\  /---\\  /    ",
+        "       \\\\     //     ",
+    ],
+];
+
+// ── SINGA SPRITES (Lion with mane) ──────────────────────────────────────────
+const SINGA_IDLE: [&[&str]; 4] = [
+    &[
+        "     (((( -.- ))))   ",
+        "    ((  (o.o)  ))    ",
+        "   ( =  ( V )  = )   ",
+        "    \\   /---\\   /    ",
+        "     \"\"\"     \"\"\"     ",
+    ],
+    &[
+        "     (((( -.- ))))   ",
+        "    ((  (-.-)  ))    ",
+        "   ( =  ( V )  = )   ",
+        "    \\   /---\\   /    ",
+        "     \"\"\"     \"\"\"     ",
+    ],
+    &[
+        "     (((( -.- ))))   ",
+        "    ((  (o.o)  ))    ",
+        "   ( = <( V )> = )   ",
+        "    \\   /---\\   /    ",
+        "     \"\"\"     \"\"\"     ",
+    ],
+    &[
+        "     (((( -.- ))))   ",
+        "    ((  (o.o)  ))    ",
+        "   ( =  ( V )  = )   ",
+        "    \\   /---\\   /    ",
+        "     \"\"\"     \"\"\"     ",
+    ],
+];
+
+const SINGA_OVERHEATED: [&[&str]; 4] = [
+    &[
+        "  (✇) (((( -.- )))) 💦",
+        "   |\\ ((  (>.<)  ))  ",
+        "     ( =  ( V )  = ) ",
+        "      \\   /---\\   /  ",
+        "       \"\"\"     \"\"\"   ",
+    ],
+    &[
+        "      (((( -.- )))) 💦",
+        "  (✇) ((  (>.<)  ))  ",
+        "   |\\( =  ( V )  = ) ",
+        "      \\   /---\\   /  ",
+        "       \"\"\"     \"\"\"   ",
+    ],
+    &[
+        "  (✇) (((( -.- )))) 💦",
+        "   |\\ ((  (x.x)  ))  ",
+        "     ( =  ( V )  = ) ",
+        "      \\   /---\\   /  ",
+        "       \"\"\"     \"\"\"   ",
+    ],
+    &[
+        "      (((( -.- )))) 💦",
+        "  (✇) ((  (>.<)  ))  ",
+        "   |\\( =  ( V )  = ) ",
+        "      \\   /---\\   /  ",
+        "       \"\"\"     \"\"\"   ",
+    ],
+];
+
+const SINGA_SICK: [&[&str]; 4] = [
+    &[
+        "     (((( -.- )))) [+] ",
+        "    ((  (@.@)  ))  ~  ",
+        "   ( =  ( ~ )  = ) ~  ",
+        "      🤢   🤢         ",
+    ],
+    &[
+        "     (((( -.- )))) [+] ",
+        "    ((  (-.-)  ))  ~  ",
+        "   ( =  ( ~ )  = ) ~  ",
+        "      🤢   🤢         ",
+    ],
+    &[
+        "     (((( -.- )))) [+] ",
+        "    ((  (@.@)  ))  ~  ",
+        "   ( =  ( ~ )  = ) ~  ",
+        "      🤢   🤢         ",
+    ],
+    &[
+        "     (((( -.- )))) [+] ",
+        "    ((  (-.-)  ))  ~  ",
+        "   ( =  ( ~ )  = ) ~  ",
+        "      🤢   🤢         ",
+    ],
+];
+
+const SINGA_SPRINT: [&[&str]; 4] = [
+    &[
+        "     (((( -.- )))) >>",
+        "    ((  (o.o)  ))    ",
+        "   ( =  ( V )  = )   ",
+        "      //     \\\\      ",
+    ],
+    &[
+        " >>  (((( -.- ))))   ",
+        "    ((  (o.o)  ))    ",
+        "   ( =  ( V )  = )   ",
+        "      \\\\     //      ",
+    ],
+    &[
+        "     (((( -.- )))) >>",
+        "    ((  (o.o)  ))    ",
+        "   ( =  ( V )  = )   ",
+        "      //     \\\\      ",
+    ],
+    &[
+        " >>  (((( -.- ))))   ",
+        "    ((  (o.o)  ))    ",
+        "   ( =  ( V )  = )   ",
+        "      \\\\     //      ",
+    ],
+];
+
+// ── BURUNG SPRITES (Bird flapping wings) ────────────────────────────────────
+const BURUNG_IDLE: [&[&str]; 4] = [
+    &[
+        "         /\\_/\\       ",
+        "       =( o.o )=     ",
+        "       < / v \\ >     ",
+        "        ( ___ )      ",
+        "         \"   \"       ",
+    ],
+    &[
+        "         /\\_/\\       ",
+        "       =( -.- )=     ",
+        "       < / v \\ >     ",
+        "        ( ___ )      ",
+        "         \"   \"       ",
+    ],
+    &[
+        "        //\\_/\\\\      ",
+        "       =( o.o )=     ",
+        "       << /v\\ >>     ",
+        "        ( ___ )      ",
+        "         \"   \"       ",
+    ],
+    &[
+        "         /\\_/\\       ",
+        "       =( o.o )=     ",
+        "       < / v \\ >     ",
+        "        ( ___ )      ",
+        "         \"   \"       ",
+    ],
+];
+
+const BURUNG_OVERHEATED: [&[&str]; 4] = [
+    &[
+        "   (✇)   /\\_/\\  💦   ",
+        "    |\\ =( >.< )=     ",
+        "       < / v \\ >     ",
+        "         \"   \"       ",
+    ],
+    &[
+        "         /\\_/\\  💦💦 ",
+        "   (✇) =( >.< )=     ",
+        "    |\\ < / v \\ >     ",
+        "         \"   \"       ",
+    ],
+    &[
+        "   (✇)   /\\_/\\  💦   ",
+        "    |\\ =( x.x )=     ",
+        "       < / v \\ >     ",
+        "         \"   \"       ",
+    ],
+    &[
+        "         /\\_/\\  💦💦 ",
+        "   (✇) =( >.< )=     ",
+        "    |\\ < / v \\ >     ",
+        "         \"   \"       ",
+    ],
+];
+
+const BURUNG_SICK: [&[&str]; 4] = [
+    &[
+        "         /\\_/\\  [+]  ",
+        "       =( @.@ )=  ~  ",
+        "       < / ~ \\ >  ~  ",
+        "         🤢 🤢       ",
+    ],
+    &[
+        "         /\\_/\\  [+]  ",
+        "       =( -.- )=  ~  ",
+        "       < / ~ \\ >  ~  ",
+        "         🤢 🤢       ",
+    ],
+    &[
+        "         /\\_/\\  [+]  ",
+        "       =( @.@ )=  ~  ",
+        "       < / ~ \\ >  ~  ",
+        "         🤢 🤢       ",
+    ],
+    &[
+        "         /\\_/\\  [+]  ",
+        "       =( -.- )=  ~  ",
+        "       < / ~ \\ >  ~  ",
+        "         🤢 🤢       ",
+    ],
+];
+
+const BURUNG_SPRINT: [&[&str]; 4] = [
+    &[
+        "        //\\_/\\\\  >>  ",
+        "       =( o.o )=     ",
+        "       << /v\\ >>     ",
+        "         // \\\\       ",
+    ],
+    &[
+        "   >>   //\\_/\\\\      ",
+        "       =( o.o )=     ",
+        "       << /v\\ >>     ",
+        "         \\\\ //       ",
+    ],
+    &[
+        "        //\\_/\\\\  >>  ",
+        "       =( o.o )=     ",
+        "       << /v\\ >>     ",
+        "         // \\\\       ",
+    ],
+    &[
+        "   >>   //\\_/\\\\      ",
+        "       =( o.o )=     ",
+        "       << /v\\ >>     ",
+        "         \\\\ //       ",
+    ],
+];
+
+// ── ULAR SPRITES (Snake coiled / slithering) ────────────────────────────────
+const ULAR_IDLE: [&[&str]; 4] = [
+    &[
+        "           .---.     ",
+        "          ( o.o )    ",
+        "         / \\_=_/ \\   ",
+        "       (__________)~ ",
+    ],
+    &[
+        "           .---.     ",
+        "          ( -.- )    ",
+        "         / \\_=_/ \\   ",
+        "       (__________)~ ",
+    ],
+    &[
+        "           .---.     ",
+        "          ( o.o )    ",
+        "         / \\_O_/ \\   ",
+        "       (__________)~~",
+    ],
+    &[
+        "           .---.     ",
+        "          ( o.o )    ",
+        "         / \\_=_/ \\   ",
+        "       (__________)~ ",
+    ],
+];
+
+const ULAR_OVERHEATED: [&[&str]; 4] = [
+    &[
+        "   (✇)     .---. 💦  ",
+        "    |\\    ( >.< )    ",
+        "         / \\_=_/ \\   ",
+        "       (__________)~ ",
+    ],
+    &[
+        "           .---. 💦💦",
+        "   (✇)    ( >.< )    ",
+        "    |\\   / \\_=_/ \\   ",
+        "       (__________)~ ",
+    ],
+    &[
+        "   (✇)     .---. 💦  ",
+        "    |\\    ( x.x )    ",
+        "         / \\_=_/ \\   ",
+        "       (__________)~ ",
+    ],
+    &[
+        "           .---. 💦💦",
+        "   (✇)    ( >.< )    ",
+        "    |\\   / \\_=_/ \\   ",
+        "       (__________)~ ",
+    ],
+];
+
+const ULAR_SICK: [&[&str]; 4] = [
+    &[
+        "           .---. [+] ",
+        "          ( @.@ ) ~  ",
+        "         / \\_~_/ \\ ~ ",
+        "       (____🤢____)  ",
+    ],
+    &[
+        "           .---. [+] ",
+        "          ( -.- ) ~  ",
+        "         / \\_~_/ \\ ~ ",
+        "       (____🤢____)  ",
+    ],
+    &[
+        "           .---. [+] ",
+        "          ( @.@ ) ~  ",
+        "         / \\_~_/ \\ ~ ",
+        "       (____🤢____)  ",
+    ],
+    &[
+        "           .---. [+] ",
+        "          ( -.- ) ~  ",
+        "         / \\_~_/ \\ ~ ",
+        "       (____🤢____)  ",
+    ],
+];
+
+const ULAR_SPRINT: [&[&str]; 4] = [
+    &[
+        "       .---. >>      ",
+        "      ( o.o )        ",
+        "     / \\_=_/ \\       ",
+        "    (_________ )~~~  ",
+    ],
+    &[
+        "   >>  .---.         ",
+        "      ( o.o )        ",
+        "     / \\_=_/ \\       ",
+        "    (_________ )~~~  ",
+    ],
+    &[
+        "       .---. >>      ",
+        "      ( o.o )        ",
+        "     / \\_=_/ \\       ",
+        "    (_________ )~~~  ",
+    ],
+    &[
+        "   >>  .---.         ",
+        "      ( o.o )        ",
+        "     / \\_=_/ \\       ",
+        "    (_________ )~~~  ",
+    ],
+];
+
+// ── BERUANG SPRITES (Chubby bear) ───────────────────────────────────────────
+const BERUANG_IDLE: [&[&str]; 4] = [
+    &[
+        "       (o)_____(o)   ",
+        "      /   (o.o)   \\  ",
+        "     (     (_)     ) ",
+        "      \\   /---\\   /  ",
+        "       \"\"\"     \"\"\"   ",
+    ],
+    &[
+        "       (o)_____(o)   ",
+        "      /   (-.-)   \\  ",
+        "     (     (_)     ) ",
+        "      \\   /---\\   /  ",
+        "       \"\"\"     \"\"\"   ",
+    ],
+    &[
+        "       (o)_____(o)   ",
+        "      /  <(o.o)>  \\  ",
+        "     (     (_)     ) ",
+        "      \\   /---\\   /  ",
+        "       \"\"\"     \"\"\"   ",
+    ],
+    &[
+        "       (o)_____(o)   ",
+        "      /   (o.o)   \\  ",
+        "     (     (_)     ) ",
+        "      \\   /---\\   /  ",
+        "       \"\"\"     \"\"\"   ",
+    ],
+];
+
+const BERUANG_OVERHEATED: [&[&str]; 4] = [
+    &[
+        "  (✇)  (o)_____(o) 💦",
+        "   |\\ /   (>.<)   \\  ",
+        "     (     (_)     ) ",
+        "      \\   /---\\   /  ",
+        "       \"\"\"     \"\"\"   ",
+    ],
+    &[
+        "       (o)_____(o) 💦",
+        "  (✇) /   (>.<)   \\  ",
+        "   |\\(     (_)     ) ",
+        "      \\   /---\\   /  ",
+        "       \"\"\"     \"\"\"   ",
+    ],
+    &[
+        "  (✇)  (o)_____(o) 💦",
+        "   |\\ /   (x.x)   \\  ",
+        "     (     (_)     ) ",
+        "      \\   /---\\   /  ",
+        "       \"\"\"     \"\"\"   ",
+    ],
+    &[
+        "       (o)_____(o) 💦",
+        "  (✇) /   (>.<)   \\  ",
+        "   |\\(     (_)     ) ",
+        "      \\   /---\\   /  ",
+        "       \"\"\"     \"\"\"   ",
+    ],
+];
+
+const BERUANG_SICK: [&[&str]; 4] = [
+    &[
+        "       (o)_____(o) [+] ",
+        "      /   (@.@)   \\ ~ ",
+        "     (     (_)     ) ~ ",
+        "        🤢   🤢       ",
+    ],
+    &[
+        "       (o)_____(o) [+] ",
+        "      /   (-.-)   \\ ~ ",
+        "     (     (_)     ) ~ ",
+        "        🤢   🤢       ",
+    ],
+    &[
+        "       (o)_____(o) [+] ",
+        "      /   (@.@)   \\ ~ ",
+        "     (     (_)     ) ~ ",
+        "        🤢   🤢       ",
+    ],
+    &[
+        "       (o)_____(o) [+] ",
+        "      /   (-.-)   \\ ~ ",
+        "     (     (_)     ) ~ ",
+        "        🤢   🤢       ",
+    ],
+];
+
+const BERUANG_SPRINT: [&[&str]; 4] = [
+    &[
+        "       (o)_____(o) >> ",
+        "      /   (o.o)   \\   ",
+        "     (     (_)     )  ",
+        "        //     \\\\     ",
+    ],
+    &[
+        "   >>  (o)_____(o)    ",
+        "      /   (o.o)   \\   ",
+        "     (     (_)     )  ",
+        "        \\\\     //     ",
+    ],
+    &[
+        "       (o)_____(o) >> ",
+        "      /   (o.o)   \\   ",
+        "     (     (_)     )  ",
+        "        //     \\\\     ",
+    ],
+    &[
+        "   >>  (o)_____(o)    ",
+        "      /   (o.o)   \\   ",
+        "     (     (_)     )  ",
+        "        \\\\     //     ",
+    ],
+];
+
+/// Determines the pet's mood based on hardware telemetry.
+pub fn determine_mood(cpu_pct: f32, cpu_temp_c: f32, ram_pct: u8, swap_pct: u8) -> PetMood {
+    if ram_pct > 85 || swap_pct > 90 {
+        return PetMood::Sick;
+    }
+    if cpu_temp_c > 80.0 || cpu_pct > 85.0 {
+        return PetMood::Overheated;
+    }
+    if cpu_pct > 70.0 {
+        return PetMood::Sprint;
+    }
+    PetMood::Idle
 }
 
 #[cfg(test)]
@@ -204,5 +813,15 @@ mod tests {
         assert_eq!(PetSpecies::parse("burung"), PetSpecies::Burung);
         assert_eq!(PetSpecies::parse("ular"), PetSpecies::Ular);
         assert_eq!(PetSpecies::parse("beruang"), PetSpecies::Beruang);
+    }
+
+    #[test]
+    fn test_determine_mood() {
+        assert_eq!(determine_mood(10.0, 50.0, 20, 10), PetMood::Idle);
+        assert_eq!(determine_mood(90.0, 50.0, 20, 10), PetMood::Overheated);
+        assert_eq!(determine_mood(20.0, 90.0, 20, 10), PetMood::Overheated);
+        assert_eq!(determine_mood(10.0, 50.0, 90, 10), PetMood::Sick);
+        assert_eq!(determine_mood(10.0, 50.0, 20, 95), PetMood::Sick);
+        assert_eq!(determine_mood(75.0, 60.0, 20, 10), PetMood::Sprint);
     }
 }
