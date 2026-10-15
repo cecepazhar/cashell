@@ -44,6 +44,37 @@ pub struct MeshPeer {
     pub status: String,
 }
 
+/// A running Docker/Podman container on the local host.
+#[derive(Debug, Clone, Default)]
+pub struct DockerContainerInfo {
+    pub name: String,
+    pub image: String,
+    pub state: String, // "running", "exited", "paused", "created"
+    pub status_detail: String,
+}
+
+/// A tracked project directory from ~/Product and ~/Project.
+#[derive(Debug, Clone, Default)]
+pub struct TrackedProject {
+    pub name: String,
+    pub category: String, // "Product" or "Project"
+    pub branch: String,
+    pub is_dirty: bool,
+}
+
+/// An Uptime Kuma style endpoint monitor with heartbeat history.
+#[derive(Debug, Clone, Default)]
+pub struct UptimeMonitor {
+    pub name: String,
+    pub target: String,
+    pub is_up: bool,
+    pub latency_ms: Option<u64>,
+    pub status_code: Option<u16>,
+    pub uptime_pct: f32,
+    /// Last 20 probe results (true = up, false = down), newest last.
+    pub history: Vec<bool>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SysSnapshot {
     pub cpu_pct: f32,
@@ -72,6 +103,9 @@ pub struct SysSnapshot {
     pub active_net_iface: String,
     pub top_processes: Vec<ProcInfo>,
     pub mesh_peers: Vec<MeshPeer>,
+    pub docker_containers: Vec<DockerContainerInfo>,
+    pub tracked_projects: Vec<TrackedProject>,
+    pub uptime_monitors: Vec<UptimeMonitor>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -141,6 +175,9 @@ pub fn snapshot() -> SysSnapshot {
 
     let top_processes = probe_top_processes(&sys);
     let mesh_peers = probe_mesh();
+    let docker_containers = probe_docker_containers();
+    let tracked_projects = probe_tracked_projects();
+    let uptime_monitors = probe_uptime_monitors();
 
     SysSnapshot {
         cpu_pct,
@@ -169,7 +206,148 @@ pub fn snapshot() -> SysSnapshot {
         active_net_iface,
         top_processes,
         mesh_peers,
+        docker_containers,
+        tracked_projects,
+        uptime_monitors,
     }
+}
+
+// ── Docker Containers Probe ─────────────────────────────────────────────────
+
+pub fn probe_docker_containers() -> Vec<DockerContainerInfo> {
+    let out = Command::new("docker")
+        .args(["ps", "-a", "--format", "{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}"])
+        .output()
+        .or_else(|_| {
+            Command::new("podman")
+                .args(["ps", "-a", "--format", "{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}"])
+                .output()
+        });
+
+    let mut list = Vec::new();
+    if let Ok(o) = out {
+        if o.status.success() {
+            let text = String::from_utf8_lossy(&o.stdout);
+            for line in text.lines() {
+                let parts: Vec<&str> = line.split('|').collect();
+                if parts.len() >= 4 {
+                    list.push(DockerContainerInfo {
+                        name: parts[0].trim().to_string(),
+                        image: parts[1].trim().to_string(),
+                        state: parts[2].trim().to_lowercase(),
+                        status_detail: parts[3].trim().to_string(),
+                    });
+                }
+            }
+        }
+    }
+    list
+}
+
+// ── Tracked Projects Discovery ───────────────────────────────────────────────
+
+pub fn probe_tracked_projects() -> Vec<TrackedProject> {
+    let mut list = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        for (dir_name, cat) in [("Product", "Product"), ("Project", "Project")] {
+            let path = home.join(dir_name);
+            if let Ok(entries) = std::fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_dir() {
+                        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+                        if !name.starts_with('.') && !name.starts_with('_') && name != "target" && name != "node_modules" {
+                            let is_git = p.join(".git").exists();
+                            if is_git || p.join("Cargo.toml").exists() || p.join("package.json").exists() || p.join("go.mod").exists() {
+                                list.push(TrackedProject {
+                                    name,
+                                    category: cat.to_string(),
+                                    branch: "main".to_string(),
+                                    is_dirty: false,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    list.sort_by(|a, b| a.name.cmp(&b.name));
+    list
+}
+
+// ── Uptime Kuma Style Endpoint Monitors ──────────────────────────────────────
+
+static UPTIME_HISTORY_STORE: Mutex<Option<std::collections::HashMap<String, Vec<bool>>>> = Mutex::new(None);
+
+type ProbeResult = (String, String, bool, Option<u64>, Option<u16>);
+
+pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
+    use rayon::prelude::*;
+
+    let targets = [
+        ("Landing CATerm", "https://caterm.fathforce.com/"),
+        ("FathStore Engine", "https://fathstore.com/"),
+        ("CAUI Design System", "https://caui.fathforce.com/"),
+        ("9router AI Gateway", "http://127.0.0.1:20128/health"),
+        ("Dokploy YPC Host", "http://100.127.232.32:3000"),
+        ("Hostinger Gateway", "https://100.76.150.46:8443"),
+        ("CAShell Daemon", "http://127.0.0.1:8090/api/health"),
+        ("CAOrch VPS Agent", "http://127.0.0.1:8091/api/health"),
+    ];
+
+    let results: Vec<ProbeResult> = targets
+        .par_iter()
+        .map(|(name, url)| {
+            let start = Instant::now();
+            if url.starts_with("http://") || url.starts_with("https://") {
+                let client = reqwest::blocking::Client::builder()
+                    .timeout(Duration::from_millis(1800))
+                    .danger_accept_invalid_certs(true)
+                    .build();
+
+                if let Ok(c) = client {
+                    if let Ok(res) = c.get(*url).send() {
+                        let lat = start.elapsed().as_millis() as u64;
+                        let code = res.status().as_u16();
+                        let is_up = res.status().is_success() || res.status().is_redirection() || code == 404 || code == 401;
+                        return (name.to_string(), url.to_string(), is_up, Some(lat), Some(code));
+                    }
+                }
+                (name.to_string(), url.to_string(), false, None, None)
+            } else {
+                (name.to_string(), url.to_string(), false, None, None)
+            }
+        })
+        .collect();
+
+    // Update historical 20-heartbeat ring in global store
+    let mut store_guard = UPTIME_HISTORY_STORE.lock().unwrap();
+    let store = store_guard.get_or_insert_with(std::collections::HashMap::new);
+
+    let mut monitors = Vec::new();
+    for (name, url, is_up, latency_ms, status_code) in results {
+        let hist = store.entry(name.clone()).or_insert_with(|| vec![true; 19]);
+        hist.push(is_up);
+        if hist.len() > 20 {
+            hist.remove(0);
+        }
+
+        let up_count = hist.iter().filter(|&&u| u).count();
+        let uptime_pct = (up_count as f32 / hist.len() as f32) * 100.0;
+
+        monitors.push(UptimeMonitor {
+            name,
+            target: url,
+            is_up,
+            latency_ms,
+            status_code,
+            uptime_pct,
+            history: hist.clone(),
+        });
+    }
+
+    monitors
 }
 
 fn read_cached_mem_mb() -> u64 {
@@ -573,6 +751,9 @@ mod tests {
         assert!(snap.mounts.is_empty());
         assert!(snap.top_processes.is_empty());
         assert!(snap.mesh_peers.is_empty());
+        assert!(snap.docker_containers.is_empty());
+        assert!(snap.tracked_projects.is_empty());
+        assert!(snap.uptime_monitors.is_empty());
     }
 
     #[test]

@@ -178,6 +178,8 @@ pub enum HitboxAction {
     PetFeed,
     PetTreat,
     PetSwitch,
+    ConfirmQuit,
+    CancelQuit,
 }
 
 #[derive(Debug, Clone)]
@@ -338,6 +340,10 @@ pub struct CockpitApp {
     pub pet_history_logs: Vec<crate::pet::PetActionLog>,
     pub pet_mood: crate::pet::PetMood,
 
+    // Quit confirmation state
+    pub show_quit_confirm: bool,
+    pub quit_requested: bool,
+
     // Cron Job Wizard
     pub show_cron_wizard: bool,
     pub cron_schedule_buffer: String,
@@ -434,6 +440,9 @@ impl CockpitApp {
             show_pet_history: false,
             pet_history_logs: Vec::new(),
             pet_mood: crate::pet::PetMood::Idle,
+
+            show_quit_confirm: false,
+            quit_requested: false,
 
             show_cron_wizard: false,
             cron_schedule_buffer: "0 * * * *".to_string(),
@@ -1040,6 +1049,10 @@ fn event_loop<B: ratatui::backend::Backend>(
         // Increment pet animation tick
         app.pet_tick = app.pet_tick.wrapping_add(1);
 
+        if app.quit_requested {
+            return Ok(());
+        }
+
         // Draw current frame
         terminal.draw(|f| draw(f, app))?;
 
@@ -1245,7 +1258,21 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
     }
 
-    // 5. Global Navigation Shortcuts
+    // 5. Quit Confirmation Modal Handling
+    if app.show_quit_confirm {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                return Ok(true); // Confirm Exit
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc | KeyCode::Char('q') => {
+                app.show_quit_confirm = false;
+                return Ok(false);
+            }
+            _ => return Ok(false),
+        }
+    }
+
+    // 6. Global Navigation Shortcuts
     match key.code {
         KeyCode::Esc if app.show_pet_modal => {
             app.show_pet_modal = false;
@@ -1259,8 +1286,10 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Char('q') | KeyCode::Esc => {
             if app.inspector_open {
                 app.inspector_open = false;
+            } else if app.show_help_modal {
+                app.show_help_modal = false;
             } else {
-                return Ok(true); // Exit Cockpit
+                app.show_quit_confirm = true;
             }
         }
         KeyCode::Char('1') => app.current_tab = CockpitTab::Overview,
@@ -1545,6 +1574,13 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                         app.pet_selected_action = 2;
                         app.execute_pet_action();
                     }
+                    HitboxAction::ConfirmQuit => {
+                        app.show_quit_confirm = false;
+                        app.quit_requested = true;
+                    }
+                    HitboxAction::CancelQuit => {
+                        app.show_quit_confirm = false;
+                    }
                 }
             }
         }
@@ -1828,6 +1864,10 @@ fn draw(f: &mut Frame, app: &mut CockpitApp) {
 
     if app.show_cron_wizard {
         draw_cron_wizard(f, app, area);
+    }
+
+    if app.show_quit_confirm {
+        draw_quit_modal(f, app, area);
     }
 }
 
@@ -2119,8 +2159,9 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(12), // Top: CPU Grid + Tamagotchi Pet + Memory/Mount
-            Constraint::Length(3),  // Middle: Network & Tailscale Mesh
+            Constraint::Length(12), // Top: CPU Grid + Tamagotchi Pet + Memory/Docker/Projects
+            Constraint::Length(6),  // Middle 1: Uptime Kuma Endpoint Monitors
+            Constraint::Length(3),  // Middle 2: Network & Tailscale Mesh
             Constraint::Min(8),     // Bottom: Live Dokploy Fleet & Top Processes
         ])
         .split(area);
@@ -2239,7 +2280,8 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 Constraint::Length(1), // RAM gauge
                 Constraint::Length(1), // Swap gauge
                 Constraint::Length(1), // GPU telemetry info
-                Constraint::Min(4),    // Storage mounts table
+                Constraint::Length(1), // Docker container summary
+                Constraint::Min(3),    // Storage mounts table
             ])
             .split(mem_inner);
 
@@ -2297,6 +2339,19 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ]);
         f.render_widget(Paragraph::new(gpu_line), mem_layout[2]);
 
+        // Docker Containers & Projects Summary Bar
+        let running_cnt = snap.docker_containers.iter().filter(|c| c.state == "running").count();
+        let stopped_cnt = snap.docker_containers.iter().filter(|c| c.state != "running").count();
+        let proj_count = snap.tracked_projects.len();
+        let docker_line = Line::from(vec![
+            Span::styled("🐳 Docker: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{running_cnt} Running ● "), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{stopped_cnt} Stopped ✖  "), Style::default().fg(Color::Yellow)),
+            Span::styled("📁 Projects: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{proj_count} Tracked"), Style::default().fg(Color::Cyan)),
+        ]);
+        f.render_widget(Paragraph::new(docker_line), mem_layout[3]);
+
         // Storage Mounts Table: List "/" (Root NVMe) and "/DATA" (External)
         let mut mount_rows = Vec::new();
         for m in &snap.mounts {
@@ -2350,16 +2405,19 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             Row::new(vec!["MOUNT", "FSTYPE", "USED/TOTAL", "USAGE"])
                 .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
         );
-        f.render_widget(mount_table, mem_layout[3]);
+        f.render_widget(mount_table, mem_layout[4]);
     }
 
-    // ── Middle Bar: Network & Tailscale Mesh Bar ─────────────────────────────
+    // ── Middle Row 1: Uptime Kuma Endpoint Monitors ──────────────────────────
+    draw_uptime_kuma_panel(f, &snap, chunks[1]);
+
+    // ── Middle Row 2: Network & Tailscale Mesh Bar ───────────────────────────
     let net_block = Block::default()
         .borders(Borders::ALL)
         .title(" Network & Tailscale Mesh Telemetry ")
         .border_style(Style::default().fg(Color::LightBlue));
-    let net_inner = net_block.inner(chunks[1]);
-    f.render_widget(net_block, chunks[1]);
+    let net_inner = net_block.inner(chunks[2]);
+    f.render_widget(net_block, chunks[2]);
 
     if net_inner.width > 10 && net_inner.height > 0 {
         let mut net_spans = vec![
@@ -2404,8 +2462,8 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         .borders(Borders::ALL)
         .title(" Live Dokploy Fleet & Top Processes (Press 'j'/'k' to scroll) ")
         .border_style(Style::default().fg(Color::Cyan));
-    let fleet_inner = fleet_block.inner(chunks[2]);
-    f.render_widget(fleet_block, chunks[2]);
+    let fleet_inner = fleet_block.inner(chunks[3]);
+    f.render_widget(fleet_block, chunks[3]);
 
     struct FleetEntry {
         pid: String,
@@ -2586,9 +2644,9 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let mood_short = match app.pet_mood {
         crate::pet::PetMood::Idle => "☺ Normal",
-        crate::pet::PetMood::Overheated => "🥵 Kepanasan",
-        crate::pet::PetMood::Sick => "💀 Sakit/Stack",
-        crate::pet::PetMood::Sprint => "🏃 Sprint CPU",
+        crate::pet::PetMood::Overheated => "🥵 Overheated (Fan Active)",
+        crate::pet::PetMood::Sick => "💀 Sick / High Load",
+        crate::pet::PetMood::Sprint => "🏃 Sprinting",
     };
 
     let pet_name_display = if name.is_empty() {
@@ -2617,14 +2675,14 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if app.show_pet_history {
         let mut lines = vec![
             Line::from(vec![
-                Span::styled(" 📜 RIWAYAT AKTIVITAS HEWAN ", Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD)),
-                Span::styled(" [✖ Tutup (h/Esc)] ", Style::default().fg(palette.text_muted)),
+                Span::styled(" 📜 PET ACTIVITY HISTORY LOG ", Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD)),
+                Span::styled(" [✖ Close (h/Esc)] ", Style::default().fg(palette.text_muted)),
             ]),
             Line::from(Span::raw("─".repeat(inner.width as usize))),
         ];
         if app.pet_history_logs.is_empty() {
             lines.push(Line::from(Span::styled(
-                "Belum ada riwayat. Beri makan atau rawat hewan!",
+                "No activity logged yet. Feed or treat your pet!",
                 Style::default().fg(palette.text_muted),
             )));
         } else {
@@ -2648,7 +2706,7 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(4),    // Animated Sprite Screen
-            Constraint::Length(1), // Nav Bar: [▲ Atas] [▼ Bawah] [✔ OK] [✖ Cancel]
+            Constraint::Length(1), // Nav Bar: [▲ Up] [▼ Down] [✔ OK] [✖ Cancel]
             Constraint::Length(1), // Actions: [0: Feed] [1: Treat] [2: Switch] [3: History]
         ])
         .split(inner);
@@ -2705,9 +2763,9 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     // 2. Navigation Bar (mouse hitboxes & keyboard shortcuts)
     let nav_spans = vec![
-        Span::styled(" [▲ Atas] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(" [▲ Up] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [▼ Bawah] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(" [▼ Down] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
         Span::styled(" [✔ OK] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
@@ -2719,21 +2777,10 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let nav_inner = chunks[1];
     let _ = nav_inner;
     let nav_x = inner.x;
-    let nav_line = Paragraph::new(Line::from(vec![
-        Span::styled(" [▲ Atas] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        Span::raw(" "),
-        Span::styled(" [▼ Bawah] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        Span::raw(" "),
-        Span::styled(" [✔ OK] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD)),
-        Span::raw(" "),
-        Span::styled(" [✖ Cancel] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Red).add_modifier(Modifier::BOLD)),
-    ]));
-    let _ = nav_line;
-
-    let up_w = 9;
-    let down_w = 10;
-    let ok_w = 7;
-    let cancel_w = 12;
+    let up_w = 8u16;
+    let down_w = 10u16;
+    let ok_w = 8u16;
+    let cancel_w = 12u16;
     app.register_hitbox(
         Rect { x: nav_x, y: chunks[1].y, width: up_w, height: 1 },
         HitboxAction::PetActionUp,
@@ -2759,7 +2806,7 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         "0: 🍖Feed(f)",
         "1: 🩺Treat(t)",
         "2: 🔄Pet(s)",
-        "3: 📜Hist(h)",
+        "3: 📜Log(h)",
     ];
     let mut action_spans = Vec::new();
     let mut act_x = inner.x;
@@ -2793,6 +2840,87 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         act_x += btn_w + 1;
     }
     f.render_widget(Paragraph::new(Line::from(action_spans)), chunks[2]);
+}
+
+// ── Uptime Kuma Style Endpoint Monitors Panel ───────────────────────────────
+
+fn draw_uptime_kuma_panel(f: &mut Frame, snap: &SysSnapshot, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 🌐 Uptime Kuma Endpoint Monitors (HTTP/HTTPS, TCP & Gateways) ")
+        .border_style(Style::default().fg(Color::LightGreen));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if inner.width < 10 || inner.height < 2 {
+        return;
+    }
+
+    let rows: Vec<Row> = snap.uptime_monitors.iter().map(|m| {
+        let (status_badge, badge_color) = if m.is_up {
+            (format!("● UP ({:.1}%)", m.uptime_pct), Color::Green)
+        } else {
+            (format!("✖ DOWN ({:.1}%)", m.uptime_pct), Color::Red)
+        };
+
+        let latency_str = m
+            .latency_ms
+            .map(|l| format!("{l:>3}ms"))
+            .unwrap_or_else(|| " -- ".to_string());
+        let code_str = m
+            .status_code
+            .map(|c| format!("{c} OK"))
+            .unwrap_or_else(|| "--".to_string());
+
+        // Uptime Kuma 20-segment heartbeat timeline
+        let bar_spans: Vec<Span<'static>> = m
+            .history
+            .iter()
+            .map(|&up| {
+                if up {
+                    Span::styled("█", Style::default().fg(Color::Green))
+                } else {
+                    Span::styled("█", Style::default().fg(Color::Red))
+                }
+            })
+            .collect();
+
+        Row::new(vec![
+            Cell::from(m.name.clone())
+                .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Cell::from(status_badge)
+                .style(Style::default().fg(badge_color).add_modifier(Modifier::BOLD)),
+            Cell::from(latency_str).style(Style::default().fg(Color::Cyan)),
+            Cell::from(Line::from(bar_spans)),
+            Cell::from(code_str).style(Style::default().fg(Color::Yellow)),
+            Cell::from(m.target.clone()).style(Style::default().fg(Color::DarkGray)),
+        ])
+    })
+    .collect();
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(20),
+            Constraint::Length(15),
+            Constraint::Length(8),
+            Constraint::Length(22),
+            Constraint::Length(8),
+            Constraint::Min(20),
+        ],
+    )
+    .header(
+        Row::new(vec![
+            "MONITOR",
+            "STATUS",
+            "LATENCY",
+            "HEARTBEATS (20)",
+            "CODE",
+            "ENDPOINT",
+        ])
+        .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+    );
+    f.render_widget(table, inner);
 }
 
 // ── Tab 2: Services / Apps (Dokploy-style) ───────────────────────────────────
@@ -3800,6 +3928,66 @@ fn draw_cron_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ]),
     ];
     f.render_widget(Paragraph::new(text), inner);
+}
+
+// ── Quit Confirmation Modal ──────────────────────────────────────────────────
+
+fn draw_quit_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let popup_area = centered_rect(54, 12, area);
+    f.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(" ⚠ Exit CAShell Sovereign Cockpit ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            " Are you sure you want to exit the cockpit? ",
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            " Background daemons & monitoring will continue to run. ",
+            Style::default().fg(palette.text_muted),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                " [Y] Yes, Exit ",
+                Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("    "),
+            Span::styled(
+                " [N / Esc] Cancel & Stay ",
+                Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+    ];
+    f.render_widget(
+        Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center),
+        inner,
+    );
+
+    // Register mouse hitboxes for [Yes] and [Cancel]
+    let btn_y = inner.y + 4;
+    let yes_w = 15u16;
+    let gap_w = 4u16;
+    let cancel_w = 25u16;
+    let total_w = yes_w + gap_w + cancel_w;
+    let start_x = inner.x + (inner.width.saturating_sub(total_w)) / 2;
+
+    app.register_hitbox(
+        Rect { x: start_x, y: btn_y, width: yes_w, height: 1 },
+        HitboxAction::ConfirmQuit,
+    );
+    app.register_hitbox(
+        Rect { x: start_x + yes_w + gap_w, y: btn_y, width: cancel_w, height: 1 },
+        HitboxAction::CancelQuit,
+    );
 }
 
 // ── Unit Tests ───────────────────────────────────────────────────────────────
