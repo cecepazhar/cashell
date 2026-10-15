@@ -296,6 +296,17 @@ pub const SETTINGS_FIELDS: &[&str] = &[
     "Tailscale Target Host",
     "Doctor Target Port",
     "Port Matrix",
+    "Master Password Protection",
+    "Set/Change Master Password",
+    "Password Hint",
+    "Telegram Bot Token",
+    "Telegram Chat ID",
+    "Daemon Port",
+    "Daemon Interval (s)",
+    "Daemon Retry Threshold",
+    "Coolify Base URL",
+    "Coolify API Token",
+    "DB Auto Prune",
 ];
 
 pub const PROVIDER_OPTIONS: &[&str] = &["9router", "omniroute", "openai", "anthropic", "local"];
@@ -393,6 +404,20 @@ pub struct CockpitApp {
     pub monitor_wizard_field: usize,
     pub monitor_name_buf: String,
     pub monitor_url_buf: String,
+
+    // Security & Master Password Lock Screen
+    pub is_locked: bool,
+    pub lock_password_buf: String,
+    pub lock_error_msg: Option<String>,
+    pub lock_mask_visible: bool,
+
+    // Set Master Password Modal
+    pub show_set_password_modal: bool,
+    pub new_password_buf: String,
+    pub confirm_password_buf: String,
+    pub password_hint_buf: String,
+    pub set_password_field: usize,
+    pub set_password_error: Option<String>,
 }
 
 impl CockpitApp {
@@ -517,6 +542,18 @@ impl CockpitApp {
             monitor_wizard_field: 0,
             monitor_name_buf: String::new(),
             monitor_url_buf: String::new(),
+
+            is_locked: cfg.security.require_password && !cfg.security.master_password_hash.is_empty(),
+            lock_password_buf: String::new(),
+            lock_error_msg: None,
+            lock_mask_visible: false,
+
+            show_set_password_modal: false,
+            new_password_buf: String::new(),
+            confirm_password_buf: String::new(),
+            password_hint_buf: String::new(),
+            set_password_field: 0,
+            set_password_error: None,
         };
 
         app.refresh_audit_reports();
@@ -869,6 +906,25 @@ impl CockpitApp {
                 let size = format_bytes(self.get_db_size());
                 self.set_notification(format!("Current SQLite DB size: {size} (read-only)"));
             }
+            11 => {
+                self.cfg.security.require_password = !self.cfg.security.require_password;
+                if self.cfg.security.require_password && self.cfg.security.master_password_hash.is_empty() {
+                    self.show_set_password_modal = true;
+                } else {
+                    self.save_config_silent();
+                    let state_str = if self.cfg.security.require_password { "Enabled" } else { "Disabled" };
+                    self.set_notification(format!("Master Password Protection: {state_str}"));
+                }
+            }
+            12 => {
+                self.show_set_password_modal = true;
+            }
+            21 => {
+                self.cfg.database.auto_prune = !self.cfg.database.auto_prune;
+                self.save_config_silent();
+                let state_str = if self.cfg.database.auto_prune { "Enabled" } else { "Disabled" };
+                self.set_notification(format!("DB Auto-Prune: {state_str}"));
+            }
             _ => {}
         }
     }
@@ -1012,6 +1068,35 @@ impl CockpitApp {
                 self.set_notification(err_msg);
             }
         }
+    }
+
+    /// Submit the set/change master password modal.
+    pub fn submit_set_password(&mut self) {
+        let p1 = self.new_password_buf.clone();
+        let p2 = self.confirm_password_buf.clone();
+
+        if p1.is_empty() {
+            self.set_password_error = Some("Password cannot be empty".to_string());
+            return;
+        }
+        if p1 != p2 {
+            self.set_password_error = Some("Passwords do not match".to_string());
+            return;
+        }
+
+        self.cfg.security.master_password_hash = crate::config::hash_master_password(&p1);
+        self.cfg.security.require_password = true;
+        if !self.password_hint_buf.trim().is_empty() {
+            self.cfg.security.hint = self.password_hint_buf.trim().to_string();
+        }
+        self.save_config_silent();
+
+        self.show_set_password_modal = false;
+        self.new_password_buf.clear();
+        self.confirm_password_buf.clear();
+        self.password_hint_buf.clear();
+        self.set_password_error = None;
+        self.set_notification("✔ Master password updated & security enabled");
     }
 
     pub fn reload_config(&mut self) {
@@ -1594,6 +1679,97 @@ fn handle_key_event<B: ratatui::backend::Backend>(
     app: &mut CockpitApp,
     terminal: &mut Terminal<B>,
 ) -> Result<bool> {
+    // 0. Master Password Lock Screen Input Handling
+    if app.is_locked {
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => {
+                return Ok(true); // Exit application cleanly from lock screen
+            }
+            KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.lock_mask_visible = !app.lock_mask_visible;
+            }
+            KeyCode::Enter => {
+                let valid = crate::config::verify_master_password(
+                    &app.lock_password_buf,
+                    &app.cfg.security.master_password_hash,
+                );
+                if valid {
+                    app.is_locked = false;
+                    app.lock_password_buf.clear();
+                    app.lock_error_msg = None;
+                    app.set_notification("✔ Access granted — Cockpit unlocked");
+                } else {
+                    app.lock_error_msg = Some("✗ Invalid master password".to_string());
+                    app.lock_password_buf.clear();
+                }
+            }
+            KeyCode::Backspace => {
+                app.lock_password_buf.pop();
+                app.lock_error_msg = None;
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.lock_password_buf.push(c);
+                app.lock_error_msg = None;
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
+    // 0b. Set Master Password Modal Input Handling
+    if app.show_set_password_modal {
+        match key.code {
+            KeyCode::Esc => {
+                app.show_set_password_modal = false;
+                app.new_password_buf.clear();
+                app.confirm_password_buf.clear();
+                app.password_hint_buf.clear();
+                app.set_password_error = None;
+            }
+            KeyCode::Tab => {
+                app.set_password_field = (app.set_password_field + 1) % 3;
+            }
+            KeyCode::BackTab => {
+                app.set_password_field = (app.set_password_field + 2) % 3;
+            }
+            KeyCode::Enter => {
+                app.submit_set_password();
+            }
+            KeyCode::Backspace => {
+                match app.set_password_field {
+                    0 => {
+                        app.new_password_buf.pop();
+                    }
+                    1 => {
+                        app.confirm_password_buf.pop();
+                    }
+                    2 => {
+                        app.password_hint_buf.pop();
+                    }
+                    _ => {}
+                }
+                app.set_password_error = None;
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                match app.set_password_field {
+                    0 => {
+                        app.new_password_buf.push(c);
+                    }
+                    1 => {
+                        app.confirm_password_buf.push(c);
+                    }
+                    2 => {
+                        app.password_hint_buf.push(c);
+                    }
+                    _ => {}
+                }
+                app.set_password_error = None;
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
     // 1. Shift + 1..5 MUST switch tabs immediately (even in Chat tab or editing mode)
     let shift_tab = match key.code {
         KeyCode::Char('!') => Some(0),
@@ -1797,6 +1973,14 @@ fn handle_key_event<B: ratatui::backend::Backend>(
 
     // 6. Global Navigation Shortcuts
     match key.code {
+        KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if !app.cfg.security.master_password_hash.is_empty() {
+                app.is_locked = true;
+                app.set_notification("🔒 Cockpit locked");
+            } else {
+                app.set_notification("⚠ Master password not set. Configure it in Settings GUI [5].");
+            }
+        }
         KeyCode::Esc if app.show_pet_modal => {
             app.show_pet_modal = false;
         }
@@ -2394,6 +2578,53 @@ fn start_field_edit(app: &mut CockpitApp) {
             app.editing_field = Some(10);
             app.edit_buffer = ports;
         }
+        11 => app.cycle_field_value(true),
+        12 => {
+            app.show_set_password_modal = true;
+            app.set_password_field = 0;
+            app.set_password_error = None;
+        }
+        13 => {
+            // Password Hint
+            app.editing_field = Some(13);
+            app.edit_buffer = app.cfg.security.hint.clone();
+        }
+        14 => {
+            // Telegram Bot Token
+            app.editing_field = Some(14);
+            app.edit_buffer = app.cfg.daemon.telegram_bot_token.clone();
+        }
+        15 => {
+            // Telegram Chat ID
+            app.editing_field = Some(15);
+            app.edit_buffer = app.cfg.daemon.telegram_chat_id.clone();
+        }
+        16 => {
+            // Daemon Port
+            app.editing_field = Some(16);
+            app.edit_buffer = app.cfg.daemon.port.to_string();
+        }
+        17 => {
+            // Daemon Interval
+            app.editing_field = Some(17);
+            app.edit_buffer = app.cfg.daemon.interval_secs.to_string();
+        }
+        18 => {
+            // Daemon Retry Threshold
+            app.editing_field = Some(18);
+            app.edit_buffer = app.cfg.daemon.retry_threshold.to_string();
+        }
+        19 => {
+            // Coolify Base URL
+            app.editing_field = Some(19);
+            app.edit_buffer = app.cfg.deploy.coolify.as_ref().map(|c| c.base_url.clone()).unwrap_or_default();
+        }
+        20 => {
+            // Coolify API Token
+            app.editing_field = Some(20);
+            app.edit_buffer = app.cfg.deploy.coolify.as_ref().map(|c| c.api_token.clone()).unwrap_or_default();
+        }
+        21 => app.cycle_field_value(true),
         _ => {}
     }
 }
@@ -2459,6 +2690,66 @@ fn commit_field_edit(app: &mut CockpitApp, field_idx: usize) {
             } else {
                 app.set_notification("Invalid port matrix list");
             }
+        }
+        13 => {
+            app.cfg.security.hint = val.clone();
+            app.set_notification(format!("Password hint set to: {val}"));
+        }
+        14 => {
+            app.cfg.daemon.telegram_bot_token = val;
+            app.set_notification("Telegram bot token updated");
+        }
+        15 => {
+            app.cfg.daemon.telegram_chat_id = val.clone();
+            app.set_notification(format!("Telegram chat ID set to: {val}"));
+        }
+        16 => {
+            if let Ok(p) = val.parse::<u16>() {
+                app.cfg.daemon.port = p;
+                app.set_notification(format!("Daemon port set to: {p}"));
+            } else {
+                app.set_notification("Invalid port number");
+            }
+        }
+        17 => {
+            if let Ok(s) = val.parse::<u64>() {
+                app.cfg.daemon.interval_secs = s.max(5);
+                app.set_notification(format!("Daemon probe interval set to: {s}s"));
+            } else {
+                app.set_notification("Invalid interval number");
+            }
+        }
+        18 => {
+            if let Ok(r) = val.parse::<u32>() {
+                app.cfg.daemon.retry_threshold = r.max(1);
+                app.set_notification(format!("Daemon retry threshold set to: {r}"));
+            } else {
+                app.set_notification("Invalid threshold number");
+            }
+        }
+        19 => {
+            if app.cfg.deploy.coolify.is_none() {
+                app.cfg.deploy.coolify = Some(crate::config::CoolifyConfig {
+                    base_url: val.clone(),
+                    api_token: String::new(),
+                    timeout_seconds: 60,
+                });
+            } else if let Some(ref mut c) = app.cfg.deploy.coolify {
+                c.base_url = val.clone();
+            }
+            app.set_notification(format!("Coolify base URL set to: {val}"));
+        }
+        20 => {
+            if app.cfg.deploy.coolify.is_none() {
+                app.cfg.deploy.coolify = Some(crate::config::CoolifyConfig {
+                    base_url: String::new(),
+                    api_token: val,
+                    timeout_seconds: 60,
+                });
+            } else if let Some(ref mut c) = app.cfg.deploy.coolify {
+                c.api_token = val;
+            }
+            app.set_notification("Coolify API token updated");
         }
         _ => {}
     }
@@ -2551,8 +2842,18 @@ fn trigger_run_fix<B: ratatui::backend::Backend>(
 fn draw(f: &mut Frame, app: &mut CockpitApp) {
     app.hitboxes.clear();
     let area = f.area();
+    draw_lock_or_app(f, app, area);
+}
 
-    // Small terminal fallback (< 80x24)
+// ── Master Password Lock Screen & Draw Handler ───────────────────────────────
+
+fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    if app.is_locked {
+        f.render_widget(Clear, area);
+        draw_lock_screen(f, app, area);
+        return;
+    }
+
     if app.is_compact || area.width < 80 || area.height < 24 {
         draw_compact_fallback(f, app, area);
         return;
@@ -2617,6 +2918,10 @@ fn draw(f: &mut Frame, app: &mut CockpitApp) {
 
     if app.show_quit_confirm {
         draw_quit_modal(f, app, area);
+    }
+
+    if app.show_set_password_modal {
+        draw_set_password_modal(f, app, area);
     }
 }
 
@@ -4217,7 +4522,47 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         .collect::<Vec<_>>()
         .join(", ");
 
-    let values: [&str; 11] = [
+    let pw_status = if app.cfg.security.require_password {
+        "● ENABLED (Protected on startup)"
+    } else {
+        "○ Disabled (Open access)"
+    };
+    let pw_change_label = if app.cfg.security.master_password_hash.is_empty() {
+        "[Click/Enter to Set Master Password]"
+    } else {
+        "•••••••• [Click/Enter to Change]"
+    };
+    let pw_hint = if app.cfg.security.hint.is_empty() {
+        "[None]"
+    } else {
+        app.cfg.security.hint.as_str()
+    };
+    let tg_token_masked = if app.cfg.daemon.telegram_bot_token.is_empty() {
+        "[Not Configured]"
+    } else {
+        "••••••••••••••••"
+    };
+    let tg_chat_id = if app.cfg.daemon.telegram_chat_id.is_empty() {
+        "[Not Configured]"
+    } else {
+        app.cfg.daemon.telegram_chat_id.as_str()
+    };
+    let daemon_port_str = app.cfg.daemon.port.to_string();
+    let daemon_interval_str = format!("{} seconds", app.cfg.daemon.interval_secs);
+    let daemon_retry_str = format!("{} failures", app.cfg.daemon.retry_threshold);
+    let coolify_url = if let Some(ref c) = app.cfg.deploy.coolify {
+        c.base_url.as_str()
+    } else {
+        "[Not Configured]"
+    };
+    let coolify_token = if let Some(ref c) = app.cfg.deploy.coolify {
+        if c.api_token.is_empty() { "[None]" } else { "••••••••" }
+    } else {
+        "[Not Configured]"
+    };
+    let auto_prune_str = if app.cfg.database.auto_prune { "Enabled" } else { "Disabled" };
+
+    let values: [&str; 22] = [
         provider.as_str(),
         model,
         masked_key,
@@ -4229,6 +4574,17 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         target_host.as_str(),
         target_port.as_str(),
         port_matrix.as_str(),
+        pw_status,
+        pw_change_label,
+        pw_hint,
+        tg_token_masked,
+        tg_chat_id,
+        daemon_port_str.as_str(),
+        daemon_interval_str.as_str(),
+        daemon_retry_str.as_str(),
+        coolify_url,
+        coolify_token,
+        auto_prune_str,
     ];
 
     let items: Vec<ListItem> = SETTINGS_FIELDS
@@ -4390,7 +4746,7 @@ fn draw_chat_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
 fn draw_footer(f: &mut Frame, app: &CockpitApp, area: Rect) {
     let palette = ThemePalette::get(&app.cfg.output.theme);
-    let keybinds = " [1-5]: Tabs │ Tab: Cycle │ Shift+1-5: Jump │ ?: Help │ Esc/q: Quit │ Enter: Send/Edit │ Mouse ";
+    let keybinds = " [1-6]: Tabs │ Tab: Cycle │ Shift+1-6: Jump │ Ctrl+L: Lock │ ?: Help │ Esc/q: Quit │ Enter: Edit ";
     let content = if let Some((msg, _)) = &app.notification {
         Line::from(vec![
             Span::styled(
@@ -5270,6 +5626,156 @@ fn draw_quit_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     );
 }
 
+// ── Master Password Lock Screen ──────────────────────────────────────────────
+
+fn draw_lock_screen(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let popup_area = centered_rect(58, 16, area);
+    f.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(" 🔒 CASHELL SOVEREIGN COCKPIT — AUTHENTICATION REQUIRED ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    let masked_pw = if app.lock_mask_visible {
+        if app.lock_password_buf.is_empty() {
+            "Type master password...".to_string()
+        } else {
+            app.lock_password_buf.clone()
+        }
+    } else {
+        if app.lock_password_buf.is_empty() {
+            "Type master password...".to_string()
+        } else {
+            "•".repeat(app.lock_password_buf.len())
+        }
+    };
+
+    let eye_icon = if app.lock_mask_visible { "👁 View" } else { "🔒 Masked" };
+
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            " Master Password Filter Active ",
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            " Unauthorized terminal access is restricted on this workstation. ",
+            Style::default().fg(palette.text_muted),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(" Password: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!(" [ {}█ ] ", masked_pw),
+                Style::default()
+                    .fg(Color::Rgb(0, 0, 0))
+                    .bg(if app.lock_password_buf.is_empty() { Color::DarkGray } else { palette.highlight_bg })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!(" [{}]", eye_icon), Style::default().fg(palette.text_muted)),
+        ]),
+        Line::from(""),
+    ];
+
+    if let Some(ref err) = app.lock_error_msg {
+        lines.push(Line::from(Span::styled(err.clone(), Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))));
+    } else if !app.cfg.security.hint.is_empty() {
+        lines.push(Line::from(Span::styled(format!("Hint: {}", app.cfg.security.hint), Style::default().fg(Color::Yellow))));
+    } else {
+        lines.push(Line::from(""));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(" [Enter] Unlock ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::raw("    "),
+        Span::styled(" [Ctrl+E] Toggle View ", Style::default().fg(palette.accent)),
+        Span::raw("    "),
+        Span::styled(" [Esc/q] Exit ", Style::default().fg(palette.text_muted)),
+    ]));
+
+    f.render_widget(
+        Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center),
+        inner,
+    );
+}
+
+// ── Set Master Password Modal ────────────────────────────────────────────────
+
+fn draw_set_password_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let popup_area = centered_rect(62, 20, area);
+    f.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(" 🔑 Set / Change Master Password ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    let p1_mask = "•".repeat(app.new_password_buf.len());
+    let p2_mask = "•".repeat(app.confirm_password_buf.len());
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            " Protect CAShell Cockpit with Master Authentication ",
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            " Anyone launching 'cas' will be prompted to enter this password. ",
+            Style::default().fg(palette.text_muted),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(if app.set_password_field == 0 { "▶ " } else { "  " }, Style::default().fg(palette.accent)),
+            Span::styled("New Password:     ", Style::default().fg(if app.set_password_field == 0 { palette.accent } else { Color::White })),
+            Span::styled(
+                format!(" [ {}█ ]", if app.new_password_buf.is_empty() { "Enter new password" } else { &p1_mask }),
+                Style::default().fg(palette.highlight_fg).bg(if app.set_password_field == 0 { palette.highlight_bg } else { Color::Reset }),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(if app.set_password_field == 1 { "▶ " } else { "  " }, Style::default().fg(palette.accent)),
+            Span::styled("Confirm Password: ", Style::default().fg(if app.set_password_field == 1 { palette.accent } else { Color::White })),
+            Span::styled(
+                format!(" [ {}█ ]", if app.confirm_password_buf.is_empty() { "Re-enter password" } else { &p2_mask }),
+                Style::default().fg(palette.highlight_fg).bg(if app.set_password_field == 1 { palette.highlight_bg } else { Color::Reset }),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(if app.set_password_field == 2 { "▶ " } else { "  " }, Style::default().fg(palette.accent)),
+            Span::styled("Password Hint:    ", Style::default().fg(if app.set_password_field == 2 { palette.accent } else { Color::White })),
+            Span::styled(
+                format!(" [ {}█ ]", if app.password_hint_buf.is_empty() { "Optional reminder hint" } else { &app.password_hint_buf }),
+                Style::default().fg(palette.text).bg(if app.set_password_field == 2 { palette.highlight_bg } else { Color::Reset }),
+            ),
+        ]),
+        Line::from(""),
+    ];
+
+    let mut body_lines = lines;
+    if let Some(ref err) = app.set_password_error {
+        body_lines.push(Line::from(Span::styled(err.clone(), Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))));
+    } else {
+        body_lines.push(Line::from(Span::styled("Use Tab/Shift+Tab to switch fields. Press Enter to Save.", Style::default().fg(palette.text_muted))));
+    }
+
+    body_lines.push(Line::from(""));
+    body_lines.push(Line::from(vec![
+        Span::styled(" [Enter] Save & Enable ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::raw("    "),
+        Span::styled(" [Esc] Cancel ", Style::default().fg(palette.text_muted)),
+    ]));
+
+    f.render_widget(Paragraph::new(body_lines), inner);
+}
+
 // ── Unit Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -5521,5 +6027,53 @@ mod tests {
         // Esc closes
         handle_server_wizard_key(event::KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()), &mut app);
         assert!(!app.show_server_wizard);
+    }
+
+    #[test]
+    fn test_master_password_hash_and_verify() {
+        let pass = "Sovereign2026!";
+        let hash = crate::config::hash_master_password(pass);
+        assert!(!hash.is_empty());
+        assert_ne!(pass, hash);
+        assert!(crate::config::verify_master_password(pass, &hash));
+        assert!(!crate::config::verify_master_password("WrongPassword", &hash));
+    }
+
+    #[test]
+    fn test_master_password_submit_and_lock() {
+        let mut app = CockpitApp::new(&Config::default());
+        assert!(!app.is_locked);
+        assert!(!app.cfg.security.require_password);
+
+        // Fill modal with mismatched password
+        app.show_set_password_modal = true;
+        app.new_password_buf = "Secret123".to_string();
+        app.confirm_password_buf = "Different456".to_string();
+        app.submit_set_password();
+        assert!(app.show_set_password_modal); // Still open due to mismatch
+        assert!(app.set_password_error.is_some());
+
+        // Fill modal with matching password
+        app.confirm_password_buf = "Secret123".to_string();
+        app.password_hint_buf = "my secret".to_string();
+        app.submit_set_password();
+        assert!(!app.show_set_password_modal);
+        assert!(app.set_password_error.is_none());
+        assert!(app.cfg.security.require_password);
+        assert!(!app.cfg.security.master_password_hash.is_empty());
+        assert_eq!(app.cfg.security.hint, "my secret");
+
+        // Now if we start app with require_password, it should be locked
+        let app_locked = CockpitApp::new(&app.cfg);
+        assert!(app_locked.is_locked);
+    }
+
+    #[test]
+    fn test_settings_fields_coverage() {
+        assert_eq!(SETTINGS_FIELDS.len(), 22);
+        assert_eq!(SETTINGS_FIELDS[0], "AI Provider");
+        assert_eq!(SETTINGS_FIELDS[3], "Output Theme");
+        assert_eq!(SETTINGS_FIELDS[11], "Master Password Protection");
+        assert_eq!(SETTINGS_FIELDS[12], "Set/Change Master Password");
     }
 }

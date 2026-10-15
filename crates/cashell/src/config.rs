@@ -55,6 +55,8 @@ pub struct Config {
     pub uptime: UptimeConfig,
     #[serde(default)]
     pub docker: DockerConfig,
+    #[serde(default)]
+    pub security: SecurityConfig,
 }
 
 /// Daemon & multi-node orchestration configuration.
@@ -599,4 +601,33 @@ impl Config {
         std::fs::write(path, content)?;
         Ok(())
     }
+}
+
+/// Security and master password configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SecurityConfig {
+    #[serde(default)]
+    pub require_password: bool,
+    #[serde(default)]
+    pub master_password_hash: String,
+    #[serde(default)]
+    pub hint: String,
+}
+
+use sha2::{Digest, Sha256};
+
+/// Hash master password using SHA-256 with sovereign domain salt.
+pub fn hash_master_password(password: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"cashell_master_salt_sovereign_2026_");
+    hasher.update(password.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// Verify an input password against stored hash.
+pub fn verify_master_password(password: &str, stored_hash: &str) -> bool {
+    if stored_hash.is_empty() {
+        return true;
+    }
+    hash_master_password(password) == stored_hash
 }
