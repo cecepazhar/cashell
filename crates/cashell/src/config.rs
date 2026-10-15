@@ -51,6 +51,10 @@ pub struct Config {
     pub database: DatabaseConfig,
     #[serde(default)]
     pub daemon: DaemonConfig,
+    #[serde(default)]
+    pub uptime: UptimeConfig,
+    #[serde(default)]
+    pub docker: DockerConfig,
 }
 
 /// Daemon & multi-node orchestration configuration.
@@ -300,6 +304,8 @@ pub struct WorkspaceConfig {
     pub scan_dirs: Vec<String>,
     #[serde(default = "default_ignore_patterns")]
     pub ignore_patterns: Vec<String>,
+    #[serde(default)]
+    pub custom_projects: Vec<String>,
 }
 
 impl Default for WorkspaceConfig {
@@ -307,6 +313,7 @@ impl Default for WorkspaceConfig {
         Self {
             scan_dirs: default_scan_dirs(),
             ignore_patterns: default_ignore_patterns(),
+            custom_projects: Vec::new(),
         }
     }
 }
@@ -323,6 +330,42 @@ fn default_ignore_patterns() -> Vec<String> {
         "_archive".to_string(),
         "tmp".to_string(),
     ]
+}
+
+/// Uptime Kuma endpoint monitor configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UptimeConfig {
+    /// Custom Uptime Kuma endpoint monitors added via the cockpit wizard.
+    #[serde(default)]
+    pub custom_monitors: Vec<UptimeMonitorConfig>,
+}
+
+/// A custom Uptime Kuma style endpoint monitor definition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UptimeMonitorConfig {
+    pub name: String,
+    pub target: String,
+}
+
+/// Docker container runtime configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DockerConfig {
+    /// Containers started via the cockpit "Add Docker Container" wizard.
+    #[serde(default)]
+    pub containers: Vec<DockerContainerConfig>,
+}
+
+/// A Docker container launched through the cockpit wizard.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DockerContainerConfig {
+    pub name: String,
+    pub image: String,
+    #[serde(default)]
+    pub ports: Vec<String>,
+    #[serde(default)]
+    pub env: Vec<String>,
+    #[serde(default)]
+    pub started_at: String,
 }
 
 /// AI layer config (REQ-P2-02). All fields serde-defaulted so old configs load.

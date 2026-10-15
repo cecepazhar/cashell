@@ -180,6 +180,25 @@ pub enum HitboxAction {
     PetSwitch,
     ConfirmQuit,
     CancelQuit,
+    // Add-wizard openers
+    AddServer,
+    AddProject,
+    AddContainer,
+    AddMonitor,
+    // Add-wizard field focus
+    FocusServerField(usize),
+    FocusProjectField(usize),
+    FocusContainerField(usize),
+    FocusMonitorField(usize),
+    // Add-wizard actions
+    SubmitServer,
+    SubmitProject,
+    SubmitContainer,
+    SubmitMonitor,
+    CancelServer,
+    CancelProject,
+    CancelContainer,
+    CancelMonitor,
 }
 
 #[derive(Debug, Clone)]
@@ -348,6 +367,32 @@ pub struct CockpitApp {
     pub show_cron_wizard: bool,
     pub cron_schedule_buffer: String,
     pub cron_command_buffer: String,
+
+    // Add Wizard (Server / Project / Docker Container / Uptime Monitor)
+    pub show_server_wizard: bool,
+    pub server_wizard_field: usize,
+    pub server_name_buf: String,
+    pub server_ip_buf: String,
+    pub server_user_buf: String,
+    pub server_services_buf: String,
+
+    pub show_project_wizard: bool,
+    pub project_wizard_field: usize,
+    pub project_path_buf: String,
+    pub project_name_buf: String,
+    pub project_category_buf: String,
+
+    pub show_container_wizard: bool,
+    pub container_wizard_field: usize,
+    pub container_name_buf: String,
+    pub container_image_buf: String,
+    pub container_port_buf: String,
+    pub container_env_buf: String,
+
+    pub show_monitor_wizard: bool,
+    pub monitor_wizard_field: usize,
+    pub monitor_name_buf: String,
+    pub monitor_url_buf: String,
 }
 
 impl CockpitApp {
@@ -447,6 +492,31 @@ impl CockpitApp {
             show_cron_wizard: false,
             cron_schedule_buffer: "0 * * * *".to_string(),
             cron_command_buffer: "echo 'hello'".to_string(),
+
+            show_server_wizard: false,
+            server_wizard_field: 0,
+            server_name_buf: String::new(),
+            server_ip_buf: String::new(),
+            server_user_buf: "root".to_string(),
+            server_services_buf: "http:80,ssh:22".to_string(),
+
+            show_project_wizard: false,
+            project_wizard_field: 0,
+            project_path_buf: String::new(),
+            project_name_buf: String::new(),
+            project_category_buf: "Product".to_string(),
+
+            show_container_wizard: false,
+            container_wizard_field: 0,
+            container_name_buf: String::new(),
+            container_image_buf: String::new(),
+            container_port_buf: String::new(),
+            container_env_buf: String::new(),
+
+            show_monitor_wizard: false,
+            monitor_wizard_field: 0,
+            monitor_name_buf: String::new(),
+            monitor_url_buf: String::new(),
         };
 
         app.refresh_audit_reports();
@@ -543,27 +613,58 @@ impl CockpitApp {
             });
         }
 
+        // 6. Fleet nodes from config
+        for (node_name, node_cfg) in &cfg.daemon.nodes {
+            for svc in &node_cfg.services {
+                let target = if svc.protocol == "http" || svc.protocol == "https" {
+                    format!("{}/{}", svc.protocol, node_cfg.ip)
+                } else {
+                    format!("{}:{}", node_cfg.ip, svc.port)
+                };
+                list.push(AppCard {
+                    id: format!("fleet-{}-{}", node_name, svc.name),
+                    name: format!("{}:{}", node_name, svc.name),
+                    category: "Fleet Node".to_string(),
+                    target,
+                    port: Some(svc.port),
+                    status: ServiceStatus::Probing,
+                    latency_ms: None,
+                    details: format!(
+                        "Fleet node '{}' service '{}' ({}:{})",
+                        node_name, svc.name, node_cfg.ip, svc.port
+                    ),
+                });
+            }
+        }
+
         list
     }
 
     pub fn probe_all_ports(&mut self) {
         for app in &mut self.apps {
             if let Some(port) = app.port {
-                let start = Instant::now();
-                let addr = SocketAddr::from(([127, 0, 0, 1], port));
-                match TcpStream::connect_timeout(&addr, Duration::from_millis(40)) {
-                    Ok(_) => {
-                        let rtt = start.elapsed().as_millis();
-                        app.latency_ms = Some(rtt);
-                        app.status = if app.category == "Port Matrix" {
-                            ServiceStatus::Listening
-                        } else {
-                            ServiceStatus::Healthy
-                        };
-                    }
-                    Err(_) => {
-                        app.latency_ms = None;
-                        app.status = ServiceStatus::Down;
+                let target_ip = if app.target.starts_with("http") || app.target.starts_with("coolify:") {
+                    "127.0.0.1"
+                } else {
+                    app.target.split_once(':').map(|(host, _)| host).unwrap_or("127.0.0.1")
+                };
+                let addr: Option<SocketAddr> = format!("{target_ip}:{port}").parse().ok();
+                if let Some(addr) = addr {
+                    let start = Instant::now();
+                    match TcpStream::connect_timeout(&addr, Duration::from_millis(40)) {
+                        Ok(_) => {
+                            let rtt = start.elapsed().as_millis();
+                            app.latency_ms = Some(rtt);
+                            app.status = if app.category == "Port Matrix" {
+                                ServiceStatus::Listening
+                            } else {
+                                ServiceStatus::Healthy
+                            };
+                        }
+                        Err(_) => {
+                            app.latency_ms = None;
+                            app.status = ServiceStatus::Down;
+                        }
                     }
                 }
             }
@@ -928,6 +1029,406 @@ impl CockpitApp {
             }
         }
     }
+
+    /// Save the current config silently (no notification). Used by add-wizards.
+    fn save_config_silent(&mut self) -> bool {
+        let path = Config::default_path();
+        self.cfg.save(&path).is_ok()
+    }
+
+    /// Parse a services string like "name:port, name2:port2, 3000" into ServiceConfig vec.
+    fn parse_services(&self, raw: &str) -> Vec<crate::config::ServiceConfig> {
+        raw.split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|token| {
+                let mut name = "svc".to_string();
+                let mut port: u16 = 80;
+                let mut protocol = "http".to_string();
+                let parts: Vec<&str> = token.split(':').collect();
+                if parts.len() >= 2 {
+                    name = parts[0].to_string();
+                    port = parts[1].parse().unwrap_or(80);
+                } else if parts.len() == 1 {
+                    if let Ok(p) = parts[0].parse::<u16>() {
+                        port = p;
+                        name = "svc".to_string();
+                    }
+                }
+                if token.ends_with("https") {
+                    protocol = "https".to_string();
+                }
+                crate::config::ServiceConfig {
+                    name,
+                    port,
+                    protocol,
+                }
+            })
+            .collect()
+    }
+
+    /// Submit the "Add Server" wizard.
+    pub fn submit_server_wizard(&mut self) {
+        let name = self.server_name_buf.trim().to_string();
+        let ip = self.server_ip_buf.trim().to_string();
+        let user = self.server_user_buf.trim().to_string();
+        let services = self.parse_services(&self.server_services_buf);
+
+        if name.is_empty() {
+            self.set_notification("✗ Server name cannot be empty");
+            return;
+        }
+        if ip.is_empty() {
+            self.set_notification("✗ Server IP address cannot be empty");
+            return;
+        }
+
+        let node_cfg = crate::config::NodeConfig {
+            ip: ip.clone(),
+            user,
+            services,
+        };
+
+        let was_new = !self.cfg.daemon.nodes.contains_key(&name);
+        self.cfg.daemon.nodes.insert(name.clone(), node_cfg);
+        if self.save_config_silent() {
+            if let Some(ref d) = self.db {
+                let _ = d.register_node(&name, &name, &ip, "");
+                let _ = d.log_event(
+                    "INFO",
+                    "cockpit",
+                    &format!("Fleet node '{}' registered via add-server wizard", name),
+                );
+            }
+        }
+
+        // Auto-probe: refresh apps and probe ports
+        self.apps = Self::init_apps(&self.cfg);
+        self.probe_all_ports();
+
+        let action = if was_new { "added" } else { "updated" };
+        self.set_notification(format!(
+            "✓ Fleet node '{}' {} and auto-probed",
+            name, action
+        ));
+        self.show_server_wizard = false;
+        self.server_wizard_field = 0;
+        self.server_name_buf.clear();
+        self.server_ip_buf.clear();
+        self.server_user_buf = "root".to_string();
+        self.server_services_buf = "http:80,ssh:22".to_string();
+    }
+
+    /// Submit the "Add Project" wizard.
+    pub fn submit_project_wizard(&mut self) {
+        let path = self.project_path_buf.trim().to_string();
+        let name = self.project_name_buf.trim().to_string();
+        let category = self.project_category_buf.trim().to_string();
+
+        if path.is_empty() {
+            self.set_notification("✗ Project path cannot be empty");
+            return;
+        }
+
+        // Expand ~ to home
+        let expanded = if let Some(stripped) = path.strip_prefix("~/") {
+            if let Some(h) = dirs::home_dir() {
+                h.join(stripped).to_string_lossy().to_string()
+            } else {
+                path.clone()
+            }
+        } else {
+            path.clone()
+        };
+
+        let display_name = if name.is_empty() {
+            expanded.rsplit('/').next().unwrap_or("project").to_string()
+        } else {
+            name
+        };
+
+        let cat = if category.is_empty() {
+            "Product".to_string()
+        } else {
+            category
+        };
+
+        // Persist to config (workspace.custom_projects)
+        let normalized = if expanded.starts_with("~/") {
+            expanded.clone()
+        } else if let Ok(abs) = std::fs::canonicalize(&expanded) {
+            abs.to_string_lossy().to_string()
+        } else {
+            expanded.clone()
+        };
+        if !self.cfg.workspace.custom_projects.iter().any(|p| p == &normalized) {
+            self.cfg.workspace.custom_projects.push(normalized.clone());
+            self.save_config_silent();
+        }
+
+        // Persist to SQLite
+        if let Some(ref d) = self.db {
+            let _ = d.add_tracked_project(
+                &normalized,
+                &display_name,
+                &cat,
+                "main",
+                false,
+            );
+            let _ = d.log_event(
+                "INFO",
+                "cockpit",
+                &format!("Project '{}' ({}) added via add-project wizard", display_name, cat),
+            );
+        }
+
+        // Update in-memory snapshot immediately
+        let p = std::path::Path::new(&expanded);
+        let is_dirty = p.join(".git").exists();
+        self.latest_snap.tracked_projects.push(crate::systat::TrackedProject {
+            name: display_name.clone(),
+            category: cat,
+            branch: "main".to_string(),
+            is_dirty,
+        });
+
+        self.set_notification(format!(
+            "✓ Project '{}' added to tracked projects",
+            display_name
+        ));
+        self.show_project_wizard = false;
+        self.project_wizard_field = 0;
+        self.project_path_buf.clear();
+        self.project_name_buf.clear();
+        self.project_category_buf = "Product".to_string();
+    }
+
+    /// Submit the "Add Docker Container" wizard.
+    pub fn submit_container_wizard(&mut self) {
+        let name = self.container_name_buf.trim().to_string();
+        let image = self.container_image_buf.trim().to_string();
+        let port = self.container_port_buf.trim().to_string();
+        let env = self.container_env_buf.trim().to_string();
+
+        if name.is_empty() {
+            self.set_notification("✗ Container name cannot be empty");
+            return;
+        }
+        if image.is_empty() {
+            self.set_notification("✗ Container image cannot be empty");
+            return;
+        }
+
+        // Build the docker/podman run command
+        let mut args: Vec<String> = vec!["run".into(), "-d".into(), "--name".into(), name.clone()];
+        if !port.is_empty() {
+            args.push("-p".into());
+            args.push(port.clone());
+        }
+        if !env.is_empty() {
+            for pair in env.split(',') {
+                let pair = pair.trim();
+                if !pair.is_empty() {
+                    args.push("-e".into());
+                    args.push(pair.to_string());
+                }
+            }
+        }
+        args.push(image.clone());
+
+        let mut command = std::process::Command::new("docker");
+        command.args(&args);
+        let result = command.output();
+
+        let mut engine = "docker";
+        let (success, detail) = match result {
+            Ok(ref out) if out.status.success() => {
+                (true, String::from_utf8_lossy(&out.stdout).trim().to_string())
+            }
+            Ok(ref out) => {
+                (false, String::from_utf8_lossy(&out.stderr).trim().to_string())
+            }
+            Err(_) => {
+                engine = "podman";
+                let mut cmd2 = std::process::Command::new("podman");
+                cmd2.args(&args);
+                match cmd2.output() {
+                    Ok(ref o) if o.status.success() => {
+                        (true, String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    }
+                    Ok(ref o) => {
+                        (false, String::from_utf8_lossy(&o.stderr).trim().to_string())
+                    }
+                    Err(e) => (false, e.to_string()),
+                }
+            }
+        };
+
+        let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+        self.cfg.docker.containers.push(crate::config::DockerContainerConfig {
+            name: name.clone(),
+            image: image.clone(),
+            ports: if port.is_empty() {
+                vec![]
+            } else {
+                vec![port.clone()]
+            },
+            env: if env.is_empty() {
+                vec![]
+            } else {
+                env.split(',').map(|s| s.trim().to_string()).collect()
+            },
+            started_at: now,
+        });
+        self.save_config_silent();
+
+        if let Some(ref d) = self.db {
+            let _ = d.add_docker_container(
+                &name,
+                &image,
+                &port,
+                &env,
+            );
+            let _ = d.log_event(
+                "INFO",
+                "cockpit",
+                &format!("Container '{}' registered ({})", name, engine),
+            );
+        }
+
+        // Update in-memory snapshot
+        let (state, status_detail) = if success {
+            ("running".to_string(), "Just started".to_string())
+        } else {
+            ("created".to_string(), if detail.is_empty() { "Engine stopped".to_string() } else { detail.clone() })
+        };
+
+        self.latest_snap.docker_containers.push(crate::systat::DockerContainerInfo {
+            name: name.clone(),
+            image: image.clone(),
+            state,
+            status_detail,
+        });
+
+        if success {
+            self.set_notification(format!(
+                "✓ Container '{}' started successfully ({})",
+                name, engine
+            ));
+        } else {
+            self.set_notification(format!(
+                "✓ Container '{}' configured ({})",
+                name, engine
+            ));
+        }
+
+        self.show_container_wizard = false;
+        self.container_wizard_field = 0;
+        self.container_name_buf.clear();
+        self.container_image_buf.clear();
+        self.container_port_buf.clear();
+        self.container_env_buf.clear();
+    }
+
+    /// Submit the "Add Uptime Monitor" wizard.
+    pub fn submit_monitor_wizard(&mut self) {
+        let name = self.monitor_name_buf.trim().to_string();
+        let url_raw = self.monitor_url_buf.trim().to_string();
+
+        if name.is_empty() {
+            self.set_notification("✗ Monitor name cannot be empty");
+            return;
+        }
+        if url_raw.is_empty() {
+            self.set_notification("✗ Monitor URL cannot be empty");
+            return;
+        }
+
+        // Normalize URL
+        let url = if url_raw.starts_with("http://") || url_raw.starts_with("https://") {
+            url_raw.clone()
+        } else {
+            format!("http://{}", url_raw)
+        };
+
+        // Check for duplicate
+        let already_exists = self
+            .cfg
+            .uptime
+            .custom_monitors
+            .iter()
+            .any(|m| m.target == url);
+        if already_exists {
+            self.set_notification(format!(
+                "✗ Monitor '{}' already exists",
+                name
+            ));
+            return;
+        }
+
+        // Persist to config
+        self.cfg.uptime.custom_monitors.push(crate::config::UptimeMonitorConfig {
+            name: name.clone(),
+            target: url.clone(),
+        });
+        self.save_config_silent();
+
+        // Persist to SQLite
+        if let Some(ref d) = self.db {
+            let _ = d.add_uptime_monitor(&name, &url);
+            let _ = d.log_event(
+                "INFO",
+                "cockpit",
+                &format!("Uptime monitor '{}' ({}) added via add-monitor wizard", name, url),
+            );
+        }
+
+        // Probe immediately
+        let probe_result = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_millis(1500))
+            .danger_accept_invalid_certs(true)
+            .build()
+            .and_then(|c| c.get(&url).send());
+
+        let mut monitor = crate::systat::UptimeMonitor {
+            name: name.clone(),
+            target: url.clone(),
+            is_up: false,
+            latency_ms: None,
+            status_code: None,
+            uptime_pct: 0.0,
+            history: vec![true; 19],
+        };
+
+        if let Ok(res) = probe_result {
+            let code = res.status().as_u16();
+            monitor.is_up = res.status().is_success()
+                || res.status().is_redirection()
+                || code == 404
+                || code == 401;
+            monitor.latency_ms = None;
+            monitor.status_code = Some(code);
+            monitor.history.push(monitor.is_up);
+            if monitor.history.len() > 20 {
+                monitor.history.remove(0);
+            }
+            let up_count = monitor.history.iter().filter(|&&u| u).count();
+            monitor.uptime_pct = (up_count as f32 / monitor.history.len().max(1) as f32) * 100.0;
+        }
+
+        let is_up = monitor.is_up;
+        self.latest_snap.uptime_monitors.push(monitor);
+
+        let status = if is_up { "UP" } else { "DOWN" };
+        self.set_notification(format!(
+            "✓ Uptime monitor '{}' added and probed (status: {})",
+            name, status
+        ));
+        self.show_monitor_wizard = false;
+        self.monitor_wizard_field = 0;
+        self.monitor_name_buf.clear();
+        self.monitor_url_buf.clear();
+    }
 }
 
 pub fn format_bytes(bytes: u64) -> String {
@@ -1132,9 +1633,31 @@ fn handle_key_event<B: ratatui::backend::Backend>(
     if key.code == KeyCode::F(1)
         || (key.code == KeyCode::Char('?')
             && app.editing_field.is_none()
+            && !app.show_server_wizard
+            && !app.show_project_wizard
+            && !app.show_container_wizard
+            && !app.show_monitor_wizard
             && (app.current_tab != CockpitTab::Chat || app.chat_input.is_empty()))
     {
         app.show_help_modal = !app.show_help_modal;
+        return Ok(false);
+    }
+
+    // Add Wizard Key Interception
+    if app.show_server_wizard {
+        handle_server_wizard_key(key, app);
+        return Ok(false);
+    }
+    if app.show_project_wizard {
+        handle_project_wizard_key(key, app);
+        return Ok(false);
+    }
+    if app.show_container_wizard {
+        handle_container_wizard_key(key, app);
+        return Ok(false);
+    }
+    if app.show_monitor_wizard {
+        handle_monitor_wizard_key(key, app);
         return Ok(false);
     }
 
@@ -1436,6 +1959,22 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Char('i') if app.current_tab == CockpitTab::Services => {
             app.inspector_open = !app.inspector_open;
         }
+        KeyCode::Char('a') | KeyCode::Char('n') if app.current_tab == CockpitTab::Services => {
+            app.show_server_wizard = true;
+            app.server_wizard_field = 0;
+        }
+        KeyCode::Char('m') | KeyCode::Char('u') if app.current_tab == CockpitTab::Overview => {
+            app.show_monitor_wizard = true;
+            app.monitor_wizard_field = 0;
+        }
+        KeyCode::Char('d') if app.current_tab == CockpitTab::Overview || app.current_tab == CockpitTab::Services => {
+            app.show_container_wizard = true;
+            app.container_wizard_field = 0;
+        }
+        KeyCode::Char('o') | KeyCode::Char('P') if app.current_tab == CockpitTab::Overview => {
+            app.show_project_wizard = true;
+            app.project_wizard_field = 0;
+        }
 
         KeyCode::Char('a') if app.current_tab == CockpitTab::Audit => {
             trigger_turbo_audit(app, terminal)?;
@@ -1461,6 +2000,144 @@ fn handle_key_event<B: ratatui::backend::Backend>(
     }
 
     Ok(false)
+}
+
+fn handle_server_wizard_key(key: event::KeyEvent, app: &mut CockpitApp) {
+    match key.code {
+        KeyCode::Esc => {
+            app.show_server_wizard = false;
+        }
+        KeyCode::Enter => {
+            app.submit_server_wizard();
+        }
+        KeyCode::Tab | KeyCode::Down => {
+            app.server_wizard_field = (app.server_wizard_field + 1) % 4;
+        }
+        KeyCode::BackTab | KeyCode::Up => {
+            app.server_wizard_field = (app.server_wizard_field + 3) % 4;
+        }
+        KeyCode::Backspace => {
+            match app.server_wizard_field {
+                0 => { app.server_name_buf.pop(); }
+                1 => { app.server_ip_buf.pop(); }
+                2 => { app.server_user_buf.pop(); }
+                3 => { app.server_services_buf.pop(); }
+                _ => {}
+            }
+        }
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            match app.server_wizard_field {
+                0 => app.server_name_buf.push(c),
+                1 => app.server_ip_buf.push(c),
+                2 => app.server_user_buf.push(c),
+                3 => app.server_services_buf.push(c),
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_project_wizard_key(key: event::KeyEvent, app: &mut CockpitApp) {
+    match key.code {
+        KeyCode::Esc => {
+            app.show_project_wizard = false;
+        }
+        KeyCode::Enter => {
+            app.submit_project_wizard();
+        }
+        KeyCode::Tab | KeyCode::Down => {
+            app.project_wizard_field = (app.project_wizard_field + 1) % 3;
+        }
+        KeyCode::BackTab | KeyCode::Up => {
+            app.project_wizard_field = (app.project_wizard_field + 2) % 3;
+        }
+        KeyCode::Backspace => {
+            match app.project_wizard_field {
+                0 => { app.project_path_buf.pop(); }
+                1 => { app.project_name_buf.pop(); }
+                2 => { app.project_category_buf.pop(); }
+                _ => {}
+            }
+        }
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            match app.project_wizard_field {
+                0 => app.project_path_buf.push(c),
+                1 => app.project_name_buf.push(c),
+                2 => app.project_category_buf.push(c),
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_container_wizard_key(key: event::KeyEvent, app: &mut CockpitApp) {
+    match key.code {
+        KeyCode::Esc => {
+            app.show_container_wizard = false;
+        }
+        KeyCode::Enter => {
+            app.submit_container_wizard();
+        }
+        KeyCode::Tab | KeyCode::Down => {
+            app.container_wizard_field = (app.container_wizard_field + 1) % 4;
+        }
+        KeyCode::BackTab | KeyCode::Up => {
+            app.container_wizard_field = (app.container_wizard_field + 3) % 4;
+        }
+        KeyCode::Backspace => {
+            match app.container_wizard_field {
+                0 => { app.container_name_buf.pop(); }
+                1 => { app.container_image_buf.pop(); }
+                2 => { app.container_port_buf.pop(); }
+                3 => { app.container_env_buf.pop(); }
+                _ => {}
+            }
+        }
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            match app.container_wizard_field {
+                0 => app.container_name_buf.push(c),
+                1 => app.container_image_buf.push(c),
+                2 => app.container_port_buf.push(c),
+                3 => app.container_env_buf.push(c),
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_monitor_wizard_key(key: event::KeyEvent, app: &mut CockpitApp) {
+    match key.code {
+        KeyCode::Esc => {
+            app.show_monitor_wizard = false;
+        }
+        KeyCode::Enter => {
+            app.submit_monitor_wizard();
+        }
+        KeyCode::Tab | KeyCode::Down => {
+            app.monitor_wizard_field = (app.monitor_wizard_field + 1) % 2;
+        }
+        KeyCode::BackTab | KeyCode::Up => {
+            app.monitor_wizard_field = (app.monitor_wizard_field + 1) % 2;
+        }
+        KeyCode::Backspace => {
+            match app.monitor_wizard_field {
+                0 => { app.monitor_name_buf.pop(); }
+                1 => { app.monitor_url_buf.pop(); }
+                _ => {}
+            }
+        }
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            match app.monitor_wizard_field {
+                0 => app.monitor_name_buf.push(c),
+                1 => app.monitor_url_buf.push(c),
+                _ => {}
+            }
+        }
+        _ => {}
+    }
 }
 
 // ── Mouse Event Handling ─────────────────────────────────────────────────────
@@ -1580,6 +2257,62 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                     }
                     HitboxAction::CancelQuit => {
                         app.show_quit_confirm = false;
+                    }
+                    // Add-wizard openers
+                    HitboxAction::AddServer => {
+                        app.show_server_wizard = true;
+                        app.server_wizard_field = 0;
+                    }
+                    HitboxAction::AddProject => {
+                        app.show_project_wizard = true;
+                        app.project_wizard_field = 0;
+                    }
+                    HitboxAction::AddContainer => {
+                        app.show_container_wizard = true;
+                        app.container_wizard_field = 0;
+                    }
+                    HitboxAction::AddMonitor => {
+                        app.show_monitor_wizard = true;
+                        app.monitor_wizard_field = 0;
+                    }
+                    // Field focus
+                    HitboxAction::FocusServerField(i) => {
+                        app.server_wizard_field = i;
+                    }
+                    HitboxAction::FocusProjectField(i) => {
+                        app.project_wizard_field = i;
+                    }
+                    HitboxAction::FocusContainerField(i) => {
+                        app.container_wizard_field = i;
+                    }
+                    HitboxAction::FocusMonitorField(i) => {
+                        app.monitor_wizard_field = i;
+                    }
+                    // Submissions
+                    HitboxAction::SubmitServer => {
+                        app.submit_server_wizard();
+                    }
+                    HitboxAction::SubmitProject => {
+                        app.submit_project_wizard();
+                    }
+                    HitboxAction::SubmitContainer => {
+                        app.submit_container_wizard();
+                    }
+                    HitboxAction::SubmitMonitor => {
+                        app.submit_monitor_wizard();
+                    }
+                    // Cancellations
+                    HitboxAction::CancelServer => {
+                        app.show_server_wizard = false;
+                    }
+                    HitboxAction::CancelProject => {
+                        app.show_project_wizard = false;
+                    }
+                    HitboxAction::CancelContainer => {
+                        app.show_container_wizard = false;
+                    }
+                    HitboxAction::CancelMonitor => {
+                        app.show_monitor_wizard = false;
                     }
                 }
             }
@@ -1864,6 +2597,22 @@ fn draw(f: &mut Frame, app: &mut CockpitApp) {
 
     if app.show_cron_wizard {
         draw_cron_wizard(f, app, area);
+    }
+
+    if app.show_server_wizard {
+        draw_server_wizard(f, app, area);
+    }
+
+    if app.show_project_wizard {
+        draw_project_wizard(f, app, area);
+    }
+
+    if app.show_container_wizard {
+        draw_container_wizard(f, app, area);
+    }
+
+    if app.show_monitor_wizard {
+        draw_monitor_wizard(f, app, area);
     }
 
     if app.show_quit_confirm {
@@ -2339,18 +3088,42 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ]);
         f.render_widget(Paragraph::new(gpu_line), mem_layout[2]);
 
-        // Docker Containers & Projects Summary Bar
+        // Docker Containers & Projects Summary Bar + Add Buttons
         let running_cnt = snap.docker_containers.iter().filter(|c| c.state == "running").count();
         let stopped_cnt = snap.docker_containers.iter().filter(|c| c.state != "running").count();
         let proj_count = snap.tracked_projects.len();
         let docker_line = Line::from(vec![
-            Span::styled("🐳 Docker: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{running_cnt} Running ● "), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{stopped_cnt} Stopped ✖  "), Style::default().fg(Color::Yellow)),
-            Span::styled("📁 Projects: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{proj_count} Tracked"), Style::default().fg(Color::Cyan)),
+            Span::styled("🐳 ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{running_cnt}R/{stopped_cnt}S "), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled("[+ Cont]", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw(" "),
+            Span::styled("📁 ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{proj_count} "), Style::default().fg(Color::Cyan)),
+            Span::styled("[+ Proj]", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
         ]);
         f.render_widget(Paragraph::new(docker_line), mem_layout[3]);
+
+        // Register hitboxes for [+ Cont] and [+ Proj] buttons
+        let cont_x = mem_layout[3].x + 5;
+        app.register_hitbox(
+            Rect {
+                x: cont_x,
+                y: mem_layout[3].y,
+                width: 8,
+                height: 1,
+            },
+            HitboxAction::AddContainer,
+        );
+        let proj_x = cont_x + 8 + 4;
+        app.register_hitbox(
+            Rect {
+                x: proj_x,
+                y: mem_layout[3].y,
+                width: 8,
+                height: 1,
+            },
+            HitboxAction::AddProject,
+        );
 
         // Storage Mounts Table: List "/" (Root NVMe) and "/DATA" (External)
         let mut mount_rows = Vec::new();
@@ -2409,7 +3182,7 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     }
 
     // ── Middle Row 1: Uptime Kuma Endpoint Monitors ──────────────────────────
-    draw_uptime_kuma_panel(f, &snap, chunks[1]);
+    draw_uptime_kuma_panel(f, app, chunks[1]);
 
     // ── Middle Row 2: Network & Tailscale Mesh Bar ───────────────────────────
     let net_block = Block::default()
@@ -2844,7 +3617,7 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
 // ── Uptime Kuma Style Endpoint Monitors Panel ───────────────────────────────
 
-fn draw_uptime_kuma_panel(f: &mut Frame, snap: &SysSnapshot, area: Rect) {
+fn draw_uptime_kuma_panel(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" 🌐 Uptime Kuma Endpoint Monitors (HTTP/HTTPS, TCP & Gateways) ")
@@ -2852,10 +3625,28 @@ fn draw_uptime_kuma_panel(f: &mut Frame, snap: &SysSnapshot, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
+    // [+ Add Monitor] button in panel header
+    if area.width >= 45 {
+        let btn_w = 19u16;
+        let btn_x = area.right().saturating_sub(btn_w + 2);
+        let btn_rect = Rect {
+            x: btn_x,
+            y: area.y,
+            width: btn_w,
+            height: 1,
+        };
+        app.register_hitbox(btn_rect, HitboxAction::AddMonitor);
+        let btn = Paragraph::new(Line::from(vec![
+            Span::styled(" [+ Add Monitor] (m) ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        ]));
+        f.render_widget(btn, btn_rect);
+    }
+
     if inner.width < 10 || inner.height < 2 {
         return;
     }
 
+    let snap = &app.latest_snap;
     let rows: Vec<Row> = snap.uptime_monitors.iter().map(|m| {
         let (status_badge, badge_color) = if m.is_up {
             (format!("● UP ({:.1}%)", m.uptime_pct), Color::Green)
@@ -2950,9 +3741,16 @@ fn draw_services_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         width: 19,
         height: 1,
     };
+    let btn_add_server_rect = Rect {
+        x: action_inner.x + 41,
+        y: action_inner.y,
+        width: 16,
+        height: 1,
+    };
 
     app.register_hitbox(btn_probe_rect, HitboxAction::ProbePorts);
     app.register_hitbox(btn_inspect_rect, HitboxAction::InspectApp(app.selected_app));
+    app.register_hitbox(btn_add_server_rect, HitboxAction::AddServer);
 
     let btn_probe = Span::styled(
         " [🔍 Probe Ports] ",
@@ -2968,12 +3766,19 @@ fn draw_services_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             .bg(Color::Yellow)
             .add_modifier(Modifier::BOLD),
     );
+    let btn_add_server = Span::styled(
+        " [+ Add Server] ",
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    );
     let hint = Span::styled(
-        "  (Press 'p' to probe, 'i'/Enter to inspect app card)",
+        "  ('a'/'n': Add Server, 'p': Probe, 'i'/Enter: Inspect)",
         Style::default().fg(Color::DarkGray),
     );
 
-    f.render_widget(Paragraph::new(Line::from(vec![btn_probe, Span::raw(" "), btn_inspect, hint])), action_inner);
+    f.render_widget(Paragraph::new(Line::from(vec![btn_probe, Span::raw(" "), btn_inspect, Span::raw(" "), btn_add_server, hint])), action_inner);
 
     // Apps Cards List
     let list_block = Block::default()
@@ -3690,8 +4495,12 @@ fn draw_help_modal(f: &mut Frame, app: &CockpitApp, area: Rect) {
             Cell::from("Navigate items, lists, or scroll content"),
         ]),
         Row::new(vec![
-            Cell::from("Services: p / i"),
-            Cell::from("p: Probe ports | i / Enter: Inspect app card details"),
+            Cell::from("Overview: d / o / m"),
+            Cell::from("d: Add Docker | o/P: Add Project | m/u: Add Monitor"),
+        ]),
+        Row::new(vec![
+            Cell::from("Services: a / n / p"),
+            Cell::from("a/n: Add Server | p: Probe ports | i: Inspect app"),
         ]),
         Row::new(vec![
             Cell::from("Audit: a / f"),
@@ -3930,6 +4739,477 @@ fn draw_cron_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     f.render_widget(Paragraph::new(text), inner);
 }
 
+// ── CRUD Add Wizards (Server / Project / Docker Container / Uptime Monitor) ──
+
+fn draw_server_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let popup_area = centered_rect(65, 52, area);
+    f.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(" 🖥 Add Fleet Server — Node Wizard ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    if inner.width < 20 || inner.height < 6 {
+        return;
+    }
+
+    let fields = [
+        ("Server Name:", app.server_name_buf.clone(), "e.g. vps-sg, worker-1"),
+        ("Host / IP Address:", app.server_ip_buf.clone(), "e.g. 100.127.232.32"),
+        ("SSH Username:", app.server_user_buf.clone(), "e.g. root, cecep"),
+        ("Services (CSV):", app.server_services_buf.clone(), "e.g. http:80,ssh:22"),
+    ];
+
+    let mut lines = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "Register a fleet node with IP & services. Auto-probes upon saving.",
+        Style::default().fg(palette.text_muted),
+    )));
+    lines.push(Line::from(""));
+
+    let field_start_y = inner.y + 2;
+    for (i, (label, val, placeholder)) in fields.iter().enumerate() {
+        let is_focused = app.server_wizard_field == i;
+        let prefix = if is_focused { "▶ " } else { "  " };
+        let val_span = if is_focused {
+            Span::styled(
+                format!(" [ {}█ ] ", val),
+                Style::default()
+                    .fg(Color::Rgb(0, 0, 0))
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            let display_val = if val.is_empty() { *placeholder } else { val.as_str() };
+            Span::styled(
+                format!(" [ {} ] ", display_val),
+                Style::default().fg(if val.is_empty() { Color::DarkGray } else { Color::White }),
+            )
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(prefix, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{:<20}", label), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            val_span,
+        ]));
+
+        let row_y = field_start_y + (i as u16);
+        if row_y < inner.bottom() {
+            app.register_hitbox(
+                Rect {
+                    x: inner.x,
+                    y: row_y,
+                    width: inner.width,
+                    height: 1,
+                },
+                HitboxAction::FocusServerField(i),
+            );
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Tab/Down: Next │ BackTab/Up: Prev │ Enter: Save │ Esc: Cancel",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+
+    let btn_save = Span::styled(
+        " [✔ Add Server] (Enter) ",
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    );
+    let btn_cancel = Span::styled(
+        " [✖ Cancel] (Esc) ",
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Red)
+            .add_modifier(Modifier::BOLD),
+    );
+    lines.push(Line::from(vec![btn_save, Span::raw("  "), btn_cancel]));
+
+    f.render_widget(Paragraph::new(lines), inner);
+
+    let btn_y = inner.y + 8;
+    if btn_y < inner.bottom() {
+        app.register_hitbox(
+            Rect {
+                x: inner.x,
+                y: btn_y,
+                width: 24,
+                height: 1,
+            },
+            HitboxAction::SubmitServer,
+        );
+        app.register_hitbox(
+            Rect {
+                x: inner.x + 26,
+                y: btn_y,
+                width: 18,
+                height: 1,
+            },
+            HitboxAction::CancelServer,
+        );
+    }
+}
+
+fn draw_project_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let popup_area = centered_rect(65, 46, area);
+    f.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(" 📁 Add Tracked Project — Directory Wizard ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    if inner.width < 20 || inner.height < 5 {
+        return;
+    }
+
+    let fields = [
+        ("Folder Path:", app.project_path_buf.clone(), "e.g. ~/Product/cashell or /home/..."),
+        ("Project Name:", app.project_name_buf.clone(), "Optional (auto-extracted from folder)"),
+        ("Category:", app.project_category_buf.clone(), "Product or Project"),
+    ];
+
+    let mut lines = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "Add a workspace folder to track in the cockpit project overview.",
+        Style::default().fg(palette.text_muted),
+    )));
+    lines.push(Line::from(""));
+
+    let field_start_y = inner.y + 2;
+    for (i, (label, val, placeholder)) in fields.iter().enumerate() {
+        let is_focused = app.project_wizard_field == i;
+        let prefix = if is_focused { "▶ " } else { "  " };
+        let val_span = if is_focused {
+            Span::styled(
+                format!(" [ {}█ ] ", val),
+                Style::default()
+                    .fg(Color::Rgb(0, 0, 0))
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            let display_val = if val.is_empty() { *placeholder } else { val.as_str() };
+            Span::styled(
+                format!(" [ {} ] ", display_val),
+                Style::default().fg(if val.is_empty() { Color::DarkGray } else { Color::White }),
+            )
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(prefix, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{:<18}", label), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            val_span,
+        ]));
+
+        let row_y = field_start_y + (i as u16);
+        if row_y < inner.bottom() {
+            app.register_hitbox(
+                Rect {
+                    x: inner.x,
+                    y: row_y,
+                    width: inner.width,
+                    height: 1,
+                },
+                HitboxAction::FocusProjectField(i),
+            );
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Tab/Down: Next │ BackTab/Up: Prev │ Enter: Save │ Esc: Cancel",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+
+    let btn_save = Span::styled(
+        " [✔ Add Project] (Enter) ",
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    );
+    let btn_cancel = Span::styled(
+        " [✖ Cancel] (Esc) ",
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Red)
+            .add_modifier(Modifier::BOLD),
+    );
+    lines.push(Line::from(vec![btn_save, Span::raw("  "), btn_cancel]));
+
+    f.render_widget(Paragraph::new(lines), inner);
+
+    let btn_y = inner.y + 7;
+    if btn_y < inner.bottom() {
+        app.register_hitbox(
+            Rect {
+                x: inner.x,
+                y: btn_y,
+                width: 25,
+                height: 1,
+            },
+            HitboxAction::SubmitProject,
+        );
+        app.register_hitbox(
+            Rect {
+                x: inner.x + 27,
+                y: btn_y,
+                width: 18,
+                height: 1,
+            },
+            HitboxAction::CancelProject,
+        );
+    }
+}
+
+fn draw_container_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let popup_area = centered_rect(65, 52, area);
+    f.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(" 🐳 Add Docker Container — Run Wizard ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    if inner.width < 20 || inner.height < 6 {
+        return;
+    }
+
+    let fields = [
+        ("Container Name:", app.container_name_buf.clone(), "e.g. my-nginx, redis-db"),
+        ("Docker Image:", app.container_image_buf.clone(), "e.g. nginx:alpine, redis:7"),
+        ("Port Mapping:", app.container_port_buf.clone(), "e.g. 8080:80 (optional)"),
+        ("Environment:", app.container_env_buf.clone(), "e.g. FOO=bar,PORT=80 (optional)"),
+    ];
+
+    let mut lines = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "Specify container parameters to execute docker/podman run -d.",
+        Style::default().fg(palette.text_muted),
+    )));
+    lines.push(Line::from(""));
+
+    let field_start_y = inner.y + 2;
+    for (i, (label, val, placeholder)) in fields.iter().enumerate() {
+        let is_focused = app.container_wizard_field == i;
+        let prefix = if is_focused { "▶ " } else { "  " };
+        let val_span = if is_focused {
+            Span::styled(
+                format!(" [ {}█ ] ", val),
+                Style::default()
+                    .fg(Color::Rgb(0, 0, 0))
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            let display_val = if val.is_empty() { *placeholder } else { val.as_str() };
+            Span::styled(
+                format!(" [ {} ] ", display_val),
+                Style::default().fg(if val.is_empty() { Color::DarkGray } else { Color::White }),
+            )
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(prefix, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{:<18}", label), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            val_span,
+        ]));
+
+        let row_y = field_start_y + (i as u16);
+        if row_y < inner.bottom() {
+            app.register_hitbox(
+                Rect {
+                    x: inner.x,
+                    y: row_y,
+                    width: inner.width,
+                    height: 1,
+                },
+                HitboxAction::FocusContainerField(i),
+            );
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Tab/Down: Next │ BackTab/Up: Prev │ Enter: Run │ Esc: Cancel",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+
+    let btn_save = Span::styled(
+        " [✔ Run Container] (Enter) ",
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    );
+    let btn_cancel = Span::styled(
+        " [✖ Cancel] (Esc) ",
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Red)
+            .add_modifier(Modifier::BOLD),
+    );
+    lines.push(Line::from(vec![btn_save, Span::raw("  "), btn_cancel]));
+
+    f.render_widget(Paragraph::new(lines), inner);
+
+    let btn_y = inner.y + 8;
+    if btn_y < inner.bottom() {
+        app.register_hitbox(
+            Rect {
+                x: inner.x,
+                y: btn_y,
+                width: 27,
+                height: 1,
+            },
+            HitboxAction::SubmitContainer,
+        );
+        app.register_hitbox(
+            Rect {
+                x: inner.x + 29,
+                y: btn_y,
+                width: 18,
+                height: 1,
+            },
+            HitboxAction::CancelContainer,
+        );
+    }
+}
+
+fn draw_monitor_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let popup_area = centered_rect(65, 42, area);
+    f.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(" 🌐 Add Uptime Monitor — Endpoint Wizard ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    if inner.width < 20 || inner.height < 4 {
+        return;
+    }
+
+    let fields = [
+        ("Monitor Name:", app.monitor_name_buf.clone(), "e.g. Payment Gateway"),
+        ("Target URL:", app.monitor_url_buf.clone(), "e.g. https://api.fathforce.com/health"),
+    ];
+
+    let mut lines = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "Add an HTTP/HTTPS or TCP endpoint to Uptime Kuma monitoring.",
+        Style::default().fg(palette.text_muted),
+    )));
+    lines.push(Line::from(""));
+
+    let field_start_y = inner.y + 2;
+    for (i, (label, val, placeholder)) in fields.iter().enumerate() {
+        let is_focused = app.monitor_wizard_field == i;
+        let prefix = if is_focused { "▶ " } else { "  " };
+        let val_span = if is_focused {
+            Span::styled(
+                format!(" [ {}█ ] ", val),
+                Style::default()
+                    .fg(Color::Rgb(0, 0, 0))
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            let display_val = if val.is_empty() { *placeholder } else { val.as_str() };
+            Span::styled(
+                format!(" [ {} ] ", display_val),
+                Style::default().fg(if val.is_empty() { Color::DarkGray } else { Color::White }),
+            )
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(prefix, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{:<18}", label), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            val_span,
+        ]));
+
+        let row_y = field_start_y + (i as u16);
+        if row_y < inner.bottom() {
+            app.register_hitbox(
+                Rect {
+                    x: inner.x,
+                    y: row_y,
+                    width: inner.width,
+                    height: 1,
+                },
+                HitboxAction::FocusMonitorField(i),
+            );
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Tab/Down: Next │ BackTab/Up: Prev │ Enter: Save │ Esc: Cancel",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+
+    let btn_save = Span::styled(
+        " [✔ Add Monitor] (Enter) ",
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    );
+    let btn_cancel = Span::styled(
+        " [✖ Cancel] (Esc) ",
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Red)
+            .add_modifier(Modifier::BOLD),
+    );
+    lines.push(Line::from(vec![btn_save, Span::raw("  "), btn_cancel]));
+
+    f.render_widget(Paragraph::new(lines), inner);
+
+    let btn_y = inner.y + 6;
+    if btn_y < inner.bottom() {
+        app.register_hitbox(
+            Rect {
+                x: inner.x,
+                y: btn_y,
+                width: 25,
+                height: 1,
+            },
+            HitboxAction::SubmitMonitor,
+        );
+        app.register_hitbox(
+            Rect {
+                x: inner.x + 27,
+                y: btn_y,
+                width: 18,
+                height: 1,
+            },
+            HitboxAction::CancelMonitor,
+        );
+    }
+}
+
 // ── Quit Confirmation Modal ──────────────────────────────────────────────────
 
 fn draw_quit_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
@@ -4145,5 +5425,101 @@ mod tests {
         app.overview_proc_scroll = 5;
         app.overview_proc_scroll = app.overview_proc_scroll.saturating_sub(1);
         assert_eq!(app.overview_proc_scroll, 4);
+    }
+
+    #[test]
+    fn test_wizard_add_server() {
+        let mut app = CockpitApp::new(&Config::default());
+        app.server_name_buf = "test-node".to_string();
+        app.server_ip_buf = "10.0.0.99".to_string();
+        app.server_user_buf = "admin".to_string();
+        app.server_services_buf = "web:8080:http, db:5432".to_string();
+
+        app.submit_server_wizard();
+
+        assert!(!app.show_server_wizard);
+        assert!(app.cfg.daemon.nodes.contains_key("test-node"));
+        let node = &app.cfg.daemon.nodes["test-node"];
+        assert_eq!(node.ip, "10.0.0.99");
+        assert_eq!(node.user, "admin");
+        assert_eq!(node.services.len(), 2);
+        assert_eq!(node.services[0].name, "web");
+        assert_eq!(node.services[0].port, 8080);
+        assert_eq!(node.services[1].name, "db");
+        assert_eq!(node.services[1].port, 5432);
+
+        // Verify AppCard created
+        assert!(app.apps.iter().any(|a| a.name == "test-node:web"));
+    }
+
+    #[test]
+    fn test_wizard_add_project() {
+        let mut app = CockpitApp::new(&Config::default());
+        let initial_count = app.latest_snap.tracked_projects.len();
+        app.project_path_buf = "/tmp/my-test-proj".to_string();
+        app.project_name_buf = "MyTestProj".to_string();
+        app.project_category_buf = "Product".to_string();
+
+        app.submit_project_wizard();
+
+        assert!(!app.show_project_wizard);
+        assert!(app.cfg.workspace.custom_projects.contains(&"/tmp/my-test-proj".to_string()));
+        assert_eq!(app.latest_snap.tracked_projects.len(), initial_count + 1);
+        assert!(app.latest_snap.tracked_projects.iter().any(|p| p.name == "MyTestProj"));
+    }
+
+    #[test]
+    fn test_wizard_add_container() {
+        let mut app = CockpitApp::new(&Config::default());
+        let initial_count = app.latest_snap.docker_containers.len();
+        app.container_name_buf = "test-redis".to_string();
+        app.container_image_buf = "redis:alpine".to_string();
+        app.container_port_buf = "6379:6379".to_string();
+        app.container_env_buf = "ENV=test".to_string();
+
+        app.submit_container_wizard();
+
+        assert!(!app.show_container_wizard);
+        // Container added to snapshot
+        assert_eq!(app.latest_snap.docker_containers.len(), initial_count + 1);
+        assert!(app.latest_snap.docker_containers.iter().any(|c| c.name == "test-redis"));
+    }
+
+    #[test]
+    fn test_wizard_add_monitor() {
+        let mut app = CockpitApp::new(&Config::default());
+        let initial_count = app.latest_snap.uptime_monitors.len();
+        app.monitor_name_buf = "Test API".to_string();
+        app.monitor_url_buf = "http://127.0.0.1:9999/health".to_string();
+
+        app.submit_monitor_wizard();
+
+        assert!(!app.show_monitor_wizard);
+        assert!(app.cfg.uptime.custom_monitors.iter().any(|m| m.name == "Test API"));
+        assert_eq!(app.latest_snap.uptime_monitors.len(), initial_count + 1);
+        assert!(app.latest_snap.uptime_monitors.iter().any(|m| m.name == "Test API"));
+    }
+
+    #[test]
+    fn test_wizard_field_cycling() {
+        let mut app = CockpitApp::new(&Config::default());
+        app.show_server_wizard = true;
+        app.server_wizard_field = 0;
+
+        // Down advances
+        handle_server_wizard_key(event::KeyEvent::new(KeyCode::Down, KeyModifiers::empty()), &mut app);
+        assert_eq!(app.server_wizard_field, 1);
+
+        // Tab advances
+        handle_server_wizard_key(event::KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()), &mut app);
+        assert_eq!(app.server_wizard_field, 2);
+
+        // Up moves back
+        handle_server_wizard_key(event::KeyEvent::new(KeyCode::Up, KeyModifiers::empty()), &mut app);
+        assert_eq!(app.server_wizard_field, 1);
+
+        // Esc closes
+        handle_server_wizard_key(event::KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()), &mut app);
+        assert!(!app.show_server_wizard);
     }
 }

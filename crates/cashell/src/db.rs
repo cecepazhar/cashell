@@ -61,6 +61,16 @@ pub struct CronJob {
     pub created_at: String,
 }
 
+/// A tracked project record.
+#[derive(Debug, Clone)]
+pub struct TrackedProjectRecord {
+    pub path: String,
+    pub name: String,
+    pub category: String,
+    pub branch: String,
+    pub is_dirty: bool,
+}
+
 /// Primary SQLite persistence manager for cashell.
 pub struct Database {
     conn: Connection,
@@ -192,6 +202,29 @@ impl Database {
                  action_type TEXT,
                  detail TEXT,
                  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+             );
+             CREATE TABLE IF NOT EXISTS tracked_projects (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 path TEXT NOT NULL UNIQUE,
+                 name TEXT,
+                 category TEXT,
+                 branch TEXT,
+                 is_dirty INTEGER DEFAULT 0,
+                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+             );
+             CREATE TABLE IF NOT EXISTS uptime_monitors (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 name TEXT NOT NULL UNIQUE,
+                 target TEXT NOT NULL UNIQUE,
+                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+             );
+             CREATE TABLE IF NOT EXISTS docker_containers (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 name TEXT NOT NULL UNIQUE,
+                 image TEXT NOT NULL,
+                 ports TEXT,
+                 env TEXT,
+                 started_at DATETIME DEFAULT CURRENT_TIMESTAMP
              );",
         )?;
         Ok(())
@@ -596,6 +629,91 @@ impl Database {
         Ok(())
     }
 
+    /// Add or update a tracked project folder in SQLite.
+    pub fn add_tracked_project(&self, path: &str, name: &str, category: &str, branch: &str, is_dirty: bool) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO tracked_projects (path, name, category, branch, is_dirty)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(path) DO UPDATE SET
+               name = excluded.name,
+               category = excluded.category,
+               branch = excluded.branch,
+               is_dirty = excluded.is_dirty",
+            params![path, name, category, branch, if is_dirty { 1 } else { 0 }],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve all tracked projects from SQLite.
+    pub fn get_tracked_projects(&self) -> Result<Vec<TrackedProjectRecord>> {
+        let mut stmt = self.conn.prepare("SELECT path, name, category, branch, is_dirty FROM tracked_projects ORDER BY name")?;
+        let rows = stmt.query_map([], |row| {
+            let path: String = row.get(0)?;
+            let name: Option<String> = row.get(1)?;
+            let cat: Option<String> = row.get(2)?;
+            let branch: Option<String> = row.get(3)?;
+            let dirty: i64 = row.get(4).unwrap_or(0);
+            Ok(TrackedProjectRecord {
+                path: path.clone(),
+                name: name.unwrap_or_else(|| path.split('/').next_back().unwrap_or("project").to_string()),
+                category: cat.unwrap_or_else(|| "Project".to_string()),
+                branch: branch.unwrap_or_else(|| "main".to_string()),
+                is_dirty: dirty != 0,
+            })
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    /// Add a custom Uptime Kuma endpoint monitor to SQLite.
+    pub fn add_uptime_monitor(&self, name: &str, target: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO uptime_monitors (name, target) VALUES (?1, ?2)
+             ON CONFLICT(name) DO UPDATE SET target = excluded.target",
+            params![name, target],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve all custom uptime monitors from SQLite.
+    pub fn get_uptime_monitors(&self) -> Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare("SELECT name, target FROM uptime_monitors ORDER BY name")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    /// Save a Docker container run record in SQLite.
+    pub fn add_docker_container(&self, name: &str, image: &str, ports: &str, env: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO docker_containers (name, image, ports, env) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(name) DO UPDATE SET image = excluded.image, ports = excluded.ports, env = excluded.env",
+            params![name, image, ports, env],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve all recorded Docker containers from SQLite.
+    pub fn get_docker_containers(&self) -> Result<Vec<(String, String, String, String)>> {
+        let mut stmt = self.conn.prepare("SELECT name, image, ports, env FROM docker_containers ORDER BY name")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get::<_, Option<String>>(2)?.unwrap_or_default(), row.get::<_, Option<String>>(3)?.unwrap_or_default()))
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
     /// Compact the database via SQLite `VACUUM`.
     pub fn vacuum(&self) -> Result<()> {
         self.conn.execute("VACUUM", [])?;
@@ -726,6 +844,42 @@ mod tests {
 
         db.clear_all()?;
         db.vacuum()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_db_tracked_projects_crud() -> Result<()> {
+        let db = Database::open_in_memory()?;
+        db.add_tracked_project("/path/to/cashell", "cashell", "Product", "main", false)?;
+        let projs = db.get_tracked_projects()?;
+        assert_eq!(projs.len(), 1);
+        assert_eq!(projs[0].name, "cashell");
+        assert_eq!(projs[0].path, "/path/to/cashell");
+        assert_eq!(projs[0].category, "Product");
+        Ok(())
+    }
+
+    #[test]
+    fn test_db_uptime_monitors_crud() -> Result<()> {
+        let db = Database::open_in_memory()?;
+        db.add_uptime_monitor("Landing CATerm", "https://caterm.fathforce.com")?;
+        let monitors = db.get_uptime_monitors()?;
+        assert_eq!(monitors.len(), 1);
+        assert_eq!(monitors[0].0, "Landing CATerm");
+        assert_eq!(monitors[0].1, "https://caterm.fathforce.com");
+        Ok(())
+    }
+
+    #[test]
+    fn test_db_docker_containers_crud() -> Result<()> {
+        let db = Database::open_in_memory()?;
+        db.add_docker_container("test-nginx", "nginx:alpine", "80:80", "ENV=test")?;
+        let containers = db.get_docker_containers()?;
+        assert_eq!(containers.len(), 1);
+        assert_eq!(containers[0].0, "test-nginx");
+        assert_eq!(containers[0].1, "nginx:alpine");
+        assert_eq!(containers[0].2, "80:80");
+        assert_eq!(containers[0].3, "ENV=test");
         Ok(())
     }
 

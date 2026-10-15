@@ -272,6 +272,50 @@ pub fn probe_tracked_projects() -> Vec<TrackedProject> {
             }
         }
     }
+
+    // Include custom projects from config
+    if let Ok(cfg) = crate::config::Config::load(None) {
+        for cp in cfg.workspace.custom_projects {
+            let expanded = if let Some(stripped) = cp.strip_prefix("~/") {
+                if let Some(h) = dirs::home_dir() {
+                    h.join(stripped).to_string_lossy().to_string()
+                } else {
+                    cp.clone()
+                }
+            } else {
+                cp.clone()
+            };
+            let p = std::path::PathBuf::from(expanded);
+            if p.is_dir() {
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+                if !name.is_empty() && !list.iter().any(|item| item.name == name) {
+                    list.push(TrackedProject {
+                        name,
+                        category: "Custom".to_string(),
+                        branch: "main".to_string(),
+                        is_dirty: false,
+                    });
+                }
+            }
+        }
+    }
+
+    // Include custom projects from SQLite database
+    if let Ok(db) = crate::db::Database::open() {
+        if let Ok(db_projs) = db.get_tracked_projects() {
+            for proj in db_projs {
+                if !list.iter().any(|item| item.name == proj.name) {
+                    list.push(TrackedProject {
+                        name: proj.name,
+                        category: proj.category,
+                        branch: proj.branch,
+                        is_dirty: proj.is_dirty,
+                    });
+                }
+            }
+        }
+    }
+
     list.sort_by(|a, b| a.name.cmp(&b.name));
     list
 }
@@ -285,7 +329,7 @@ type ProbeResult = (String, String, bool, Option<u64>, Option<u16>);
 pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
     use rayon::prelude::*;
 
-    let targets = [
+    let default_targets = [
         ("Landing CATerm", "https://caterm.fathforce.com/"),
         ("FathStore Engine", "https://fathstore.com/"),
         ("CAUI Design System", "https://caui.fathforce.com/"),
@@ -296,7 +340,32 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
         ("CAOrch VPS Agent", "http://127.0.0.1:8091/api/health"),
     ];
 
-    let results: Vec<ProbeResult> = targets
+    let mut targets: Vec<(String, String)> = default_targets
+        .iter()
+        .map(|&(n, u)| (n.to_string(), u.to_string()))
+        .collect();
+
+    // Load custom monitors from config
+    if let Ok(cfg) = crate::config::Config::load(None) {
+        for m in cfg.uptime.custom_monitors {
+            if !targets.iter().any(|(_, u)| u == &m.target) {
+                targets.push((m.name, m.target));
+            }
+        }
+    }
+
+    // Load custom monitors from SQLite
+    if let Ok(db) = crate::db::Database::open() {
+        if let Ok(db_monitors) = db.get_uptime_monitors() {
+            for (name, url) in db_monitors {
+                if !targets.iter().any(|(_, u)| u == &url) {
+                    targets.push((name, url));
+                }
+            }
+        }
+    }
+
+    let probe_results: Vec<ProbeResult> = targets
         .par_iter()
         .map(|(name, url)| {
             let start = Instant::now();
@@ -307,7 +376,7 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
                     .build();
 
                 if let Ok(c) = client {
-                    if let Ok(res) = c.get(*url).send() {
+                    if let Ok(res) = c.get(url).send() {
                         let lat = start.elapsed().as_millis() as u64;
                         let code = res.status().as_u16();
                         let is_up = res.status().is_success() || res.status().is_redirection() || code == 404 || code == 401;
@@ -326,7 +395,7 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
     let store = store_guard.get_or_insert_with(std::collections::HashMap::new);
 
     let mut monitors = Vec::new();
-    for (name, url, is_up, latency_ms, status_code) in results {
+    for (name, url, is_up, latency_ms, status_code) in probe_results {
         let hist = store.entry(name.clone()).or_insert_with(|| vec![true; 19]);
         hist.push(is_up);
         if hist.len() > 20 {
