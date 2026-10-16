@@ -68,17 +68,12 @@ pub struct DockerContainerInfo {
 }
 
 /// Core ecosystem daemon health state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DaemonState {
     Active,   // ● ACTIVE (green)
+    #[default]
     Inactive, // ✖ INACTIVE (red)
     Degraded, // ◌ DEGRADED (yellow)
-}
-
-impl Default for DaemonState {
-    fn default() -> Self {
-        Self::Inactive
-    }
 }
 
 /// Core ecosystem daemon health status.
@@ -222,8 +217,8 @@ pub fn snapshot() -> SysSnapshot {
 
     let ram_used_mb = ram_used / 1024 / 1024;
     let ram_total_mb = ram_total / 1024 / 1024;
-    let ram_pct = if ram_total_mb > 0 { ((ram_used_mb * 100) / ram_total_mb) as u8 } else { 0 };
-    let disk_pct = if disk_total_gb > 0 { ((disk_used_gb * 100) / disk_total_gb) as u8 } else { 0 };
+    let ram_pct = (ram_used_mb * 100).checked_div(ram_total_mb).unwrap_or(0) as u8;
+    let disk_pct = (disk_used_gb * 100).checked_div(disk_total_gb).unwrap_or(0) as u8;
     let fleet_nodes = probe_fleet_nodes(cpu_pct, ram_pct, disk_pct);
     let running_containers = docker_containers.iter().filter(|c| c.state == "running").count();
     let service_health = probe_services_health(running_containers, docker_containers.len());
