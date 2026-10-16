@@ -512,6 +512,7 @@ pub struct CockpitApp {
     pub show_pet_history: bool,
     pub pet_history_logs: Vec<crate::pet::PetActionLog>,
     pub pet_mood: crate::pet::PetMood,
+    pub pet_transient_action: Option<(crate::pet::PetActionState, u16)>,
 
     // Quit confirmation state
     pub show_quit_confirm: bool,
@@ -692,6 +693,7 @@ impl CockpitApp {
             show_pet_history: false,
             pet_history_logs: Vec::new(),
             pet_mood: crate::pet::PetMood::Idle,
+            pet_transient_action: None,
 
             show_quit_confirm: false,
             quit_requested: false,
@@ -1435,21 +1437,26 @@ impl CockpitApp {
             1 => self.treat_pet(),
             2 => self.switch_pet_species(),
             3 => self.toggle_pet_history(),
+            4 => {
+                self.pet_transient_action = Some((crate::pet::PetActionState::Hit, 16));
+                self.set_notification("💥 Sparring hit trigger!");
+            }
             _ => {}
         }
     }
 
     pub fn feed_pet(&mut self) {
+        self.pet_transient_action = Some((crate::pet::PetActionState::Jump, 16));
         let mut notif = None;
         if let Some(ref d) = self.db {
             if let Ok(Some(pet)) = d.get_active_pet() {
                 let _ = d.add_pet_xp(pet.id, 10);
-                let _ = d.log_pet_action(pet.id, &pet.name, "Beri Makan", "+10 XP (Nyaman)");
-                notif = Some(format!("🍖 Beri makan {}! (+10 XP)", pet.name));
+                let _ = d.log_pet_action(pet.id, &pet.name, "Feed", "+10 XP (Joyful Leap)");
+                notif = Some(format!("🍖 Fed {}! (+10 XP) [JUMP]", pet.name));
             } else {
                 let _ = d.create_pet("ayam", "Ciko");
-                let _ = d.log_pet_action(1, "Ciko", "Adopsi", "Mengadopsi Ayam Ciko");
-                notif = Some("🐣 Mengadopsi Ayam Ciko!".to_string());
+                let _ = d.log_pet_action(1, "Ciko", "Adopt", "Adopted Ciko the Chicken");
+                notif = Some("🐣 Adopted Ciko the Chicken!".to_string());
             }
             if let Ok(logs) = d.get_pet_history(10) {
                 self.pet_history_logs = logs;
@@ -1461,12 +1468,13 @@ impl CockpitApp {
     }
 
     pub fn treat_pet(&mut self) {
+        self.pet_transient_action = Some((crate::pet::PetActionState::Attack, 16));
         let mut notif = None;
         if let Some(ref d) = self.db {
             if let Ok(Some(pet)) = d.get_active_pet() {
                 self.pet_mood = crate::pet::PetMood::Idle;
-                let _ = d.log_pet_action(pet.id, &pet.name, "Perawatan", "Diberi obat & pulih");
-                notif = Some("🩺 Hewan berhasil dirawat & pulih!".to_string());
+                let _ = d.log_pet_action(pet.id, &pet.name, "Train", "Combat training & cured [ATTACK]");
+                notif = Some(format!("⚔ Trained {} in combat! Mood restored.", pet.name));
             }
             if let Ok(logs) = d.get_pet_history(10) {
                 self.pet_history_logs = logs;
@@ -1478,6 +1486,7 @@ impl CockpitApp {
     }
 
     pub fn switch_pet_species(&mut self) {
+        self.pet_transient_action = Some((crate::pet::PetActionState::Dash, 16));
         let species_list = ["ayam", "singa", "burung", "ular", "beruang"];
         let names = ["Ciko", "Simba", "Rio", "Nagini", "Koda"];
         let mut notif = None;
@@ -1495,8 +1504,8 @@ impl CockpitApp {
             let next_species = species_list[next_idx];
             let next_name = names[next_idx];
             let _ = d.create_pet(next_species, next_name);
-            let _ = d.log_pet_action(1, next_name, "Ganti Hewan", &format!("Beralih ke {}", next_species));
-            notif = Some(format!("🔄 Beralih ke {} {}!", next_species, next_name));
+            let _ = d.log_pet_action(1, next_name, "Switch", &format!("Switched to {}", next_species));
+            notif = Some(format!("🔄 Switched companion to {} {}! [DASH]", next_species, next_name));
             if let Ok(logs) = d.get_pet_history(10) {
                 self.pet_history_logs = logs;
             }
@@ -2096,8 +2105,14 @@ fn event_loop<B: ratatui::backend::Backend>(
             }
         }
 
-        // Increment pet animation tick
+        // Increment pet animation tick and step transient action timer
         app.pet_tick = app.pet_tick.wrapping_add(1);
+        if let Some((_, ref mut ticks)) = app.pet_transient_action {
+            *ticks = ticks.saturating_sub(1);
+            if *ticks == 0 {
+                app.pet_transient_action = None;
+            }
+        }
 
         if app.quit_requested {
             return Ok(());
@@ -2595,7 +2610,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         // Tab-specific controls: Up / k and Down / j
         KeyCode::Up | KeyCode::Char('k') => match app.current_tab {
             CockpitTab::Dashboard => {
-                app.pet_selected_action = (app.pet_selected_action + 3) % 4;
+                app.pet_selected_action = (app.pet_selected_action + 4) % 5;
                 app.overview_proc_scroll = app.overview_proc_scroll.saturating_sub(1);
             }
             CockpitTab::Project => {
@@ -2633,7 +2648,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         },
         KeyCode::Down | KeyCode::Char('j') => match app.current_tab {
             CockpitTab::Dashboard => {
-                app.pet_selected_action = (app.pet_selected_action + 1) % 4;
+                app.pet_selected_action = (app.pet_selected_action + 1) % 5;
                 app.overview_proc_scroll = (app.overview_proc_scroll + 1).min(30);
             }
             CockpitTab::Project => {
@@ -3167,10 +3182,10 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                         app.show_pet_modal = false;
                     }
                     HitboxAction::PetActionUp => {
-                        app.pet_selected_action = (app.pet_selected_action + 3) % 4;
+                        app.pet_selected_action = (app.pet_selected_action + 4) % 5;
                     }
                     HitboxAction::PetActionDown => {
-                        app.pet_selected_action = (app.pet_selected_action + 1) % 4;
+                        app.pet_selected_action = (app.pet_selected_action + 1) % 5;
                     }
                     HitboxAction::PetToggleHistory => {
                         app.pet_selected_action = 3;
@@ -5239,9 +5254,38 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         name.clone()
     };
 
+    // Determine active action state (transient action or telemetry mood)
+    let active_state = if let Some((st, _)) = app.pet_transient_action {
+        st
+    } else {
+        match app.pet_mood {
+            crate::pet::PetMood::Sprint => crate::pet::PetActionState::Run,
+            crate::pet::PetMood::Overheated => crate::pet::PetActionState::Hit,
+            crate::pet::PetMood::Sick => crate::pet::PetActionState::Death,
+            crate::pet::PetMood::Idle => {
+                if (app.pet_tick / 8) % 4 >= 2 {
+                    crate::pet::PetActionState::Walk
+                } else {
+                    crate::pet::PetActionState::Idle
+                }
+            }
+        }
+    };
+
+    let state_badge = match active_state {
+        crate::pet::PetActionState::Idle => "IDLE",
+        crate::pet::PetActionState::Walk => "WALK",
+        crate::pet::PetActionState::Run => "RUN >>",
+        crate::pet::PetActionState::Jump => "JUMP ▲",
+        crate::pet::PetActionState::Attack => "ATTACK ⚡",
+        crate::pet::PetActionState::Dash => "DASH 彡",
+        crate::pet::PetActionState::Hit => "HIT 💥",
+        crate::pet::PetActionState::Death => "REST / ZZZ",
+    };
+
     let title = format!(
-        " 🐾 PET PLAY ARENA [ {} | Lv.{} | {} ] ",
-        pet_name_display, level, mood_short
+        " 🐾 ISOMETRIC PET PLAY ARENA [ {} | Lv.{} | [{}] | {} ] ",
+        pet_name_display, level, state_badge, mood_short
     );
 
     let block = Block::default()
@@ -5303,16 +5347,16 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         mood: app.pet_mood,
         xp,
     };
-    let frames = status.frames();
+    let frames = status.frames_for_state(active_state);
     let frame_idx = (app.pet_tick / 4) % frames.len();
     let current_frame = frames[frame_idx];
 
     // Wander offset across the sprite screen
-    let wander_offset = if app.pet_mood == crate::pet::PetMood::Sprint {
-        let screen_width = inner.width.saturating_sub(15) as usize;
+    let wander_offset = if active_state == crate::pet::PetActionState::Run || active_state == crate::pet::PetActionState::Dash || active_state == crate::pet::PetActionState::Walk {
+        let screen_width = inner.width.saturating_sub(22) as usize;
         (app.pet_tick / 2) % screen_width.max(1)
     } else {
-        let max_w = inner.width.saturating_sub(30).min(12) as usize;
+        let max_w = inner.width.saturating_sub(35).min(10) as usize;
         if max_w > 0 {
             let cycle = (app.pet_tick / 6) % (max_w * 2);
             if cycle < max_w {
@@ -5385,12 +5429,13 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         HitboxAction::PetCancel,
     );
 
-    // 3. Action Buttons with active selection highlight
+    // 3. Action Buttons with active selection highlight (8-STATE ISOMETRIC ACTION BAR)
     let actions = [
-        "0: 🍖Feed(f)",
-        "1: 🩺Treat(t)",
-        "2: 🔄Pet(s)",
-        "3: 📜Log(h)",
+        "🍖Feed(f)",
+        "⚔Train(t)",
+        "🔄Switch(s)",
+        "📜Log(h)",
+        "💥Hit(Enter)",
     ];
     let mut action_spans = Vec::new();
     let mut act_x = inner.x;
@@ -5415,7 +5460,8 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             0 => HitboxAction::PetFeed,
             1 => HitboxAction::PetTreat,
             2 => HitboxAction::PetSwitch,
-            _ => HitboxAction::PetToggleHistory,
+            3 => HitboxAction::PetToggleHistory,
+            _ => HitboxAction::PetFeed,
         };
         app.register_hitbox(
             Rect { x: act_x, y: chunks[2].y, width: btn_w, height: 1 },
@@ -6216,16 +6262,22 @@ fn draw_pet_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             };
 
             lines.push(Line::from(""));
-            let frames = status.frames();
+            let active_action = app.pet_transient_action.map(|(state, _)| state).unwrap_or(match app.pet_mood {
+                crate::pet::PetMood::Idle => crate::pet::PetActionState::Idle,
+                crate::pet::PetMood::Sprint => crate::pet::PetActionState::Run,
+                crate::pet::PetMood::Overheated => crate::pet::PetActionState::Hit,
+                crate::pet::PetMood::Sick => crate::pet::PetActionState::Death,
+            });
+            let frames = status.frames_for_state(active_action);
             for art in frames[0] {
                 lines.push(Line::from(Span::styled(*art, Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD))));
             }
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("Nama: ", Style::default().fg(palette.text_muted)),
+                Span::styled("Name: ", Style::default().fg(palette.text_muted)),
                 Span::styled(pet.name.clone(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
                 Span::raw("  │  "),
-                Span::styled("Spesies: ", Style::default().fg(palette.text_muted)),
+                Span::styled("Species: ", Style::default().fg(palette.text_muted)),
                 Span::styled(species.display_name(), Style::default().fg(palette.accent)),
             ]));
             lines.push(Line::from(vec![
@@ -6237,8 +6289,8 @@ fn draw_pet_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             ]));
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("Siklus Hidup: ", Style::default().fg(palette.text_muted)),
-                Span::raw("Telur 🥚 → Menetas 🐣 → Kecil 🐥 → Dewasa 🐔 → Menikah 💑 → Bertelur 🥚"),
+                Span::styled("Lifecycle: ", Style::default().fg(palette.text_muted)),
+                Span::raw("Egg 🥚 → Hatching 🐣 → Juvenile 🐥 → Adult 🐔 → Mating 💑 → Egg 🥚"),
             ]));
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
@@ -6250,15 +6302,15 @@ fn draw_pet_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             ]));
         } else {
             lines.push(Line::from(""));
-            lines.push(Line::from("Belum ada hewan peliharaan aktif."));
-            lines.push(Line::from("Pilih teman kerjamu untuk menemanimu coding!"));
+            lines.push(Line::from("No active pet companion."));
+            lines.push(Line::from("Choose a workspace companion to join your terminal sessions!"));
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("Pilihan: Ayam, Singa, Burung, Ular, Beruang", Style::default().fg(palette.accent)),
+                Span::styled("Options: Chicken (Ayam), Lion (Singa), Bird (Burung), Snake (Ular), Bear (Beruang)", Style::default().fg(palette.accent)),
             ]));
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("[Buat Pet: Ayam Ciko] (Press 'c')", Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
+                Span::styled("[Adopt Companion: Ciko the Chicken] (Press 'c')", Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
             ]));
         }
     }
