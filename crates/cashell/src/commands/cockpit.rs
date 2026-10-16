@@ -4183,16 +4183,16 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             f.render_widget(Paragraph::new(full_cpu_lines), cpu_inner);
         }
 
-        // ── Center: Tamagotchi Pet Play Arena ───────────────────────────────────
-        draw_pet_play_area(f, app, top_chunks[1]);
-
-        // ── Right: Memory & Mount Table ──────────────────────────────────────────
+        // ── Center: Memory & Storage Telemetry (Expanded & Swapped) ─────────────
         let mem_block = Block::default()
             .borders(Borders::ALL)
             .title(" Memory & Storage Telemetry ")
             .border_style(Style::default().fg(palette.border));
-        let mem_inner = mem_block.inner(top_chunks[2]);
-        f.render_widget(mem_block, top_chunks[2]);
+        let mem_inner = mem_block.inner(top_chunks[1]);
+        f.render_widget(mem_block, top_chunks[1]);
+
+        // ── Right: Tamagotchi Pet Play Arena (Compact) ─────────────────────────
+        draw_pet_play_area(f, app, top_chunks[2]);
 
         if mem_inner.width > 10 && mem_inner.height > 3 {
             let mem_layout = Layout::default()
