@@ -194,6 +194,9 @@ pub enum HitboxAction {
     PetFeed,
     PetTreat,
     PetSwitch,
+    PetStop,
+    ConfirmSwitchPet,
+    CancelSwitchPet,
     ConfirmQuit,
     CancelQuit,
     // Add-wizard openers
@@ -513,6 +516,8 @@ pub struct CockpitApp {
     pub pet_history_logs: Vec<crate::pet::PetActionLog>,
     pub pet_mood: crate::pet::PetMood,
     pub pet_transient_action: Option<(crate::pet::PetActionState, u16)>,
+    pub pet_is_stopped: bool,
+    pub show_pet_switch_confirm: bool,
 
     // Quit confirmation state
     pub show_quit_confirm: bool,
@@ -694,6 +699,8 @@ impl CockpitApp {
             pet_history_logs: Vec::new(),
             pet_mood: crate::pet::PetMood::Idle,
             pet_transient_action: None,
+            pet_is_stopped: false,
+            show_pet_switch_confirm: false,
 
             show_quit_confirm: false,
             quit_requested: false,
@@ -888,12 +895,12 @@ impl CockpitApp {
             }
         }
 
-        // 3. Ensure multi-node canonical fleet nodes (X1, YPC, Hostinger VPS, XPC, Gerlink)
+        // 3. Ensure multi-node canonical fleet nodes (X1, YPC, Hostinger VPS, XPC, pc-gerlink)
         let fleet_presets = [
             ("YPC", "100.127.232.32", 3000),
-            ("Hostinger VPS", "195.35.48.21", 80),
-            ("XPC", "100.100.100.10", 22),
-            ("Gerlink", "100.64.0.1", 80),
+            ("Hostinger VPS", "100.76.150.46", 80),
+            ("XPC", "100.125.125.28", 22),
+            ("pc-gerlink", "100.102.147.90", 80),
         ];
         for (pname, pip, pport) in fleet_presets {
             if !results.iter().any(|(rname, _)| rname.eq_ignore_ascii_case(pname)) {
@@ -1435,13 +1442,54 @@ impl CockpitApp {
         match self.pet_selected_action {
             0 => self.feed_pet(),
             1 => self.treat_pet(),
-            2 => self.switch_pet_species(),
-            3 => self.toggle_pet_history(),
-            4 => {
-                self.pet_transient_action = Some((crate::pet::PetActionState::Hit, 16));
-                self.set_notification("💥 Sparring hit trigger!");
-            }
+            2 => self.request_pet_switch(),
+            3 => self.toggle_pet_pause(),
+            4 => self.toggle_pet_history(),
             _ => {}
+        }
+    }
+
+    pub fn toggle_pet_pause(&mut self) {
+        self.pet_is_stopped = !self.pet_is_stopped;
+        if self.pet_is_stopped {
+            self.set_notification("⏸ Pet paused — stationary calm mode");
+        } else {
+            self.set_notification("▶ Pet resumed — active animation mode");
+        }
+    }
+
+    pub fn request_pet_switch(&mut self) {
+        self.show_pet_switch_confirm = true;
+    }
+
+    pub fn confirm_switch_pet_species(&mut self) {
+        self.show_pet_switch_confirm = false;
+        self.pet_transient_action = Some((crate::pet::PetActionState::Dash, 16));
+        let species_list = ["ayam", "singa", "burung", "ular", "beruang"];
+        let names = ["Ciko", "Simba", "Rio", "Nagini", "Koda"];
+        let mut notif = None;
+        if let Some(ref d) = self.db {
+            let next_idx = match d.get_active_pet().ok().flatten() {
+                Some(p) => match p.species.as_str() {
+                    "ayam" => 1,
+                    "singa" => 2,
+                    "burung" => 3,
+                    "ular" => 4,
+                    _ => 0,
+                },
+                None => 0,
+            };
+            let next_species = species_list[next_idx];
+            let next_name = names[next_idx];
+            let _ = d.create_pet(next_species, next_name);
+            let _ = d.log_pet_action(1, next_name, "Switch", &format!("Switched to {}", next_species));
+            notif = Some(format!("🔄 Switched companion to {} {}! [DASH]", next_species, next_name));
+            if let Ok(logs) = d.get_pet_history(10) {
+                self.pet_history_logs = logs;
+            }
+        }
+        if let Some(msg) = notif {
+            self.set_notification(msg);
         }
     }
 
@@ -1486,33 +1534,7 @@ impl CockpitApp {
     }
 
     pub fn switch_pet_species(&mut self) {
-        self.pet_transient_action = Some((crate::pet::PetActionState::Dash, 16));
-        let species_list = ["ayam", "singa", "burung", "ular", "beruang"];
-        let names = ["Ciko", "Simba", "Rio", "Nagini", "Koda"];
-        let mut notif = None;
-        if let Some(ref d) = self.db {
-            let next_idx = match d.get_active_pet().ok().flatten() {
-                Some(p) => match p.species.as_str() {
-                    "ayam" => 1,
-                    "singa" => 2,
-                    "burung" => 3,
-                    "ular" => 4,
-                    _ => 0,
-                },
-                None => 0,
-            };
-            let next_species = species_list[next_idx];
-            let next_name = names[next_idx];
-            let _ = d.create_pet(next_species, next_name);
-            let _ = d.log_pet_action(1, next_name, "Switch", &format!("Switched to {}", next_species));
-            notif = Some(format!("🔄 Switched companion to {} {}! [DASH]", next_species, next_name));
-            if let Ok(logs) = d.get_pet_history(10) {
-                self.pet_history_logs = logs;
-            }
-        }
-        if let Some(msg) = notif {
-            self.set_notification(msg);
-        }
+        self.request_pet_switch();
     }
 
     pub fn toggle_pet_history(&mut self) {
@@ -2537,6 +2559,22 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
     }
 
+    // 5b. Pet Switch Confirmation Modal Handling
+    if app.show_pet_switch_confirm {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                app.confirm_switch_pet_species();
+                return Ok(false);
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc | KeyCode::Char('q') => {
+                app.show_pet_switch_confirm = false;
+                app.set_notification("Companion switch cancelled");
+                return Ok(false);
+            }
+            _ => return Ok(false),
+        }
+    }
+
     // 6. Global Navigation Shortcuts
     match key.code {
         KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -2584,19 +2622,23 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
         KeyCode::Char('f') if app.current_tab == CockpitTab::Dashboard => {
             app.pet_selected_action = 0;
-            app.execute_pet_action();
+            app.feed_pet();
         }
         KeyCode::Char('t') if app.current_tab == CockpitTab::Dashboard => {
             app.pet_selected_action = 1;
-            app.execute_pet_action();
+            app.treat_pet();
         }
         KeyCode::Char('s') if app.current_tab == CockpitTab::Dashboard => {
             app.pet_selected_action = 2;
-            app.execute_pet_action();
+            app.request_pet_switch();
+        }
+        KeyCode::Char('p') if app.current_tab == CockpitTab::Dashboard => {
+            app.pet_selected_action = 3;
+            app.toggle_pet_pause();
         }
         KeyCode::Char('h') if app.current_tab == CockpitTab::Dashboard => {
-            app.pet_selected_action = 3;
-            app.execute_pet_action();
+            app.pet_selected_action = 4;
+            app.toggle_pet_history();
         }
 
         KeyCode::Tab => {
@@ -2650,6 +2692,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Down | KeyCode::Char('j') => match app.current_tab {
             CockpitTab::Dashboard => {
                 app.pet_selected_action = (app.pet_selected_action + 1) % 5;
+                // Use PageDown-style jumps (or single-step) to smoothly page through the Executive Command Center rows.
                 app.overview_proc_scroll = (app.overview_proc_scroll + 1).min(30);
             }
             CockpitTab::Project => {
@@ -2840,8 +2883,8 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             app.vacuum_database();
         }
 
-        // Pet modal shortcut in Dashboard
-        KeyCode::Char('p') if app.current_tab == CockpitTab::Dashboard => {
+        // Pet modal shortcut in Dashboard (Shift+P or 'c' to adopt)
+        KeyCode::Char('P') if app.current_tab == CockpitTab::Dashboard => {
             app.show_pet_modal = !app.show_pet_modal;
         }
         KeyCode::Char('c') if app.show_pet_modal => {
@@ -3202,7 +3245,18 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                     }
                     HitboxAction::PetSwitch => {
                         app.pet_selected_action = 2;
-                        app.execute_pet_action();
+                        app.request_pet_switch();
+                    }
+                    HitboxAction::PetStop => {
+                        app.pet_selected_action = 3;
+                        app.toggle_pet_pause();
+                    }
+                    HitboxAction::ConfirmSwitchPet => {
+                        app.confirm_switch_pet_species();
+                    }
+                    HitboxAction::CancelSwitchPet => {
+                        app.show_pet_switch_confirm = false;
+                        app.set_notification("Companion switch cancelled");
                     }
                     HitboxAction::ConfirmQuit => {
                         app.show_quit_confirm = false;
@@ -3696,6 +3750,10 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if app.show_set_password_modal {
         draw_set_password_modal(f, app, area);
     }
+
+    if app.show_pet_switch_confirm {
+        draw_pet_switch_confirm_modal(f, app, area);
+    }
 }
 
 // ── Header (Calm Sovereign Cockpit Branding) ────────────────────────────────
@@ -3712,7 +3770,7 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         return;
     }
 
-    let title = " CAShell v0.3.5 · Isometric Cockpit ";
+    let title = " CAShell v0.3.6 · Isometric Cockpit ";
     let time_str = chrono::Local::now().format("%H:%M:%S").to_string();
 
     let router_badge = if app.is_9router_online {
@@ -3981,274 +4039,390 @@ fn format_kbps(kbps: f64) -> String {
     }
 }
 
+fn truncate_str(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        s
+    } else {
+        &s[..max]
+    }
+}
 
 fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let palette = ThemePalette::get(&app.cfg.output.theme);
+    let snap = app.latest_snap.clone();
+
+    let (top_h, show_full_top) = if area.height < 36 && app.overview_proc_scroll >= 1 {
+        (1u16, false)
+    } else {
+        (12u16, true)
+    };
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(12), // Top: CPU Grid + Tamagotchi Pet + Memory/Storage
-            Constraint::Length(4),  // Middle: Fleet Health & Active Alerts Matrix
-            Constraint::Min(8),     // Bottom: Live Dokploy Fleet & Top Processes
+            Constraint::Length(top_h),
+            Constraint::Length(4),
+            Constraint::Min(8),
         ])
         .split(area);
 
-    let top_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(36), // CPU Telemetry
-            Constraint::Percentage(36), // Tamagotchi Pet Play Arena
-            Constraint::Percentage(28), // Memory & Storage
-        ])
-        .split(chunks[0]);
-
-    let snap = app.latest_snap.clone();
-    let thermal_alert = snap.cpu_temp_c > 88.0;
-
-    // ── Top Left: CPU & 8-Core Grid ──────────────────────────────────────────
-    let cpu_title = if thermal_alert {
-        format!(" CPU Telemetry ({:.1}%) [🔥 THERMAL ALERT] ", snap.cpu_pct)
-    } else {
-        format!(" CPU Telemetry ({:.1}%) ", snap.cpu_pct)
-    };
-    let cpu_border_color = if thermal_alert {
-        palette.status_err
-    } else if snap.cpu_pct > 80.0 {
-        palette.status_warn
-    } else {
-        palette.status_ok
-    };
-
-    let cpu_block = Block::default()
-        .borders(Borders::ALL)
-        .title(cpu_title)
-        .border_style(Style::default().fg(cpu_border_color));
-    let cpu_inner = cpu_block.inner(top_chunks[0]);
-    f.render_widget(cpu_block, top_chunks[0]);
-
-    if cpu_inner.width > 10 && cpu_inner.height > 2 {
-        let mut header_spans = vec![
-            Span::styled("Load: ", Style::default().fg(palette.text_muted)),
-            Span::styled(
-                format!("[{:.2}, {:.2}, {:.2}]  ", snap.load_avg[0], snap.load_avg[1], snap.load_avg[2]),
-                Style::default().fg(palette.accent),
-            ),
-            Span::styled("Fan: ", Style::default().fg(palette.text_muted)),
-            Span::styled(
-                format!("{}  ", snap.fan_speed.as_deref().unwrap_or("N/A")),
-                Style::default().fg(Color::White),
-            ),
+    if !show_full_top {
+        let pet_badge = if let Some(ref d) = app.db {
+            if let Ok(Some(pet)) = d.get_active_pet() {
+                format!("🐾 {} Lv.{} ({})", pet.name, (pet.xp / 100) + 1, pet.species)
+            } else {
+                "🐾 Ciko (Ayam)".to_string()
+            }
+        } else {
+            "🐾 Ciko (Ayam)".to_string()
+        };
+        let line = Line::from(vec![
+            Span::styled("⚡ CPU: ", Style::default().fg(palette.text_muted)),
+            Span::styled(format!("{:.1}%  ", snap.cpu_pct), Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD)),
             Span::styled("Temp: ", Style::default().fg(palette.text_muted)),
-            Span::styled(
-                format!("{:.1}°C", snap.cpu_temp_c),
-                if snap.cpu_temp_c > 88.0 {
-                    Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD)
-                } else if snap.cpu_temp_c > 75.0 {
-                    Style::default().fg(palette.status_warn)
-                } else {
-                    Style::default().fg(palette.status_ok)
-                },
-            ),
-        ];
-
-        if thermal_alert {
-            header_spans.push(Span::styled(
-                "  [🔥 THERMAL ALERT]",
-                Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD),
-            ));
-        }
-
-        let cpu_hist_vec: Vec<f32> = app.cpu_history.iter().copied().collect();
-        let braille_height = if cpu_inner.height >= 8 { 2 } else { 1 };
-        let braille_lines = render_braille_curve(&cpu_hist_vec, cpu_inner.width as usize, braille_height);
-
-        let half_w = (cpu_inner.width.saturating_sub(3) / 2) as usize;
-        let bar_len = if half_w >= 26 { 10 } else if half_w >= 20 { 6 } else { 4 };
-
-        let mut core_lines = Vec::new();
-        for row in 0..4 {
-            let c_left_idx = row;
-            let c_right_idx = row + 4;
-
-            let left_spans = format_core_span(snap.cpus.get(c_left_idx), c_left_idx, bar_len);
-            let right_spans = format_core_span(snap.cpus.get(c_right_idx), c_right_idx, bar_len);
-
-            let mut line_spans = left_spans;
-            line_spans.push(Span::styled(" │ ", Style::default().fg(palette.text_muted)));
-            line_spans.extend(right_spans);
-            core_lines.push(Line::from(line_spans));
-        }
-
-        let mut full_cpu_lines = Vec::new();
-        full_cpu_lines.push(Line::from(header_spans));
-        full_cpu_lines.extend(braille_lines);
-        full_cpu_lines.extend(core_lines);
-
-        f.render_widget(Paragraph::new(full_cpu_lines), cpu_inner);
-    }
-
-    // ── Center: Tamagotchi Pet Play Arena ───────────────────────────────────
-    draw_pet_play_area(f, app, top_chunks[1]);
-
-    // ── Right: Memory & Mount Table ──────────────────────────────────────────
-    let mem_block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Memory & Storage Telemetry ")
-        .border_style(Style::default().fg(palette.border));
-    let mem_inner = mem_block.inner(top_chunks[2]);
-    f.render_widget(mem_block, top_chunks[2]);
-
-    if mem_inner.width > 10 && mem_inner.height > 3 {
-        let mem_layout = Layout::default()
-            .direction(Direction::Vertical)
+            Span::styled(format!("{:.1}°C  ", snap.cpu_temp_c), Style::default().fg(if snap.cpu_temp_c > 85.0 { palette.status_err } else { palette.status_ok })),
+            Span::styled("RAM: ", Style::default().fg(palette.text_muted)),
+            Span::styled(format!("{}M/{}M  ", snap.ram_used_mb, snap.ram_total_mb), Style::default().fg(palette.chart_cpu)),
+            Span::styled("Root NVMe: ", Style::default().fg(palette.text_muted)),
+            Span::styled(format!("{}G/{}G  ", snap.disk_used_gb, snap.disk_total_gb), Style::default().fg(palette.status_ok)),
+            Span::styled("Companion: ", Style::default().fg(palette.text_muted)),
+            Span::styled(pet_badge, Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        ]);
+        f.render_widget(Paragraph::new(line), chunks[0]);
+    } else {
+        let top_chunks = Layout::default()
+            .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(1), // RAM gauge
-                Constraint::Length(1), // Swap gauge
-                Constraint::Length(1), // GPU telemetry info
-                Constraint::Min(3),    // Storage mounts table
+                Constraint::Percentage(35), // Left: CPU Telemetry
+                Constraint::Percentage(41), // Center: Memory & Storage Telemetry (Swapped & Expanded)
+                Constraint::Percentage(24), // Right: ISOMETRIC PET PLAY ARENA (Compact)
             ])
-            .split(mem_inner);
+            .split(chunks[0]);
 
-        let ram_used = snap.ram_used_mb;
-        let ram_total = snap.ram_total_mb.max(1);
-        let ram_pct = ((ram_used * 100) / ram_total) as u16;
-        let ram_color = if ram_pct > 85 {
+        let thermal_alert = snap.cpu_temp_c > 88.0;
+
+        // ── Top Left: CPU & 8-Core Grid ──────────────────────────────────────────
+        let cpu_title = if thermal_alert {
+            format!(" CPU Telemetry ({:.1}%) [🔥 THERMAL ALERT] ", snap.cpu_pct)
+        } else {
+            format!(" CPU Telemetry ({:.1}%) ", snap.cpu_pct)
+        };
+        let cpu_border_color = if thermal_alert {
             palette.status_err
-        } else if ram_pct > 70 {
+        } else if snap.cpu_pct > 80.0 {
             palette.status_warn
         } else {
-            palette.chart_cpu
+            palette.status_ok
         };
-        let ram_label = format!("RAM: {ram_used}M/{ram_total}M ({ram_pct}%) [Cached: {}M]", snap.ram_cached_mb);
-        let ram_gauge = Gauge::default()
-            .gauge_style(Style::default().fg(ram_color).bg(Color::DarkGray))
-            .ratio(((ram_used as f64) / (ram_total as f64)).clamp(0.0, 1.0))
-            .label(ram_label);
-        f.render_widget(ram_gauge, mem_layout[0]);
 
-        let swap_used = snap.swap_used_mb;
-        let swap_total = snap.swap_total_mb.max(1);
-        let swap_pct = if snap.swap_total_mb > 0 {
-            ((swap_used * 100) / swap_total) as u16
-        } else {
-            0
-        };
-        let swap_label = format!("SWP: {swap_used}M/{swap_total}M ({swap_pct}%)");
-        let swap_gauge = Gauge::default()
-            .gauge_style(Style::default().fg(palette.chart_ram).bg(Color::DarkGray))
-            .ratio(if snap.swap_total_mb > 0 {
-                ((swap_used as f64) / (swap_total as f64)).clamp(0.0, 1.0)
-            } else {
-                0.0
-            })
-            .label(swap_label);
-        f.render_widget(swap_gauge, mem_layout[1]);
+        let cpu_block = Block::default()
+            .borders(Borders::ALL)
+            .title(cpu_title)
+            .border_style(Style::default().fg(cpu_border_color));
+        let cpu_inner = cpu_block.inner(top_chunks[0]);
+        f.render_widget(cpu_block, top_chunks[0]);
 
-        let gpu_info = if snap.gpu_label != "No GPU" && !snap.gpu_label.is_empty() {
-            let util = snap.gpu_pct.map(|p| format!("{p:.0}%")).unwrap_or_else(|| "N/A".to_string());
-            let temp = snap.gpu_temp_c.map(|t| format!("{t:.0}°C")).unwrap_or_else(|| "N/A".to_string());
-            format!("GPU: {} │ Util: {} │ Temp: {}", snap.gpu_label, util, temp)
-        } else {
-            "GPU: Integrated Graphics (Intel Xe / AMD DRM)".to_string()
-        };
-        let gpu_line = Line::from(vec![
-            Span::styled("◆ ", Style::default().fg(palette.status_warn)),
-            Span::styled(gpu_info, Style::default().fg(palette.text_muted)),
-        ]);
-        f.render_widget(Paragraph::new(gpu_line), mem_layout[2]);
+        if cpu_inner.width > 10 && cpu_inner.height > 2 {
+            let mut header_spans = vec![
+                Span::styled("Load: ", Style::default().fg(palette.text_muted)),
+                Span::styled(
+                    format!("[{:.2}, {:.2}, {:.2}]  ", snap.load_avg[0], snap.load_avg[1], snap.load_avg[2]),
+                    Style::default().fg(palette.accent),
+                ),
+                Span::styled("Fan: ", Style::default().fg(palette.text_muted)),
+                Span::styled(
+                    format!("{}  ", snap.fan_speed.as_deref().unwrap_or("N/A")),
+                    Style::default().fg(Color::White),
+                ),
+                Span::styled("Temp: ", Style::default().fg(palette.text_muted)),
+                Span::styled(
+                    format!("{:.1}°C", snap.cpu_temp_c),
+                    if snap.cpu_temp_c > 88.0 {
+                        Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD)
+                    } else if snap.cpu_temp_c > 75.0 {
+                        Style::default().fg(palette.status_warn)
+                    } else {
+                        Style::default().fg(palette.status_ok)
+                    },
+                ),
+            ];
 
-        let mut mount_rows = Vec::new();
-        for m in &snap.mounts {
-            let mount_label = if m.mountpoint == "/" {
-                "/ (Root NVMe)"
-            } else if m.mountpoint.contains("DATA") {
-                "/DATA (External)"
-            } else {
-                m.mountpoint.as_str()
-            };
-            let used_total = format!("{}G / {}G", m.used_gb, m.total_gb);
-            let bar_len: usize = 6;
-            let filled = ((m.pct as f32 / 100.0) * bar_len as f32).round() as usize;
-            let unfilled = bar_len.saturating_sub(filled);
-            let bar_str = format!("[{}{}] {:>3}%", "█".repeat(filled), "░".repeat(unfilled), m.pct);
-            let pct_color = if m.pct >= 90 {
+            if thermal_alert {
+                header_spans.push(Span::styled(
+                    "  [🔥 THERMAL ALERT]",
+                    Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD),
+                ));
+            }
+
+            let cpu_hist_vec: Vec<f32> = app.cpu_history.iter().copied().collect();
+            let braille_height = if cpu_inner.height >= 8 { 2 } else { 1 };
+            let braille_lines = render_braille_curve(&cpu_hist_vec, cpu_inner.width as usize, braille_height);
+
+            let half_w = (cpu_inner.width.saturating_sub(3) / 2) as usize;
+            let bar_len = if half_w >= 26 { 10 } else if half_w >= 20 { 6 } else { 4 };
+
+            let mut core_lines = Vec::new();
+            for row in 0..4 {
+                let c_left_idx = row;
+                let c_right_idx = row + 4;
+
+                let left_spans = format_core_span(snap.cpus.get(c_left_idx), c_left_idx, bar_len);
+                let right_spans = format_core_span(snap.cpus.get(c_right_idx), c_right_idx, bar_len);
+
+                let mut line_spans = left_spans;
+                line_spans.push(Span::styled(" │ ", Style::default().fg(palette.text_muted)));
+                line_spans.extend(right_spans);
+                core_lines.push(Line::from(line_spans));
+            }
+
+            let mut full_cpu_lines = Vec::new();
+            full_cpu_lines.push(Line::from(header_spans));
+            full_cpu_lines.extend(braille_lines);
+            full_cpu_lines.extend(core_lines);
+
+            f.render_widget(Paragraph::new(full_cpu_lines), cpu_inner);
+        }
+
+        // ── Center: Tamagotchi Pet Play Arena ───────────────────────────────────
+        draw_pet_play_area(f, app, top_chunks[1]);
+
+        // ── Right: Memory & Mount Table ──────────────────────────────────────────
+        let mem_block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Memory & Storage Telemetry ")
+            .border_style(Style::default().fg(palette.border));
+        let mem_inner = mem_block.inner(top_chunks[2]);
+        f.render_widget(mem_block, top_chunks[2]);
+
+        if mem_inner.width > 10 && mem_inner.height > 3 {
+            let mem_layout = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1), // RAM gauge
+                    Constraint::Length(1), // Swap gauge
+                    Constraint::Length(1), // GPU telemetry info
+                    Constraint::Min(3),    // Storage mounts table
+                ])
+                .split(mem_inner);
+
+            let ram_used = snap.ram_used_mb;
+            let ram_total = snap.ram_total_mb.max(1);
+            let ram_pct = ((ram_used * 100) / ram_total) as u16;
+            let ram_color = if ram_pct > 85 {
                 palette.status_err
-            } else if m.pct >= 75 {
+            } else if ram_pct > 70 {
                 palette.status_warn
             } else {
-                palette.status_ok
+                palette.chart_cpu
             };
+            let ram_label = format!("RAM: {ram_used}M/{ram_total}M ({ram_pct}%) [Cached: {}M]", snap.ram_cached_mb);
+            let ram_gauge = Gauge::default()
+                .gauge_style(Style::default().fg(ram_color).bg(Color::DarkGray))
+                .ratio(((ram_used as f64) / (ram_total as f64)).clamp(0.0, 1.0))
+                .label(ram_label);
+            f.render_widget(ram_gauge, mem_layout[0]);
 
-            mount_rows.push(Row::new(vec![
-                Cell::from(mount_label.to_string()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                Cell::from(used_total).style(Style::default().fg(palette.accent)),
-                Cell::from(bar_str).style(Style::default().fg(pct_color)),
-            ]));
+            let swap_used = snap.swap_used_mb;
+            let swap_total = snap.swap_total_mb.max(1);
+            let swap_pct = if snap.swap_total_mb > 0 {
+                ((swap_used * 100) / swap_total) as u16
+            } else {
+                0
+            };
+            let swap_label = format!("SWP: {swap_used}M/{swap_total}M ({swap_pct}%)");
+            let swap_gauge = Gauge::default()
+                .gauge_style(Style::default().fg(palette.chart_ram).bg(Color::DarkGray))
+                .ratio(if snap.swap_total_mb > 0 {
+                    ((swap_used as f64) / (swap_total as f64)).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                })
+                .label(swap_label);
+            f.render_widget(swap_gauge, mem_layout[1]);
+
+            let gpu_info = if snap.gpu_label != "No GPU" && !snap.gpu_label.is_empty() {
+                let util = snap.gpu_pct.map(|p| format!("{p:.0}%")).unwrap_or_else(|| "N/A".to_string());
+                let temp = snap.gpu_temp_c.map(|t| format!("{t:.0}°C")).unwrap_or_else(|| "N/A".to_string());
+                format!("GPU: {} │ Util: {} │ Temp: {}", snap.gpu_label, util, temp)
+            } else {
+                "GPU: Integrated Graphics (Intel Xe / AMD DRM)".to_string()
+            };
+            let gpu_line = Line::from(vec![
+                Span::styled("◆ ", Style::default().fg(palette.status_warn)),
+                Span::styled(gpu_info, Style::default().fg(palette.text_muted)),
+            ]);
+            f.render_widget(Paragraph::new(gpu_line), mem_layout[2]);
+
+            let mut mount_rows = Vec::new();
+            for m in &snap.mounts {
+                let mount_label = if m.mountpoint == "/" {
+                    "/ (Root NVMe)"
+                } else if m.mountpoint.contains("DATA") {
+                    "/DATA (External)"
+                } else {
+                    m.mountpoint.as_str()
+                };
+                let used_total = format!("{}G / {}G", m.used_gb, m.total_gb);
+                let bar_len: usize = 6;
+                let filled = ((m.pct as f32 / 100.0) * bar_len as f32).round() as usize;
+                let unfilled = bar_len.saturating_sub(filled);
+                let bar_str = format!("[{}{}] {:>3}%", "█".repeat(filled), "░".repeat(unfilled), m.pct);
+                let pct_color = if m.pct >= 90 {
+                    palette.status_err
+                } else if m.pct >= 75 {
+                    palette.status_warn
+                } else {
+                    palette.status_ok
+                };
+
+                mount_rows.push(Row::new(vec![
+                    Cell::from(mount_label.to_string()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                    Cell::from(used_total).style(Style::default().fg(palette.accent)),
+                    Cell::from(bar_str).style(Style::default().fg(pct_color)),
+                ]));
+            }
+
+            if mount_rows.is_empty() {
+                mount_rows.push(Row::new(vec![
+                    Cell::from("/ (Root NVMe)").style(Style::default().fg(Color::White)),
+                    Cell::from(format!("{}G / {}G", snap.disk_used_gb, snap.disk_total_gb)),
+                    Cell::from("[███░░░] 50%").style(Style::default().fg(palette.status_ok)),
+                ]));
+            }
+
+            let mount_table = Table::new(
+                mount_rows,
+                [
+                    Constraint::Length(16),
+                    Constraint::Length(12),
+                    Constraint::Min(12),
+                ],
+            )
+            .header(
+                Row::new(vec!["MOUNT", "USED/TOTAL", "USAGE"])
+                    .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+            );
+            f.render_widget(mount_table, mem_layout[3]);
         }
-
-        if mount_rows.is_empty() {
-            mount_rows.push(Row::new(vec![
-                Cell::from("/ (Root NVMe)").style(Style::default().fg(Color::White)),
-                Cell::from(format!("{}G / {}G", snap.disk_used_gb, snap.disk_total_gb)),
-                Cell::from("[███░░░] 50%").style(Style::default().fg(palette.status_ok)),
-            ]));
-        }
-
-        let mount_table = Table::new(
-            mount_rows,
-            [
-                Constraint::Length(16),
-                Constraint::Length(12),
-                Constraint::Min(12),
-            ],
-        )
-        .header(
-            Row::new(vec!["MOUNT", "USED/TOTAL", "USAGE"])
-                .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
-        );
-        f.render_widget(mount_table, mem_layout[3]);
     }
 
-    // ── Middle: Fleet Health & Active Alerts Matrix ──────────────────────────
+    // ── Middle: Executive Command Center Overview & Active Alerts Banner ─────
     let alerts_block = Block::default()
         .borders(Borders::ALL)
-        .title(" Fleet Health & Active System Alerts Matrix ")
+        .title(" 🎛 Executive Command Center · Armada & Daemons Overview ")
         .border_style(Style::default().fg(palette.accent));
     let alerts_inner = alerts_block.inner(chunks[1]);
     f.render_widget(alerts_block, chunks[1]);
 
+    // Summary line 1: Armada, Containers, Daemons, Monitors summary badges
     let mut alerts_spans = Vec::new();
-    let is_mesh_ok = app.is_tailscale_ok;
-    alerts_spans.push(Span::styled("Fleet Mesh: ", Style::default().fg(palette.text_muted)));
-    if is_mesh_ok {
-        alerts_spans.push(Span::styled("● TAILSCALE OK  ", Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD)));
-    } else {
-        alerts_spans.push(Span::styled("✖ TAILSCALE DOWN  ", Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD)));
-    }
 
-    alerts_spans.push(Span::styled("AI Proxy: ", Style::default().fg(palette.text_muted)));
-    if app.is_9router_online {
-        alerts_spans.push(Span::styled("● 9ROUTER :20128 ONLINE  ", Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD)));
+    // 1. Armada Fleet Node summary badge
+    let total_nodes = snap.fleet_nodes.len();
+    let online_nodes = snap.fleet_nodes.iter().filter(|n| n.status == "ONLINE").count();
+    let fleet_offline = total_nodes.saturating_sub(online_nodes);
+    if fleet_offline == 0 && total_nodes > 0 {
+        alerts_spans.push(Span::styled(
+            format!(" Armada: ● {online_nodes}/{total_nodes} Online "),
+            Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD),
+        ));
     } else {
-        alerts_spans.push(Span::styled("✖ 9ROUTER DOWN  ", Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)));
+        alerts_spans.push(Span::styled(
+            format!(" Armada: ✖ {online_nodes}/{total_nodes} Online · {fleet_offline} Down "),
+            Style::default().fg(Color::White).bg(palette.status_err).add_modifier(Modifier::BOLD),
+        ));
     }
+    alerts_spans.push(Span::raw("  "));
 
-    let down_monitors = snap.uptime_monitors.iter().filter(|m| !m.is_up).count();
-    alerts_spans.push(Span::styled("Monitors: ", Style::default().fg(palette.text_muted)));
-    if down_monitors == 0 {
-        alerts_spans.push(Span::styled(format!("● ALL {} UP  ", snap.uptime_monitors.len()), Style::default().fg(palette.status_ok)));
-    } else {
-        alerts_spans.push(Span::styled(format!("✖ {down_monitors} DOWN  "), Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD)));
-    }
-
-    let running_cont = snap.docker_containers.iter().filter(|c| c.state == "running").count();
+    // 2. Docker Containers summary count badge
     let total_cont = snap.docker_containers.len();
-    alerts_spans.push(Span::styled(format!("Containers: {running_cont}/{total_cont} Running"), Style::default().fg(palette.accent)));
+    let running_cont = snap.docker_containers.iter().filter(|c| c.state == "running").count();
+    let down_cont = total_cont.saturating_sub(running_cont);
+    if down_cont == 0 && total_cont > 0 {
+        alerts_spans.push(Span::styled(
+            format!(" 🟢 {running_cont}/{total_cont} Containers Running "),
+            Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD),
+        ));
+    } else if down_cont > 0 {
+        alerts_spans.push(Span::styled(
+            format!(" 🔴 {running_cont}/{total_cont} Running · {down_cont} DOWN "),
+            Style::default().fg(Color::White).bg(palette.status_err).add_modifier(Modifier::BOLD),
+        ));
+    } else {
+        alerts_spans.push(Span::styled(
+            " 🟢 0/0 Containers ",
+            Style::default().fg(palette.text_muted),
+        ));
+    }
+    alerts_spans.push(Span::raw("  "));
 
+    // 3. Core Daemons summary
+    let total_daemons = snap.service_health.len();
+    let active_daemons = snap.service_health.iter().filter(|s| s.state == crate::systat::DaemonState::Active).count();
+    let degraded_daemons = snap.service_health.iter().filter(|s| s.state == crate::systat::DaemonState::Degraded).count();
+    if active_daemons == total_daemons && total_daemons > 0 {
+        alerts_spans.push(Span::styled(
+            format!(" Daemons: ● {active_daemons}/{total_daemons} Active "),
+            Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD),
+        ));
+    } else {
+        let err_count = total_daemons.saturating_sub(active_daemons + degraded_daemons);
+        let tag = if err_count > 0 { "✖" } else { "◌" };
+        let col = if err_count > 0 { palette.status_err } else { palette.status_warn };
+        alerts_spans.push(Span::styled(
+            format!(" Daemons: {tag} {active_daemons}/{total_daemons} Active "),
+            Style::default().fg(Color::Black).bg(col).add_modifier(Modifier::BOLD),
+        ));
+    }
+    alerts_spans.push(Span::raw("  "));
+
+    // 4. Uptime Monitors summary
+    let total_monitors = snap.uptime_monitors.len();
+    let up_monitors = snap.uptime_monitors.iter().filter(|m| m.is_up).count();
+    let down_monitors = total_monitors.saturating_sub(up_monitors);
+    if down_monitors == 0 && total_monitors > 0 {
+        alerts_spans.push(Span::styled(
+            format!(" Monitors: ● ALL {up_monitors} UP "),
+            Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD),
+        ));
+    } else {
+        alerts_spans.push(Span::styled(
+            format!(" Monitors: ✖ {up_monitors}/{total_monitors} UP · {down_monitors} DOWN "),
+            Style::default().fg(Color::White).bg(palette.status_err).add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    // Line 2: Immediate Visual Alert Callouts if anything is down, or health status
     let mut alert_line2 = vec![
-        Span::styled("Active Alerts: ", Style::default().fg(palette.text_muted)),
+        Span::styled("Status: ", Style::default().fg(palette.text_muted)),
     ];
     let mut any_alert = false;
+
+    // Check containers down
+    let exited_cont: Vec<&str> = snap.docker_containers.iter().filter(|c| c.state != "running").map(|c| c.name.as_str()).collect();
+    if !exited_cont.is_empty() {
+        alert_line2.push(Span::styled(
+            format!(" [✖ CONTAINER ALERT: {} EXITED] ", exited_cont.join(", ")),
+            Style::default().fg(Color::White).bg(palette.status_err).add_modifier(Modifier::BOLD),
+        ));
+        any_alert = true;
+    }
+
+    // Check uptime endpoints down
+    let down_endpoints: Vec<(&str, Option<u16>, &str)> = snap.uptime_monitors.iter().filter(|m| !m.is_up).map(|m| (m.name.as_str(), m.status_code, m.target.as_str())).collect();
+    if !down_endpoints.is_empty() {
+        for (ep_name, code, ep_url) in down_endpoints.iter().take(2) {
+            let code_str = code.map(|c| format!("HTTP {c}")).unwrap_or_else(|| "TIMEOUT/REFUSED".to_string());
+            let short_url = truncate_str(ep_url, 26);
+            alert_line2.push(Span::styled(
+                format!(" [✖ OUTAGE ALERT: {ep_name} ({short_url}) {code_str} DOWN] "),
+                Style::default().fg(Color::White).bg(palette.status_err).add_modifier(Modifier::BOLD),
+            ));
+            any_alert = true;
+        }
+    }
+
+    // Check hardware alerts
     if snap.cpu_temp_c > 85.0 {
         alert_line2.push(Span::styled(" [🔥 Thermal Alert > 85°C] ", Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD)));
         any_alert = true;
@@ -4262,8 +4436,12 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         alert_line2.push(Span::styled(" [💾 Low RAM Available] ", Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD)));
         any_alert = true;
     }
+
     if !any_alert {
-        alert_line2.push(Span::styled("✔ Fleet healthy. All telemetry metrics nominal.", Style::default().fg(palette.status_ok)));
+        alert_line2.push(Span::styled(
+            "✔ Sovereign Command Center Nominal. All armada nodes, containers, daemons & monitors healthy.",
+            Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD),
+        ));
     }
 
     let summary_lines = vec![
@@ -4272,152 +4450,538 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     ];
     f.render_widget(Paragraph::new(summary_lines), alerts_inner);
 
-    // ── Bottom: Live Dokploy Fleet & Top Processes ──────────────────────────
-    let fleet_block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Live Dokploy Fleet & Top Processes (Press 'j'/'k' to scroll) ")
-        .border_style(Style::default().fg(palette.border));
-    let fleet_inner = fleet_block.inner(chunks[2]);
-    f.render_widget(fleet_block, chunks[2]);
+    // ── Bottom: Four Executive Command Center Panels ─────────────────────────
+    let bottom_area = chunks[2];
+    let scroll = app.overview_proc_scroll;
 
-    struct FleetEntry {
-        pid: String,
-        name: String,
-        role: String,
-        is_active: bool,
-        cpu_pct: f32,
-        mem_mb: u64,
-        details: String,
-    }
-
-    let primary_agents: [(&str, &str, &str, &str); 11] = [
-        ("hermes", "Hermes Agent", "AI Agent Runtime", "Hana/Hermes autonomous coding gateway"),
-        ("qa-agent", "QA Test Agent", "QA Test Agent", "Autonomous test & quality evaluator"),
-        ("dev-agent", "Dev Coding Agent", "Coding Dev Agent", "Autonomous code implementation agent"),
-        ("biz-agent", "Biz Strategy Agent", "Biz Agent", "Business logic & product coordinator"),
-        ("content-agent", "Content Agent", "Content Agent", "Copy, docs, and knowledge base generator"),
-        ("9router", "9router AI Gateway", "AI Proxy Gateway", "Unified LLM router on :20128"),
-        ("cloudflared", "Cloudflared Tunnel", "Edge Tunnel", "Remote Zero Trust mesh tunnel"),
-        ("telegram", "Telegram Dispatcher", "Telegram Worker", "Telegram fleet notification bot"),
-        ("caterm", "caterm Console", "Web Terminal", "CA ecosystem browser terminal on :8081"),
-        ("fathstore", "fathstore Engine", "E-Commerce Engine", "POS & store backend on :8082"),
-        ("gcc", "GCC Coordinator", "Agent Dispatcher", "Global Computing Coordinator on :8083"),
-    ];
-
-    let mut entries = Vec::new();
-    let mut matched_pids = std::collections::HashSet::new();
-
-    for (key, display_name, def_role, desc) in &primary_agents {
-        let found = snap.top_processes.iter().find(|p| {
-            p.name.to_lowercase().contains(key) || p.role.to_lowercase().contains(key)
-        });
-
-        if let Some(p) = found {
-            matched_pids.insert(p.pid);
-            entries.push(FleetEntry {
-                pid: p.pid.to_string(),
-                name: display_name.to_string(),
-                role: p.role.clone(),
-                is_active: true,
-                cpu_pct: p.cpu_pct,
-                mem_mb: p.mem_mb,
-                details: format!("{desc} (PID: {})", p.pid),
-            });
-        } else {
-            entries.push(FleetEntry {
-                pid: "--".to_string(),
-                name: display_name.to_string(),
-                role: def_role.to_string(),
-                is_active: false,
-                cpu_pct: 0.0,
-                mem_mb: 0,
-                details: desc.to_string(),
-            });
-        }
-    }
-
-    for p in &snap.top_processes {
-        if !matched_pids.contains(&p.pid) {
-            entries.push(FleetEntry {
-                pid: p.pid.to_string(),
-                name: p.name.clone(),
-                role: p.role.clone(),
-                is_active: true,
-                cpu_pct: p.cpu_pct,
-                mem_mb: p.mem_mb,
-                details: format!("System service (status: {})", p.status),
-            });
-        }
-    }
-
-    entries.sort_by(|a, b| {
-        b.is_active
-            .cmp(&a.is_active)
-            .then_with(|| b.cpu_pct.partial_cmp(&a.cpu_pct).unwrap_or(std::cmp::Ordering::Equal))
-            .then_with(|| b.mem_mb.cmp(&a.mem_mb))
-    });
-
-    let scroll_offset = app.overview_proc_scroll.min(entries.len().saturating_sub(1));
-    let display_entries = entries.into_iter().skip(scroll_offset);
-
-    let rows: Vec<Row> = display_entries
-        .map(|e| {
-            let cpu_color = if e.cpu_pct >= 80.0 {
-                palette.status_err
-            } else if e.cpu_pct >= 50.0 {
-                palette.status_warn
-            } else if e.cpu_pct > 0.0 {
-                palette.status_ok
-            } else {
-                palette.text_muted
-            };
-
-            let mem_color = if e.mem_mb > 0 { Color::White } else { palette.text_muted };
-
-            let (status_label, status_color) = if e.is_active {
-                ("● Active", palette.status_ok)
-            } else {
-                ("● Standby", palette.chart_cpu)
-            };
-
-            Row::new(vec![
-                Cell::from(e.pid).style(Style::default().fg(palette.text_muted)),
-                Cell::from(e.name).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                Cell::from(e.role).style(Style::default().fg(palette.accent)),
-                Cell::from(status_label).style(Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
-                Cell::from(format!("{:>5.1}%", e.cpu_pct)).style(Style::default().fg(cpu_color)),
-                Cell::from(format!("{:>6} MB", e.mem_mb)).style(Style::default().fg(mem_color)),
-                Cell::from(e.details).style(Style::default().fg(palette.text_muted)),
+    if bottom_area.height >= 20 {
+        // Full dual-row dual-column view: All 4 panels visible simultaneously!
+        let row_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(50),
+                Constraint::Percentage(50),
             ])
-        })
-        .collect();
+            .split(bottom_area);
+
+        let upper_cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(50),
+                Constraint::Percentage(50),
+            ])
+            .split(row_chunks[0]);
+
+        let lower_cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(50),
+                Constraint::Percentage(50),
+            ])
+            .split(row_chunks[1]);
+
+        draw_fleet_nodes_resume_panel(f, app, upper_cols[0], &palette, scroll);
+        draw_services_health_resume_panel(f, app, upper_cols[1], &palette, scroll);
+        draw_docker_containers_resume_panel(f, app, lower_cols[0], &palette, scroll);
+        draw_uptime_monitors_resume_panel(f, app, lower_cols[1], &palette, scroll);
+    } else {
+        // Compact view: use 'j'/'k' to smoothly switch between Upper (Fleet + Services) and Lower (Containers + Uptime)
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(50),
+                Constraint::Percentage(50),
+            ])
+            .split(bottom_area);
+
+        if scroll == 0 {
+            draw_fleet_nodes_resume_panel(f, app, cols[0], &palette, 0);
+            draw_services_health_resume_panel(f, app, cols[1], &palette, 0);
+        } else {
+            let inner_scroll = scroll.saturating_sub(1);
+            draw_docker_containers_resume_panel(f, app, cols[0], &palette, inner_scroll);
+            draw_uptime_monitors_resume_panel(f, app, cols[1], &palette, inner_scroll);
+        }
+    }
+}
+
+// ── Server Fleet Resume Panel ───────────────────────────────────────────────
+
+fn draw_fleet_nodes_resume_panel(
+    f: &mut Frame,
+    app: &mut CockpitApp,
+    area: Rect,
+    palette: &ThemePalette,
+    scroll: usize,
+) {
+    if area.width < 10 || area.height < 4 {
+        return;
+    }
+    let nodes = app.latest_snap.fleet_nodes.clone();
+    let online_count = nodes.iter().filter(|n| n.status == "ONLINE").count();
+    let total_count = nodes.len();
+    let scroll_hint = if area.height < 12 { " [j↓ Docker/Uptime]" } else { "" };
+    let title = format!(" 🖥 Server Fleet Resume · Armada ({online_count}/{total_count} Online){scroll_hint} ");
+    let border_color = if online_count == total_count && total_count > 0 {
+        palette.status_ok
+    } else {
+        palette.status_warn
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::default().fg(border_color));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let scroll_offset = scroll.min(nodes.len().saturating_sub(1));
+    let mut rows = Vec::new();
+
+    for (i, n) in nodes.iter().enumerate().skip(scroll_offset) {
+        let (status_label, status_col) = match n.status.as_str() {
+            "ONLINE" => ("● ONLINE", palette.status_ok),
+            "OFFLINE" => ("✖ OFFLINE", palette.status_err),
+            _ => ("◌ STANDBY", palette.status_warn),
+        };
+
+        let rtt_str = match n.latency_ms {
+            Some(0) => "<1ms (Local)".to_string(),
+            Some(ms) => format!("{ms}ms"),
+            None => "--".to_string(),
+        };
+
+        let cpu_str = n.cpu_pct.map(|v| format!("{v:.1}%")).unwrap_or_else(|| "--".to_string());
+        let ram_str = n.ram_pct.map(|v| format!("{v}%")).unwrap_or_else(|| "--".to_string());
+        let disk_str = n.disk_pct.map(|v| format!("{v}%")).unwrap_or_else(|| "--".to_string());
+
+        let cpu_col = if let Some(cpu) = n.cpu_pct {
+            if cpu >= 80.0 { palette.status_err } else if cpu >= 50.0 { palette.status_warn } else { palette.status_ok }
+        } else {
+            palette.text_muted
+        };
+
+        rows.push(Row::new(vec![
+            Cell::from(n.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Cell::from(n.ip.clone()).style(Style::default().fg(palette.accent)),
+            Cell::from(status_label).style(Style::default().fg(status_col).add_modifier(Modifier::BOLD)),
+            Cell::from(rtt_str).style(Style::default().fg(palette.chart_cpu)),
+            Cell::from(cpu_str).style(Style::default().fg(cpu_col)),
+            Cell::from(ram_str).style(Style::default().fg(palette.chart_ram)),
+            Cell::from(disk_str).style(Style::default().fg(palette.text)),
+        ]));
+
+        if (i as u16) < inner.height.saturating_sub(1) {
+            app.register_hitbox(
+                Rect {
+                    x: inner.x,
+                    y: inner.y + 1 + (i as u16),
+                    width: inner.width,
+                    height: 1,
+                },
+                HitboxAction::SelectServer(i),
+            );
+        }
+    }
+
+    if rows.is_empty() {
+        rows.push(Row::new(vec![
+            Cell::from("No fleet nodes available").style(Style::default().fg(palette.text_muted)),
+        ]));
+    }
 
     let table = Table::new(
         rows,
         [
-            Constraint::Length(8),
-            Constraint::Length(22),
-            Constraint::Length(20),
+            Constraint::Length(18),
+            Constraint::Length(15),
+            Constraint::Length(11),
             Constraint::Length(12),
             Constraint::Length(8),
-            Constraint::Length(11),
-            Constraint::Min(25),
+            Constraint::Length(7),
+            Constraint::Min(6),
         ],
     )
     .header(
         Row::new(vec![
-            "PID",
-            "NAME / SERVICE",
-            "TYPE / ROLE",
+            "NODE",
+            "TAILSCALE IP",
             "STATUS",
-            "CPU%",
-            "MEM",
+            "RTT LATENCY",
+            "CPU LOAD",
+            "RAM %",
+            "DISK %",
+        ])
+        .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+    );
+    f.render_widget(table, inner);
+}
+
+// ── Services Health Resume Panel ────────────────────────────────────────────
+
+fn draw_services_health_resume_panel(
+    f: &mut Frame,
+    _app: &mut CockpitApp,
+    area: Rect,
+    palette: &ThemePalette,
+    scroll: usize,
+) {
+    if area.width < 10 || area.height < 4 {
+        return;
+    }
+    let services = _app.latest_snap.service_health.clone();
+    let active_count = services.iter().filter(|s| s.state == crate::systat::DaemonState::Active).count();
+    let total_count = services.len();
+    let title = format!(" ⚡ Services Health Resume · Daemons ({active_count}/{total_count} Active) ");
+    let border_color = if active_count == total_count && total_count > 0 {
+        palette.status_ok
+    } else {
+        palette.status_warn
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::default().fg(border_color));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let scroll_offset = scroll.min(services.len().saturating_sub(1));
+    let mut rows = Vec::new();
+
+    for s in services.iter().skip(scroll_offset) {
+        let (status_badge, status_col) = match s.state {
+            crate::systat::DaemonState::Active => ("● ACTIVE", palette.status_ok),
+            crate::systat::DaemonState::Inactive => ("✖ INACTIVE", palette.status_err),
+            crate::systat::DaemonState::Degraded => ("◌ DEGRADED", palette.status_warn),
+        };
+
+        rows.push(Row::new(vec![
+            Cell::from(s.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Cell::from(s.category.clone()).style(Style::default().fg(palette.accent)),
+            Cell::from(status_badge).style(Style::default().fg(status_col).add_modifier(Modifier::BOLD)),
+            Cell::from(s.endpoint.clone()).style(Style::default().fg(palette.chart_cpu)),
+            Cell::from(s.detail.clone()).style(Style::default().fg(palette.text_muted)),
+        ]));
+    }
+
+    if rows.is_empty() {
+        rows.push(Row::new(vec![
+            Cell::from("No ecosystem daemons registered").style(Style::default().fg(palette.text_muted)),
+        ]));
+    }
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(22),
+            Constraint::Length(16),
+            Constraint::Length(12),
+            Constraint::Length(18),
+            Constraint::Min(20),
+        ],
+    )
+    .header(
+        Row::new(vec![
+            "DAEMON / SERVICE",
+            "CATEGORY",
+            "STATUS",
+            "PORT / TARGET",
             "DETAILS",
         ])
         .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
     );
+    f.render_widget(table, inner);
+}
 
-    f.render_widget(table, fleet_inner);
+// ── Docker Containers Resume Panel ──────────────────────────────────────────
+
+fn draw_docker_containers_resume_panel(
+    f: &mut Frame,
+    app: &mut CockpitApp,
+    area: Rect,
+    palette: &ThemePalette,
+    scroll: usize,
+) {
+    if area.width < 10 || area.height < 4 {
+        return;
+    }
+    let containers = app.latest_snap.docker_containers.clone();
+    let running_count = containers.iter().filter(|c| c.state == "running").count();
+    let total_count = containers.len();
+    let down_count = total_count.saturating_sub(running_count);
+
+    let scroll_hint = if area.height < 12 { " [k↑ Fleet/Services]" } else { "" };
+    let (title, border_color) = if down_count == 0 && total_count > 0 {
+        (
+            format!(" 🐳 Docker Containers Resume · 🟢 {running_count}/{total_count} Containers Running{scroll_hint} "),
+            palette.status_ok,
+        )
+    } else if down_count > 0 {
+        (
+            format!(" 🐳 Docker Containers Resume · 🔴 {running_count}/{total_count} Running ({down_count} DOWN){scroll_hint} "),
+            palette.status_err,
+        )
+    } else {
+        (
+            format!(" 🐳 Docker Containers Resume · 🟢 0/0 Containers{scroll_hint} "),
+            palette.border,
+        )
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::default().fg(border_color));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut rows = Vec::new();
+
+    // Immediate visual alert if any container is down
+    if down_count > 0 {
+        for c in containers.iter().filter(|c| c.state != "running") {
+            rows.push(
+                Row::new(vec![
+                    Cell::from(format!("✖ ALERT: {}", c.name))
+                        .style(Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+                    Cell::from("EXITED")
+                        .style(Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+                    Cell::from(c.ports.clone())
+                        .style(Style::default().fg(Color::Black).bg(palette.status_err)),
+                    Cell::from("UNHEALTHY")
+                        .style(Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+                    Cell::from(format!("Down: {}", c.status_detail))
+                        .style(Style::default().fg(Color::Black).bg(palette.status_err)),
+                ]),
+            );
+        }
+    }
+
+    let scroll_offset = scroll.min(containers.len().saturating_sub(1));
+    for (i, c) in containers.iter().enumerate().skip(scroll_offset) {
+        let (status_label, status_col) = match c.state.as_str() {
+            "running" => ("● Running", palette.status_ok),
+            "paused" => ("◌ Paused", palette.status_warn),
+            _ => ("✖ Exited", palette.status_err),
+        };
+
+        let health_label = if c.state == "running" {
+            "● HEALTHY"
+        } else if c.state == "paused" {
+            "◌ DEGRADED"
+        } else {
+            "✖ UNHEALTHY"
+        };
+        let health_col = if c.state == "running" {
+            palette.status_ok
+        } else if c.state == "paused" {
+            palette.status_warn
+        } else {
+            palette.status_err
+        };
+
+        let ports_display = if c.ports.is_empty() {
+            "--".to_string()
+        } else {
+            c.ports.replace("0.0.0.0:", "").replace("[::]:", "")
+        };
+
+        rows.push(Row::new(vec![
+            Cell::from(c.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Cell::from(status_label).style(Style::default().fg(status_col).add_modifier(Modifier::BOLD)),
+            Cell::from(ports_display).style(Style::default().fg(palette.chart_cpu)),
+            Cell::from(health_label).style(Style::default().fg(health_col).add_modifier(Modifier::BOLD)),
+            Cell::from(c.image.clone()).style(Style::default().fg(palette.text_muted)),
+        ]));
+
+        if (i as u16) < inner.height.saturating_sub(1) {
+            app.register_hitbox(
+                Rect {
+                    x: inner.x,
+                    y: inner.y + 1 + (i as u16),
+                    width: inner.width,
+                    height: 1,
+                },
+                HitboxAction::SelectContainer(i),
+            );
+        }
+    }
+
+    if rows.is_empty() {
+        rows.push(Row::new(vec![
+            Cell::from("No active containers").style(Style::default().fg(palette.text_muted)),
+        ]));
+    }
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(22),
+            Constraint::Length(12),
+            Constraint::Length(22),
+            Constraint::Length(14),
+            Constraint::Min(20),
+        ],
+    )
+    .header(
+        Row::new(vec![
+            "CONTAINER NAME",
+            "STATUS",
+            "PORTS",
+            "HEALTH",
+            "IMAGE / REPO",
+        ])
+        .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+    );
+    f.render_widget(table, inner);
+}
+
+// ── Uptime Monitors Resume Panel ────────────────────────────────────────────
+
+fn draw_uptime_monitors_resume_panel(
+    f: &mut Frame,
+    app: &mut CockpitApp,
+    area: Rect,
+    palette: &ThemePalette,
+    scroll: usize,
+) {
+    if area.width < 10 || area.height < 4 {
+        return;
+    }
+    let monitors = app.latest_snap.uptime_monitors.clone();
+    let up_count = monitors.iter().filter(|m| m.is_up).count();
+    let total_count = monitors.len();
+    let down_count = total_count.saturating_sub(up_count);
+
+    let scroll_hint = if area.height < 12 { " [k↑ Fleet/Services]" } else { "" };
+    let (title, border_color) = if down_count == 0 && total_count > 0 {
+        (
+            format!(" 🌐 Uptime Monitors Resume · 🟢 ALL {up_count} UP ({total_count} Total){scroll_hint} "),
+            palette.status_ok,
+        )
+    } else if down_count > 0 {
+        (
+            format!(" 🌐 Uptime Monitors Resume · 🔴 {up_count}/{total_count} UP · {down_count} DOWN{scroll_hint} "),
+            palette.status_err,
+        )
+    } else {
+        (
+            format!(" 🌐 Uptime Monitors Resume · 🟢 0/0 Monitored{scroll_hint} "),
+            palette.border,
+        )
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::default().fg(border_color));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut rows = Vec::new();
+
+    // Attention-grabbing red alert badge if any endpoint is DOWN
+    if down_count > 0 {
+        for m in monitors.iter().filter(|m| !m.is_up) {
+            let err_code = m.status_code.map(|c| format!("HTTP {c}")).unwrap_or_else(|| "ERR_CONN_REFUSED/TIMEOUT".to_string());
+            let target_trunc = truncate_str(&m.target, 32);
+            rows.push(
+                Row::new(vec![
+                    Cell::from(format!("✖ ALERT: {}", m.name))
+                        .style(Style::default().fg(Color::White).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+                    Cell::from("DOWN")
+                        .style(Style::default().fg(Color::White).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+                    Cell::from(err_code)
+                        .style(Style::default().fg(Color::White).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+                    Cell::from("--")
+                        .style(Style::default().fg(Color::White).bg(palette.status_err)),
+                    Cell::from(format!("Outage: {target_trunc}"))
+                        .style(Style::default().fg(Color::White).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+                ]),
+            );
+        }
+    }
+
+    let scroll_offset = scroll.min(monitors.len().saturating_sub(1));
+    for (i, m) in monitors.iter().enumerate().skip(scroll_offset) {
+        let (status_label, status_col) = if m.is_up {
+            ("● UP", palette.status_ok)
+        } else {
+            ("✖ DOWN", palette.status_err)
+        };
+
+        let http_code = m.status_code.map(|c| format!("{c} OK")).unwrap_or_else(|| "--".to_string());
+        let rtt_str = m.latency_ms.map(|ms| format!("{ms}ms")).unwrap_or_else(|| "--".to_string());
+
+        // 20-heartbeat sparkline string
+        let mut sparkline = String::with_capacity(30);
+        sparkline.push('[');
+        for &up in m.history.iter().take(20) {
+            if up {
+                sparkline.push('█');
+            } else {
+                sparkline.push('░');
+            }
+        }
+        sparkline.push_str(&format!("] {:.0}%", m.uptime_pct));
+
+        let spark_col = if m.uptime_pct >= 95.0 {
+            palette.status_ok
+        } else if m.uptime_pct >= 80.0 {
+            palette.status_warn
+        } else {
+            palette.status_err
+        };
+
+        rows.push(Row::new(vec![
+            Cell::from(m.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Cell::from(status_label).style(Style::default().fg(status_col).add_modifier(Modifier::BOLD)),
+            Cell::from(http_code).style(Style::default().fg(palette.chart_cpu)),
+            Cell::from(rtt_str).style(Style::default().fg(palette.text)),
+            Cell::from(sparkline).style(Style::default().fg(spark_col)),
+        ]));
+
+        if (i as u16) < inner.height.saturating_sub(1) {
+            app.register_hitbox(
+                Rect {
+                    x: inner.x,
+                    y: inner.y + 1 + (i as u16),
+                    width: inner.width,
+                    height: 1,
+                },
+                HitboxAction::SelectMonitor(i),
+            );
+        }
+    }
+
+    if rows.is_empty() {
+        rows.push(Row::new(vec![
+            Cell::from("No uptime monitors registered").style(Style::default().fg(palette.text_muted)),
+        ]));
+    }
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(22),
+            Constraint::Length(10),
+            Constraint::Length(12),
+            Constraint::Length(10),
+            Constraint::Min(26),
+        ],
+    )
+    .header(
+        Row::new(vec![
+            "MONITOR ENDPOINT",
+            "STATUS",
+            "HTTP CODE",
+            "RTT",
+            "HEARTBEAT HISTORY (20)",
+        ])
+        .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+    );
+    f.render_widget(table, inner);
 }
 // ── Tab 2: Project & Containers (Tracked Projects + Docker Lifecycle) ────────
 
@@ -5216,7 +5780,7 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         crate::pet::PetMood::Overheated => Color::LightRed,
         crate::pet::PetMood::Sick => Color::Magenta,
         crate::pet::PetMood::Sprint => Color::Yellow,
-        crate::pet::PetMood::Idle => palette.accent,
+        crate::pet::PetMood::Idle => if app.pet_is_stopped { Color::DarkGray } else { palette.accent },
     };
 
     let pet_opt = if let Some(ref d) = app.db {
@@ -5243,9 +5807,9 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let mood_short = match app.pet_mood {
         crate::pet::PetMood::Idle => "☺ Normal",
-        crate::pet::PetMood::Overheated => "🥵 Overheated (Fan Active)",
-        crate::pet::PetMood::Sick => "💀 Sick / High Load",
-        crate::pet::PetMood::Sprint => "🏃 Sprinting",
+        crate::pet::PetMood::Overheated => "🥵 Hot",
+        crate::pet::PetMood::Sick => "💀 Sick",
+        crate::pet::PetMood::Sprint => "🏃 Sprint",
     };
 
     let pet_name_display = if name.is_empty() {
@@ -5255,7 +5819,9 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     };
 
     // Determine active action state (transient action or telemetry mood)
-    let active_state = if let Some((st, _)) = app.pet_transient_action {
+    let active_state = if app.pet_is_stopped {
+        crate::pet::PetActionState::Idle
+    } else if let Some((st, _)) = app.pet_transient_action {
         st
     } else {
         match app.pet_mood {
@@ -5263,7 +5829,7 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             crate::pet::PetMood::Overheated => crate::pet::PetActionState::Hit,
             crate::pet::PetMood::Sick => crate::pet::PetActionState::Death,
             crate::pet::PetMood::Idle => {
-                if (app.pet_tick / 8) % 4 >= 2 {
+                if (app.pet_tick / 24) % 4 >= 2 {
                     crate::pet::PetActionState::Walk
                 } else {
                     crate::pet::PetActionState::Idle
@@ -5272,21 +5838,26 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         }
     };
 
-    let state_badge = match active_state {
-        crate::pet::PetActionState::Idle => "IDLE",
-        crate::pet::PetActionState::Walk => "WALK",
-        crate::pet::PetActionState::Run => "RUN >>",
-        crate::pet::PetActionState::Jump => "JUMP ▲",
-        crate::pet::PetActionState::Attack => "ATTACK ⚡",
-        crate::pet::PetActionState::Dash => "DASH 彡",
-        crate::pet::PetActionState::Hit => "HIT 💥",
-        crate::pet::PetActionState::Death => "REST / ZZZ",
+    let state_badge = if app.pet_is_stopped {
+        "⏸ STOPPED"
+    } else {
+        match active_state {
+            crate::pet::PetActionState::Idle => "IDLE",
+            crate::pet::PetActionState::Walk => "WALK",
+            crate::pet::PetActionState::Run => "RUN >>",
+            crate::pet::PetActionState::Jump => "JUMP ▲",
+            crate::pet::PetActionState::Attack => "ATTACK ⚡",
+            crate::pet::PetActionState::Dash => "DASH 彡",
+            crate::pet::PetActionState::Hit => "HIT 💥",
+            crate::pet::PetActionState::Death => "REST / ZZZ",
+        }
     };
 
-    let title = format!(
-        " 🐾 ISOMETRIC PET PLAY ARENA [ {} | Lv.{} | [{}] | {} ] ",
-        pet_name_display, level, state_badge, mood_short
-    );
+    let title = if area.width >= 32 {
+        format!(" 🐾 PET [ {} · Lv.{} · {} | {} ] ", pet_name_display, level, state_badge, mood_short)
+    } else {
+        format!(" 🐾 PET [ {} · Lv.{} ] ", pet_name_display, level)
+    };
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -5303,7 +5874,7 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if app.show_pet_history {
         let mut lines = vec![
             Line::from(vec![
-                Span::styled(" 📜 PET ACTIVITY HISTORY LOG ", Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD)),
+                Span::styled(" 📜 ACTIVITY LOG ", Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD)),
                 Span::styled(" [✖ Close (h/Esc)] ", Style::default().fg(palette.text_muted)),
             ]),
             Line::from(Span::raw("─".repeat(inner.width as usize))),
@@ -5334,8 +5905,8 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(4),    // Animated Sprite Screen
-            Constraint::Length(1), // Nav Bar: [▲ Up] [▼ Down] [✔ OK] [✖ Cancel]
-            Constraint::Length(1), // Actions: [0: Feed] [1: Treat] [2: Switch] [3: History]
+            Constraint::Length(1), // Nav Bar: [▲] [▼] [✔ OK] [✖]
+            Constraint::Length(1), // Actions: [0: Feed] [1: Train] [2: Switch] [3: Stop] [4: Log]
         ])
         .split(inner);
 
@@ -5348,24 +5919,42 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         xp,
     };
     let frames = status.frames_for_state(active_state);
-    let frame_idx = (app.pet_tick / 4) % frames.len();
+    let frame_idx = if app.pet_is_stopped {
+        0
+    } else {
+        (app.pet_tick / 12) % frames.len()
+    };
     let current_frame = frames[frame_idx];
 
-    // Wander offset across the sprite screen
-    let wander_offset = if active_state == crate::pet::PetActionState::Run || active_state == crate::pet::PetActionState::Dash || active_state == crate::pet::PetActionState::Walk {
-        let screen_width = inner.width.saturating_sub(22) as usize;
-        (app.pet_tick / 2) % screen_width.max(1)
-    } else {
-        let max_w = inner.width.saturating_sub(35).min(10) as usize;
-        if max_w > 0 {
-            let cycle = (app.pet_tick / 6) % (max_w * 2);
-            if cycle < max_w {
-                cycle
-            } else {
-                max_w * 2 - cycle
-            }
+    // Calm center alignment & gentle wander offset (reduced speed)
+    let pad_center = (inner.width.saturating_sub(23) / 2) as usize;
+    let max_sway = inner.width.saturating_sub(25).min(2) as usize;
+    let wander_offset = if app.pet_is_stopped {
+        pad_center
+    } else if active_state == crate::pet::PetActionState::Run || active_state == crate::pet::PetActionState::Dash {
+        if max_sway > 0 {
+            let cycle = (app.pet_tick / 16) % (max_sway * 2);
+            let shift = if cycle < max_sway { cycle } else { (max_sway * 2) - cycle };
+            pad_center.saturating_sub(max_sway / 2) + shift
         } else {
-            0
+            pad_center
+        }
+    } else if active_state == crate::pet::PetActionState::Walk {
+        if max_sway > 0 {
+            let cycle = (app.pet_tick / 24) % (max_sway * 2);
+            let shift = if cycle < max_sway { cycle } else { (max_sway * 2) - cycle };
+            pad_center.saturating_sub(max_sway / 2) + shift
+        } else {
+            pad_center
+        }
+    } else {
+        // Idle: very gentle breathing sway
+        if max_sway > 0 {
+            let cycle = (app.pet_tick / 36) % (max_sway * 2);
+            let shift = if cycle < max_sway { cycle } else { (max_sway * 2) - cycle };
+            pad_center.saturating_sub(max_sway / 2) + shift
+        } else {
+            pad_center
         }
     };
 
@@ -5377,11 +5966,15 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             Span::styled(
                 *row,
                 Style::default()
-                    .fg(match app.pet_mood {
-                        crate::pet::PetMood::Overheated => Color::LightRed,
-                        crate::pet::PetMood::Sick => Color::Magenta,
-                        crate::pet::PetMood::Sprint => Color::Yellow,
-                        crate::pet::PetMood::Idle => Color::Green,
+                    .fg(if app.pet_is_stopped {
+                        Color::DarkGray
+                    } else {
+                        match app.pet_mood {
+                            crate::pet::PetMood::Overheated => Color::LightRed,
+                            crate::pet::PetMood::Sick => Color::Magenta,
+                            crate::pet::PetMood::Sprint => Color::Yellow,
+                            crate::pet::PetMood::Idle => Color::Green,
+                        }
                     })
                     .add_modifier(Modifier::BOLD),
             ),
@@ -5389,26 +5982,24 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     }
     f.render_widget(Paragraph::new(sprite_lines), chunks[0]);
 
-    // 2. Navigation Bar (mouse hitboxes & keyboard shortcuts)
+    // 2. Navigation Bar (Compact layout for smaller column)
     let nav_spans = vec![
-        Span::styled(" [▲ Up] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(" [▲] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [▼ Down] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(" [▼] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [✔ OK] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(" [✔OK] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [✖ Cancel] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Red).add_modifier(Modifier::BOLD)),
+        Span::styled(" [✖] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Red).add_modifier(Modifier::BOLD)),
     ];
     f.render_widget(Paragraph::new(Line::from(nav_spans)), chunks[1]);
 
     // Register hitboxes for nav bar controls
-    let nav_inner = chunks[1];
-    let _ = nav_inner;
     let nav_x = inner.x;
-    let up_w = 8u16;
-    let down_w = 10u16;
-    let ok_w = 8u16;
-    let cancel_w = 12u16;
+    let up_w = 5u16;
+    let down_w = 5u16;
+    let ok_w = 6u16;
+    let cancel_w = 5u16;
     app.register_hitbox(
         Rect { x: nav_x, y: chunks[1].y, width: up_w, height: 1 },
         HitboxAction::PetActionUp,
@@ -5429,14 +6020,27 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         HitboxAction::PetCancel,
     );
 
-    // 3. Action Buttons with active selection highlight (8-STATE ISOMETRIC ACTION BAR)
-    let actions = [
-        "🍖Feed(f)",
-        "⚔Train(t)",
-        "🔄Switch(s)",
-        "📜Log(h)",
-        "💥Hit(Enter)",
-    ];
+    // 3. Action Buttons with active selection highlight & Stop Button
+    let stop_label = if app.pet_is_stopped { "▶Play(p)" } else { "⏹Stop(p)" };
+    let stop_label_short = if app.pet_is_stopped { "▶(p)" } else { "⏹(p)" };
+    let actions: &[&str] = if inner.width >= 36 {
+        &[
+            "🍖Feed(f)",
+            "⚔Train(t)",
+            "🔄Switch(s)",
+            stop_label,
+            "📜Log(h)",
+        ]
+    } else {
+        &[
+            "🍖(f)",
+            "⚔(t)",
+            "🔄(s)",
+            stop_label_short,
+            "📜(h)",
+        ]
+    };
+
     let mut action_spans = Vec::new();
     let mut act_x = inner.x;
     for (i, act) in actions.iter().enumerate() {
@@ -5460,7 +6064,8 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             0 => HitboxAction::PetFeed,
             1 => HitboxAction::PetTreat,
             2 => HitboxAction::PetSwitch,
-            3 => HitboxAction::PetToggleHistory,
+            3 => HitboxAction::PetStop,
+            4 => HitboxAction::PetToggleHistory,
             _ => HitboxAction::PetFeed,
         };
         app.register_hitbox(
@@ -5470,6 +6075,83 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         act_x += btn_w + 1;
     }
     f.render_widget(Paragraph::new(Line::from(action_spans)), chunks[2]);
+}
+
+// ── Pet Switch Confirmation Modal ───────────────────────────────────────────
+
+fn draw_pet_switch_confirm_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let popup_area = centered_rect(52, 13, area);
+    f.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(" 🐾 Switch Companion Pet ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    let (current_name, current_species, next_name, next_species) = if let Some(ref d) = app.db {
+        let pet = d.get_active_pet().ok().flatten();
+        let species_list = ["ayam", "singa", "burung", "ular", "beruang"];
+        let names = ["Ciko", "Simba", "Rio", "Nagini", "Koda"];
+        let (cur_n, cur_s, next_idx) = match pet {
+            Some(p) => {
+                let idx = match p.species.as_str() {
+                    "ayam" => 1,
+                    "singa" => 2,
+                    "burung" => 3,
+                    "ular" => 4,
+                    _ => 0,
+                };
+                (p.name, p.species, idx)
+            }
+            None => ("Ciko".to_string(), "ayam".to_string(), 1),
+        };
+        (cur_n, cur_s, names[next_idx].to_string(), species_list[next_idx].to_string())
+    } else {
+        ("Current".to_string(), "pet".to_string(), "Next".to_string(), "pet".to_string())
+    };
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            " Are you sure you want to switch companion? ",
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(" Current: ", Style::default().fg(palette.text_muted)),
+            Span::styled(format!("{current_name} ({current_species})"), Style::default().fg(Color::Cyan)),
+            Span::styled("  ➔  Next: ", Style::default().fg(palette.text_muted)),
+            Span::styled(format!("{next_name} ({next_species})"), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                " [Y] Yes, Switch ",
+                Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("    "),
+            Span::styled(
+                " [N / Esc] Cancel & Keep ",
+                Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+    ];
+
+    f.render_widget(Paragraph::new(lines).alignment(Alignment::Center), inner);
+
+    // Register hitboxes for [Yes] and [Cancel]
+    let btn_y = inner.y + 5;
+    app.register_hitbox(
+        Rect { x: inner.x + 4, y: btn_y, width: 17, height: 1 },
+        HitboxAction::ConfirmSwitchPet,
+    );
+    app.register_hitbox(
+        Rect { x: inner.x + 25, y: btn_y, width: 25, height: 1 },
+        HitboxAction::CancelSwitchPet,
+    );
 }
 
 // ── Uptime Kuma Style Endpoint Monitors Panel ───────────────────────────────
@@ -6020,7 +6702,7 @@ fn draw_compact_fallback(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let snap = &app.latest_snap;
     let lines = vec![
         Line::from(Span::styled(
-            "CAShell v0.3.5 · Isometric Cockpit (Compact Mode)",
+            "CAShell v0.3.6 · Isometric Cockpit (Compact Mode)",
             Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
         )),
         Line::from(format!(
@@ -7371,5 +8053,78 @@ mod tests {
         assert_eq!(SETTINGS_FIELDS[3], "Output Theme");
         assert_eq!(SETTINGS_FIELDS[11], "Master Password Protection");
         assert_eq!(SETTINGS_FIELDS[12], "Set/Change Master Password");
+    }
+
+    #[test]
+    fn test_truncate_str_helper() {
+        assert_eq!(truncate_str("hello", 10), "hello");
+        assert_eq!(truncate_str("superlongstring", 5), "super");
+    }
+
+    #[test]
+    fn test_executive_command_center_telemetry() {
+        let app = CockpitApp::new(&Config::default());
+        // Verify all 5 canonical armada nodes present
+        let nodes = &app.latest_snap.fleet_nodes;
+        assert!(nodes.iter().any(|n| n.name.contains("ThinkPad X1") || n.name.contains("Local")));
+        assert!(nodes.iter().any(|n| n.name == "YPC"));
+        assert!(nodes.iter().any(|n| n.name == "Hostinger VPS"));
+        assert!(nodes.iter().any(|n| n.name == "XPC"));
+        assert!(nodes.iter().any(|n| n.name == "pc-gerlink"));
+
+        // Verify core daemons present
+        let daemons = &app.latest_snap.service_health;
+        assert!(daemons.iter().any(|d| d.name == "tailscaled"));
+        assert!(daemons.iter().any(|d| d.name == "cloudflared"));
+        assert!(daemons.iter().any(|d| d.name == "9router / omniroute"));
+        assert!(daemons.iter().any(|d| d.name == "docker / podman"));
+        assert!(daemons.iter().any(|d| d.name == "hermes agent gateway"));
+    }
+
+    #[test]
+    fn test_dashboard_tab_rendering_both_resolutions() {
+        let mut app = CockpitApp::new(&Config::default());
+        let backend = ratatui::backend::TestBackend::new(120, 45);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        // 1. Render in large terminal (>= 38 height)
+        terminal.draw(|f| {
+            let area = f.area();
+            draw_dashboard_tab(f, &mut app, area);
+        }).expect("draw full");
+
+        // Hitboxes should be registered
+        assert!(!app.hitboxes.is_empty());
+
+        // 2. Render in compact terminal (< 36 height) with scroll
+        app.overview_proc_scroll = 1;
+        let backend_compact = ratatui::backend::TestBackend::new(100, 30);
+        let mut terminal_compact = Terminal::new(backend_compact).expect("terminal compact");
+        terminal_compact.draw(|f| {
+            let area = f.area();
+            draw_dashboard_tab(f, &mut app, area);
+        }).expect("draw compact");
+    }
+
+    #[test]
+    fn test_pet_switch_confirmation_and_pause_toggle() {
+        let mut app = CockpitApp::new(&Config::default());
+        assert!(!app.show_pet_switch_confirm);
+        assert!(!app.pet_is_stopped);
+
+        // 1. Request switch -> opens confirmation modal
+        app.request_pet_switch();
+        assert!(app.show_pet_switch_confirm);
+
+        // 2. Confirm switch -> switches companion & closes modal
+        app.confirm_switch_pet_species();
+        assert!(!app.show_pet_switch_confirm);
+        assert!(app.pet_transient_action.is_some());
+
+        // 3. Toggle pause / stop
+        app.toggle_pet_pause();
+        assert!(app.pet_is_stopped);
+        app.toggle_pet_pause();
+        assert!(!app.pet_is_stopped);
     }
 }
