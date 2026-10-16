@@ -3,3 +3,5 @@
 *.bak
 .DS_Store
 .cashell*
+/target-arm64
+/target-bookworm
