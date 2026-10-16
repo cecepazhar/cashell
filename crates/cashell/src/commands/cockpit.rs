@@ -1866,6 +1866,7 @@ impl CockpitApp {
             image: image.clone(),
             state,
             status_detail,
+            ports: port.clone(),
         });
 
         if success {
@@ -3711,7 +3712,7 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         return;
     }
 
-    let title = " CAShell v0.3.1 · Sovereign Cockpit ";
+    let title = " CAShell v0.3.5 · Isometric Cockpit ";
     let time_str = chrono::Local::now().format("%H:%M:%S").to_string();
 
     let router_badge = if app.is_9router_online {
@@ -3844,8 +3845,6 @@ fn draw_tabs(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         current_x = current_x.saturating_add(tab_w + 1);
     }
 }
-
-// ── Tab 1: Overview (btop telemetry) ─────────────────────────────────────────
 
 fn render_braille_curve(data: &[f32], width: usize, height: usize) -> Vec<Line<'static>> {
     if width == 0 || height == 0 {
@@ -3981,6 +3980,7 @@ fn format_kbps(kbps: f64) -> String {
         format!("{:.0} KB/s", kbps)
     }
 }
+
 
 fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let palette = ThemePalette::get(&app.cfg.output.theme);
@@ -6020,7 +6020,7 @@ fn draw_compact_fallback(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let snap = &app.latest_snap;
     let lines = vec![
         Line::from(Span::styled(
-            "CAShell v0.3.0 · Sovereign Cockpit (Compact Mode)",
+            "CAShell v0.3.5 · Isometric Cockpit (Compact Mode)",
             Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
         )),
         Line::from(format!(
