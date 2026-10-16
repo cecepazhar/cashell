@@ -261,6 +261,26 @@ impl Database {
         Ok(msgs)
     }
 
+    /// Read the most recent `limit` `system_events` log rows, newest first.
+    pub fn read_system_events(&self, limit: i64) -> Result<Vec<(String, String, String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT level, source, message, created_at FROM system_events ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
     /// Append a log entry to `system_events`.
     pub fn log_event(&self, level: &str, source: &str, msg: &str) -> Result<()> {
         self.conn.execute(

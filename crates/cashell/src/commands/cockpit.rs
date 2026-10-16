@@ -46,6 +46,7 @@ pub struct CockpitCommand;
 
 pub const THEME_OPTIONS: &[&str] = &[
     "ca-classic",
+    "cad-cyberpunk",
     "tokyo-night",
     "monokai",
     "nord",
@@ -72,6 +73,21 @@ pub struct ThemePalette {
 impl ThemePalette {
     pub fn get(name: &str) -> Self {
         match name {
+            "cad-cyberpunk" => Self {
+                name: "cad-cyberpunk",
+                border: Color::Rgb(0, 240, 255),       // Neon Cyan
+                accent: Color::Rgb(255, 0, 128),       // Neon Magenta
+                highlight_bg: Color::Rgb(0, 240, 255), // Cyan
+                highlight_fg: Color::Rgb(0, 0, 0),     // Dark Contrast
+                text: Color::Rgb(220, 235, 245),
+                text_muted: Color::Rgb(90, 110, 130),
+                chart_cpu: Color::Rgb(0, 240, 255),
+                chart_ram: Color::Rgb(255, 0, 128),
+                status_ok: Color::Rgb(0, 255, 136),    // Neon Green
+                status_warn: Color::Rgb(255, 170, 0),  // Neon Amber
+                status_err: Color::Rgb(255, 0, 85),    // Neon Red
+                row_selected_bg: Color::Rgb(20, 30, 45),
+            },
             "tokyo-night" => Self {
                 name: "tokyo-night",
                 border: Color::Rgb(122, 162, 247),
@@ -153,7 +169,7 @@ impl ThemePalette {
 
 // ── Mouse Hitboxes ──────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HitboxAction {
     SelectTab(usize),
     SelectApp(usize),
@@ -199,6 +215,32 @@ pub enum HitboxAction {
     CancelProject,
     CancelContainer,
     CancelMonitor,
+    // Project tab actions
+    SelectProjectView(ProjectView),
+    SelectProject(usize),
+    SelectContainer(usize),
+    ContainerStart(usize),
+    ContainerStop(usize),
+    ContainerRestart(usize),
+    // Uptime tab actions
+    SelectMonitor(usize),
+    ProbeMonitors,
+    // Server tab actions
+    SelectServer(usize),
+    ProbeServers,
+    // Log tab actions
+    SelectLogSource(LogSource),
+    SelectLogLevel(LogLevelFilter),
+    RefreshLogs,
+    // Terminal tab actions
+    FocusTerminalInput,
+    RunTerminalCommand,
+    SelectTerminalRemote(Option<String>),
+    // AI tab actions
+    CycleAiModel,
+    ClearAiChat,
+    // Cron tab actions
+    NewCronWizard,
 }
 
 #[derive(Debug, Clone)]
@@ -211,24 +253,33 @@ pub struct Hitbox {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CockpitTab {
-    Overview = 0,
-    Services = 1,
-    Audit = 2,
-    Cron = 3,
-    Settings = 4,
-    Chat = 5,
+    Dashboard = 0,
+    Project = 1,
+    Uptime = 2,
+    Server = 3,
+    Audit = 4,
+    Cron = 5,
+    Log = 6,
+    Terminal = 7,
+    AI = 8,
+    Setting = 9,
 }
 
 impl CockpitTab {
+    pub const COUNT: usize = 10;
+
     pub fn from_index(idx: usize) -> Self {
         match idx {
-            0 => Self::Overview,
-            1 => Self::Services,
-            2 => Self::Audit,
-            3 => Self::Cron,
-            4 => Self::Settings,
-            5 => Self::Chat,
-            _ => Self::Overview,
+            0 => Self::Dashboard,
+            1 => Self::Project,
+            2 => Self::Uptime,
+            3 => Self::Server,
+            4 => Self::Audit,
+            5 => Self::Cron,
+            6 => Self::Log,
+            7 => Self::Terminal,
+            8 => Self::AI,
+            _ => Self::Setting,
         }
     }
 
@@ -236,15 +287,73 @@ impl CockpitTab {
         self as usize
     }
 
-    pub fn titles() -> [&'static str; 6] {
+    pub fn titles() -> [&'static str; 10] {
         [
-            "[1] Overview",
-            "[2] Fleet & Servers",
-            "[3] Audit & Code",
-            "[4] Cron & Jobs",
-            "[5] Settings GUI",
-            "[6] AI Chat",
+            "[1] Dashboard",
+            "[2] Project",
+            "[3] Uptime",
+            "[4] Server",
+            "[5] Audit",
+            "[6] CRON",
+            "[7] Log",
+            "[8] Terminal",
+            "[9] AI",
+            "[0] Setting",
         ]
+    }
+}
+
+/// Sub-views inside the Project tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProjectView {
+    #[default]
+    Tracked = 0,
+    Containers = 1,
+}
+
+/// Log source selector for the Log tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LogSource {
+    #[default]
+    Journal = 0,
+    Docker = 1,
+    Agents = 2,
+}
+
+impl LogSource {
+    pub fn all() -> [Self; 3] {
+        [Self::Journal, Self::Docker, Self::Agents]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Journal => "journalctl",
+            Self::Docker => "docker logs",
+            Self::Agents => "agent logs",
+        }
+    }
+}
+
+/// Log level filter for the Log tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LogLevelFilter {
+    #[default]
+    All = 0,
+    Error = 1,
+    Warn = 2,
+    Info = 3,
+}
+
+impl LogLevelFilter {
+    pub const COUNT: usize = 4;
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "ALL",
+            Self::Error => "ERROR",
+            Self::Warn => "WARN",
+            Self::Info => "INFO",
+        }
     }
 }
 
@@ -355,6 +464,40 @@ pub struct CockpitApp {
     pub chat_state: ListState,
     pub is_chat_processing: bool,
 
+    // ── Tab 1: Dashboard state ──────────────────────────────────────────────
+    pub dashboard_alert_scroll: usize,
+
+    // ── Tab 2: Project & Containers state ───────────────────────────────────
+    pub project_view: ProjectView,
+    pub selected_project: usize,
+    pub selected_container: usize,
+
+    // ── Tab 3: Uptime state ─────────────────────────────────────────────────
+    pub selected_monitor: usize,
+    pub uptime_probe_msg: Option<String>,
+
+    // ── Tab 4: Server state ─────────────────────────────────────────────────
+    pub selected_server: usize,
+    pub server_probe_results: Vec<(String, Option<u128>)>, // (node name, latency)
+    pub server_probe_done: bool,
+
+    // ── Tab 7: Log state ────────────────────────────────────────────────────
+    pub log_source: LogSource,
+    pub log_level: LogLevelFilter,
+    pub log_buffer: Vec<(String, String, String)>, // (level, source, line)
+    pub log_scroll: usize,
+    pub log_busy: bool,
+
+    // ── Tab 8: Terminal state ───────────────────────────────────────────────
+    pub term_input: String,
+    pub term_remote: Option<String>, // None = local, Some(node_name) = remote
+    pub term_output: Vec<String>,
+    pub term_busy: bool,
+    pub term_scroll: usize,
+
+    // ── Tab 9: AI state ─────────────────────────────────────────────────────
+    pub ai_model_idx: usize,
+
     // Status bar & notification
     pub notification: Option<(String, Instant)>,
     pub is_compact: bool,
@@ -458,8 +601,8 @@ impl CockpitApp {
         }
         if chat_lines.is_empty() {
             chat_lines = vec![
-                "=== Hana AI Chat (localhost:20128) ===".to_string(),
-                "Tab / Shift+1..5: Switch Focus | ?: Help Cheat Sheet | Esc: Back".to_string(),
+                "=== Hana AI Chat (OmniRoute / 9router · localhost:20128 / :3007) ===".to_string(),
+                "Tab / Shift+1..9/0: Switch Focus | ?: Help Cheat Sheet | Esc: Back".to_string(),
                 "Type your prompt in the terminal input below and press Enter.".to_string(),
             ];
         }
@@ -470,7 +613,7 @@ impl CockpitApp {
         chat_state.select(Some(chat_lines.len().saturating_sub(1)));
 
         let mut app = Self {
-            current_tab: CockpitTab::Overview,
+            current_tab: CockpitTab::Dashboard,
             db,
             show_help_modal: false,
             hitboxes: Vec::new(),
@@ -498,6 +641,45 @@ impl CockpitApp {
             chat_input: String::new(),
             chat_state,
             is_chat_processing: false,
+
+            // ── Tab 1: Dashboard state ──────────────────────────────────────────────
+            dashboard_alert_scroll: 0,
+
+            // ── Tab 2: Project & Containers state ───────────────────────────────────
+            project_view: ProjectView::Tracked,
+            selected_project: 0,
+            selected_container: 0,
+
+            // ── Tab 3: Uptime state ─────────────────────────────────────────────────
+            selected_monitor: 0,
+            uptime_probe_msg: None,
+
+            // ── Tab 4: Server state ─────────────────────────────────────────────────
+            selected_server: 0,
+            server_probe_results: Vec::new(),
+            server_probe_done: false,
+
+            // ── Tab 7: Log state ────────────────────────────────────────────────────
+            log_source: LogSource::Journal,
+            log_level: LogLevelFilter::All,
+            log_buffer: Vec::new(),
+            log_scroll: 0,
+            log_busy: false,
+
+            // ── Tab 8: Terminal state ───────────────────────────────────────────────
+            term_input: String::new(),
+            term_remote: None,
+            term_output: vec![
+                "=== CAShell Terminal & Quick Runner ===".to_string(),
+                "Execute local shell commands or route commands to fleet servers.".to_string(),
+                "Type command (e.g. 'cas doctor', 'uptime', 'docker ps') and press Enter.".to_string(),
+            ],
+            term_busy: false,
+            term_scroll: 0,
+
+            // ── Tab 9: AI state ─────────────────────────────────────────────────────
+            ai_model_idx: 0,
+
             notification: None,
             is_compact: false,
             overview_proc_scroll: 0,
@@ -558,7 +740,289 @@ impl CockpitApp {
 
         app.refresh_audit_reports();
         app.probe_all_ports();
+        app.probe_servers();
+        app.load_logs();
         app
+    }
+
+    pub fn ai_model_options(cfg: &Config) -> Vec<String> {
+        let mut models = vec![
+            "ZA126_PRO".to_string(),
+            "omniroute/claude-3-7-sonnet".to_string(),
+            "omniroute/gpt-4o".to_string(),
+            "omniroute/deepseek-r1".to_string(),
+            "omniroute/gemini-2.5-pro".to_string(),
+            "local/qwen2.5-coder".to_string(),
+        ];
+        if let Some(p) = cfg.ai.providers.get(&cfg.ai.default_provider) {
+            if !p.default_model.is_empty() && !models.contains(&p.default_model) {
+                models.insert(0, p.default_model.clone());
+            }
+        }
+        models
+    }
+
+    pub fn current_ai_model(&self) -> String {
+        let models = Self::ai_model_options(&self.cfg);
+        if models.is_empty() {
+            "ZA126_PRO".to_string()
+        } else {
+            models[self.ai_model_idx % models.len()].clone()
+        }
+    }
+
+    pub fn cycle_ai_model(&mut self) {
+        let models = Self::ai_model_options(&self.cfg);
+        if !models.is_empty() {
+            self.ai_model_idx = (self.ai_model_idx + 1) % models.len();
+            let new_model = models[self.ai_model_idx].clone();
+            let provider = self.cfg.ai.default_provider.clone();
+            if let Some(p) = self.cfg.ai.providers.get_mut(&provider) {
+                p.default_model = new_model.clone();
+            }
+            self.set_notification(format!("🤖 AI Model switched to: {new_model}"));
+        }
+    }
+
+    pub fn start_selected_container(&mut self) {
+        if self.latest_snap.docker_containers.is_empty() {
+            self.set_notification("⚠ No containers to start");
+            return;
+        }
+        let idx = self.selected_container.min(self.latest_snap.docker_containers.len() - 1);
+        let name = self.latest_snap.docker_containers[idx].name.clone();
+        let out = std::process::Command::new("docker")
+            .args(["start", &name])
+            .output()
+            .or_else(|_| std::process::Command::new("podman").args(["start", &name]).output());
+        match out {
+            Ok(o) if o.status.success() => {
+                self.latest_snap.docker_containers[idx].state = "running".to_string();
+                self.latest_snap.docker_containers[idx].status_detail = "Up (Active)".to_string();
+                self.set_notification(format!("✓ Container '{name}' started"));
+            }
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr);
+                self.set_notification(format!("✗ Failed to start '{name}': {err}"));
+            }
+            Err(e) => {
+                self.set_notification(format!("✗ Engine error starting '{name}': {e}"));
+            }
+        }
+    }
+
+    pub fn stop_selected_container(&mut self) {
+        if self.latest_snap.docker_containers.is_empty() {
+            self.set_notification("⚠ No containers to stop");
+            return;
+        }
+        let idx = self.selected_container.min(self.latest_snap.docker_containers.len() - 1);
+        let name = self.latest_snap.docker_containers[idx].name.clone();
+        let out = std::process::Command::new("docker")
+            .args(["stop", &name])
+            .output()
+            .or_else(|_| std::process::Command::new("podman").args(["stop", &name]).output());
+        match out {
+            Ok(o) if o.status.success() => {
+                self.latest_snap.docker_containers[idx].state = "exited".to_string();
+                self.latest_snap.docker_containers[idx].status_detail = "Exited (0)".to_string();
+                self.set_notification(format!("✓ Container '{name}' stopped"));
+            }
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr);
+                self.set_notification(format!("✗ Failed to stop '{name}': {err}"));
+            }
+            Err(e) => {
+                self.set_notification(format!("✗ Engine error stopping '{name}': {e}"));
+            }
+        }
+    }
+
+    pub fn restart_selected_container(&mut self) {
+        if self.latest_snap.docker_containers.is_empty() {
+            self.set_notification("⚠ No containers to restart");
+            return;
+        }
+        let idx = self.selected_container.min(self.latest_snap.docker_containers.len() - 1);
+        let name = self.latest_snap.docker_containers[idx].name.clone();
+        let out = std::process::Command::new("docker")
+            .args(["restart", &name])
+            .output()
+            .or_else(|_| std::process::Command::new("podman").args(["restart", &name]).output());
+        match out {
+            Ok(o) if o.status.success() => {
+                self.latest_snap.docker_containers[idx].state = "running".to_string();
+                self.latest_snap.docker_containers[idx].status_detail = "Restarted (Active)".to_string();
+                self.set_notification(format!("✓ Container '{name}' restarted"));
+            }
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr);
+                self.set_notification(format!("✗ Failed to restart '{name}': {err}"));
+            }
+            Err(e) => {
+                self.set_notification(format!("✗ Engine error restarting '{name}': {e}"));
+            }
+        }
+    }
+
+    pub fn probe_servers(&mut self) {
+        let mut results = Vec::new();
+        // 1. Local node ThinkPad X1
+        results.push(("ThinkPad X1 (Local)".to_string(), Some(0u128)));
+
+        // 2. Nodes in config
+        for (name, node) in &self.cfg.daemon.nodes {
+            let port = node.services.first().map(|s| s.port).unwrap_or(22);
+            let addr_str = format!("{}:{}", node.ip, port);
+            if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+                let start = Instant::now();
+                if TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok() {
+                    results.push((name.clone(), Some(start.elapsed().as_millis())));
+                } else {
+                    results.push((name.clone(), None));
+                }
+            } else {
+                results.push((name.clone(), None));
+            }
+        }
+
+        // 3. Ensure multi-node canonical fleet nodes (X1, YPC, Hostinger VPS, XPC, Gerlink)
+        let fleet_presets = [
+            ("YPC", "100.127.232.32", 3000),
+            ("Hostinger VPS", "195.35.48.21", 80),
+            ("XPC", "100.100.100.10", 22),
+            ("Gerlink", "100.64.0.1", 80),
+        ];
+        for (pname, pip, pport) in fleet_presets {
+            if !results.iter().any(|(rname, _)| rname.eq_ignore_ascii_case(pname)) {
+                let addr_str = format!("{}:{}", pip, pport);
+                if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+                    let start = Instant::now();
+                    if TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok() {
+                        results.push((pname.to_string(), Some(start.elapsed().as_millis())));
+                    } else {
+                        results.push((pname.to_string(), None));
+                    }
+                } else {
+                    results.push((pname.to_string(), None));
+                }
+            }
+        }
+
+        self.server_probe_results = results;
+        self.server_probe_done = true;
+    }
+
+    pub fn load_logs(&mut self) {
+        let mut lines = Vec::new();
+        match self.log_source {
+            LogSource::Journal => {
+                if let Ok(out) = std::process::Command::new("journalctl")
+                    .args(["-n", "40", "--no-pager", "-o", "short-iso"])
+                    .output()
+                {
+                    let raw = String::from_utf8_lossy(&out.stdout);
+                    for l in raw.lines() {
+                        let level = if l.contains("error") || l.contains("fail") || l.contains("ERR") {
+                            "ERROR"
+                        } else if l.contains("warn") || l.contains("WARN") {
+                            "WARN"
+                        } else {
+                            "INFO"
+                        };
+                        lines.push((level.to_string(), "journald".to_string(), l.to_string()));
+                    }
+                }
+                if lines.is_empty() {
+                    lines.push(("INFO".to_string(), "journald".to_string(), "System journal is clean. No active alerts.".to_string()));
+                }
+            }
+            LogSource::Docker => {
+                if let Ok(out) = std::process::Command::new("docker")
+                    .args(["ps", "--format", "{{.Names}}"])
+                    .output()
+                {
+                    let names_str = String::from_utf8_lossy(&out.stdout);
+                    for name in names_str.lines().take(3) {
+                        let name = name.trim();
+                        if !name.is_empty() {
+                            if let Ok(logs_out) = std::process::Command::new("docker")
+                                .args(["logs", "--tail", "10", name])
+                                .output()
+                            {
+                                let log_raw = String::from_utf8_lossy(&logs_out.stdout);
+                                for l in log_raw.lines() {
+                                    lines.push(("INFO".to_string(), format!("docker:{name}"), l.to_string()));
+                                }
+                            }
+                        }
+                    }
+                }
+                if lines.is_empty() {
+                    lines.push(("INFO".to_string(), "docker".to_string(), "No active docker containers logging.".to_string()));
+                }
+            }
+            LogSource::Agents => {
+                if let Some(ref d) = self.db {
+                    if let Ok(evs) = d.read_system_events(40) {
+                        for (lvl, src, msg, dt) in evs {
+                            lines.push((lvl, src, format!("{dt} │ {msg}")));
+                        }
+                    }
+                }
+                if lines.is_empty() {
+                    lines.push(("INFO".to_string(), "casheld".to_string(), "No agent system events recorded in SQLite.".to_string()));
+                }
+            }
+        }
+        self.log_buffer = lines;
+        self.log_scroll = 0;
+    }
+
+    pub fn run_terminal_command(&mut self) {
+        let cmd = self.term_input.trim().to_string();
+        if cmd.is_empty() {
+            return;
+        }
+        self.term_input.clear();
+        let target_desc = if let Some(ref r) = self.term_remote {
+            format!("Remote ({r})")
+        } else {
+            "Local (ThinkPad X1)".to_string()
+        };
+        self.term_output.push(format!("$ [{target_desc}] > {cmd}"));
+
+        let output = if let Some(ref r) = self.term_remote {
+            if let Some(node) = self.cfg.daemon.nodes.get(r) {
+                std::process::Command::new("ssh")
+                    .args(["-o", "ConnectTimeout=3", &format!("{}@{}", node.user, node.ip), &cmd])
+                    .output()
+            } else {
+                std::process::Command::new("sh").args(["-c", &cmd]).output()
+            }
+        } else {
+            std::process::Command::new("sh").args(["-c", &cmd]).output()
+        };
+
+        match output {
+            Ok(o) => {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                for line in stdout.lines() {
+                    self.term_output.push(line.to_string());
+                }
+                for line in stderr.lines() {
+                    self.term_output.push(format!("! {line}"));
+                }
+                if stdout.is_empty() && stderr.is_empty() {
+                    self.term_output.push(format!("(Process exited with code {})", o.status.code().unwrap_or(0)));
+                }
+            }
+            Err(e) => {
+                self.term_output.push(format!("✗ Execution error: {e}"));
+            }
+        }
+        self.term_scroll = self.term_output.len().saturating_sub(1);
     }
 
     fn init_apps(cfg: &Config) -> Vec<AppCard> {
@@ -780,7 +1244,7 @@ impl CockpitApp {
         let pos = Position { x: col, y: row };
         for hb in &self.hitboxes {
             if hb.rect.contains(pos) {
-                return Some(hb.action);
+                return Some(hb.action.clone());
             }
         }
         None
@@ -1770,7 +2234,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         return Ok(false);
     }
 
-    // 1. Shift + 1..5 MUST switch tabs immediately (even in Chat tab or editing mode)
+    // 1. Shift + 1..9, 0 MUST switch tabs immediately (even in AI or Terminal tab)
     let shift_tab = match key.code {
         KeyCode::Char('!') => Some(0),
         KeyCode::Char('@') => Some(1),
@@ -1778,12 +2242,20 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Char('$') => Some(3),
         KeyCode::Char('%') => Some(4),
         KeyCode::Char('^') => Some(5),
+        KeyCode::Char('&') => Some(6),
+        KeyCode::Char('*') => Some(7),
+        KeyCode::Char('(') => Some(8),
+        KeyCode::Char(')') => Some(9),
         KeyCode::Char('1') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(0),
         KeyCode::Char('2') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(1),
         KeyCode::Char('3') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(2),
         KeyCode::Char('4') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(3),
         KeyCode::Char('5') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(4),
         KeyCode::Char('6') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(5),
+        KeyCode::Char('7') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(6),
+        KeyCode::Char('8') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(7),
+        KeyCode::Char('9') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(8),
+        KeyCode::Char('0') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(9),
         _ => None,
     };
     if let Some(tab_idx) = shift_tab {
@@ -1813,7 +2285,8 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             && !app.show_project_wizard
             && !app.show_container_wizard
             && !app.show_monitor_wizard
-            && (app.current_tab != CockpitTab::Chat || app.chat_input.is_empty()))
+            && (app.current_tab != CockpitTab::AI || app.chat_input.is_empty())
+            && (app.current_tab != CockpitTab::Terminal || app.term_input.is_empty()))
     {
         app.show_help_modal = !app.show_help_modal;
         return Ok(false);
@@ -1860,11 +2333,16 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         return Ok(false);
     }
 
-    // 4. If chat tab is focused and user types in prompt
-    if app.current_tab == CockpitTab::Chat {
+    // 4. If AI chat tab is focused and user types in prompt
+    if app.current_tab == CockpitTab::AI {
         match key.code {
             KeyCode::Esc => {
-                return Ok(true);
+                if !app.chat_input.is_empty() {
+                    app.chat_input.clear();
+                    return Ok(false);
+                }
+                app.show_quit_confirm = true;
+                return Ok(false);
             }
             KeyCode::Enter if !app.chat_input.trim().is_empty() && !app.is_chat_processing => {
                 let prompt = app.chat_input.clone();
@@ -1901,9 +2379,11 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                     "disconnected"
                 };
 
+                let active_model = app.current_ai_model();
                 let system_prompt = format!(
-                    "{role}\nGreetings to {user_name}.\nSystem Context: Hostname: {host}, OS: Linux, Monitored Ports: [{ports}], Active Services: [{services}], Tailscale: {tailscale}.",
+                    "{role}\nActive Model: {model}\nGreetings to {user_name}.\nSystem Context: Hostname: {host}, OS: Linux, Monitored Ports: [{ports}], Active Services: [{services}], Tailscale: {tailscale}.",
                     role = app.cfg.persona.assistant_role,
+                    model = active_model,
                     user_name = app.cfg.persona.user_name,
                     host = app.hostname,
                     ports = ports_str,
@@ -1936,13 +2416,24 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 return Ok(false);
             }
             KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
-                // If it's 1-6 with no prompt, allow switching tabs
-                if app.chat_input.is_empty() && ('1'..='6').contains(&c) {
-                    let idx = (c as usize) - ('1' as usize);
-                    app.current_tab = CockpitTab::from_index(idx);
-                } else {
-                    app.chat_input.push(c);
+                // If input is empty, direct tab switching with 1-9 or 0
+                if app.chat_input.is_empty() {
+                    if ('1'..='9').contains(&c) {
+                        let idx = (c as usize) - ('1' as usize);
+                        app.current_tab = CockpitTab::from_index(idx);
+                        return Ok(false);
+                    } else if c == '0' {
+                        app.current_tab = CockpitTab::Setting;
+                        return Ok(false);
+                    } else if c == 'm' {
+                        app.cycle_ai_model();
+                        return Ok(false);
+                    } else if c == 'c' {
+                        app.clear_chat_history();
+                        return Ok(false);
+                    }
                 }
+                app.chat_input.push(c);
                 return Ok(false);
             }
             KeyCode::Up => {
@@ -1951,6 +2442,65 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             }
             KeyCode::Down => {
                 app.scroll_chat_down();
+                return Ok(false);
+            }
+            _ => {}
+        }
+    }
+
+    // 4b. If Terminal tab is focused and user types command
+    if app.current_tab == CockpitTab::Terminal {
+        match key.code {
+            KeyCode::Esc => {
+                if !app.term_input.is_empty() {
+                    app.term_input.clear();
+                    return Ok(false);
+                }
+                app.show_quit_confirm = true;
+                return Ok(false);
+            }
+            KeyCode::Enter if !app.term_input.trim().is_empty() => {
+                app.run_terminal_command();
+                return Ok(false);
+            }
+            KeyCode::Backspace => {
+                app.term_input.pop();
+                return Ok(false);
+            }
+            KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
+                if app.term_input.is_empty() {
+                    if ('1'..='9').contains(&c) {
+                        let idx = (c as usize) - ('1' as usize);
+                        app.current_tab = CockpitTab::from_index(idx);
+                        return Ok(false);
+                    } else if c == '0' {
+                        app.current_tab = CockpitTab::Setting;
+                        return Ok(false);
+                    } else if c == 'r' {
+                        // Toggle local vs first remote node
+                        if app.term_remote.is_none() {
+                            if let Some(first_node) = app.cfg.daemon.nodes.keys().next() {
+                                app.term_remote = Some(first_node.clone());
+                                app.set_notification(format!("Terminal target: Remote [{first_node}]"));
+                            } else {
+                                app.set_notification("Terminal target: Local (No remote nodes configured)");
+                            }
+                        } else {
+                            app.term_remote = None;
+                            app.set_notification("Terminal target: Local (ThinkPad X1)");
+                        }
+                        return Ok(false);
+                    }
+                }
+                app.term_input.push(c);
+                return Ok(false);
+            }
+            KeyCode::Up => {
+                app.term_scroll = app.term_scroll.saturating_sub(1);
+                return Ok(false);
+            }
+            KeyCode::Down => {
+                app.term_scroll = (app.term_scroll + 1).min(app.term_output.len().saturating_sub(1));
                 return Ok(false);
             }
             _ => {}
@@ -1978,7 +2528,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 app.is_locked = true;
                 app.set_notification("🔒 Cockpit locked");
             } else {
-                app.set_notification("⚠ Master password not set. Configure it in Settings GUI [5].");
+                app.set_notification("⚠ Master password not set. Configure it in Setting GUI [0].");
             }
         }
         KeyCode::Esc if app.show_pet_modal => {
@@ -1999,71 +2549,115 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 app.show_quit_confirm = true;
             }
         }
-        KeyCode::Char('1') => app.current_tab = CockpitTab::Overview,
-        KeyCode::Char('2') => app.current_tab = CockpitTab::Services,
-        KeyCode::Char('3') => app.current_tab = CockpitTab::Audit,
-        KeyCode::Char('4') => app.current_tab = CockpitTab::Cron,
-        KeyCode::Char('5') => app.current_tab = CockpitTab::Settings,
-        KeyCode::Char('6') => app.current_tab = CockpitTab::Chat,
+
+        // Direct number key tab switching: '1'..'9' -> Tab 0..8, '0' -> Tab 9 (Setting)
+        KeyCode::Char('1') => app.current_tab = CockpitTab::Dashboard,
+        KeyCode::Char('2') => app.current_tab = CockpitTab::Project,
+        KeyCode::Char('3') => app.current_tab = CockpitTab::Uptime,
+        KeyCode::Char('4') => app.current_tab = CockpitTab::Server,
+        KeyCode::Char('5') => app.current_tab = CockpitTab::Audit,
+        KeyCode::Char('6') => app.current_tab = CockpitTab::Cron,
+        KeyCode::Char('7') => app.current_tab = CockpitTab::Log,
+        KeyCode::Char('8') => app.current_tab = CockpitTab::Terminal,
+        KeyCode::Char('9') => app.current_tab = CockpitTab::AI,
+        KeyCode::Char('0') => app.current_tab = CockpitTab::Setting,
 
         // ── Pet Play Area Controls (Hardware-Reactive Tamagotchi) ─────────────
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.execute_pet_action();
         }
-        KeyCode::Char('f') if app.current_tab == CockpitTab::Overview => {
+        KeyCode::Char('f') if app.current_tab == CockpitTab::Dashboard => {
             app.pet_selected_action = 0;
             app.execute_pet_action();
         }
-        KeyCode::Char('t') if app.current_tab == CockpitTab::Overview => {
+        KeyCode::Char('t') if app.current_tab == CockpitTab::Dashboard => {
             app.pet_selected_action = 1;
             app.execute_pet_action();
         }
-        KeyCode::Char('s') if app.current_tab == CockpitTab::Overview => {
+        KeyCode::Char('s') if app.current_tab == CockpitTab::Dashboard => {
             app.pet_selected_action = 2;
             app.execute_pet_action();
         }
-        KeyCode::Char('h') if app.current_tab == CockpitTab::Overview => {
+        KeyCode::Char('h') if app.current_tab == CockpitTab::Dashboard => {
             app.pet_selected_action = 3;
             app.execute_pet_action();
         }
 
         KeyCode::Tab => {
-            let next_idx = (app.current_tab.to_index() + 1) % 6;
+            let next_idx = (app.current_tab.to_index() + 1) % CockpitTab::COUNT;
             app.current_tab = CockpitTab::from_index(next_idx);
         }
         KeyCode::BackTab => {
-            let prev_idx = (app.current_tab.to_index() + 5) % 6;
+            let prev_idx = (app.current_tab.to_index() + CockpitTab::COUNT - 1) % CockpitTab::COUNT;
             app.current_tab = CockpitTab::from_index(prev_idx);
         }
 
-        // Tab-specific controls
+        // Tab-specific controls: Up / k and Down / j
         KeyCode::Up | KeyCode::Char('k') => match app.current_tab {
-            CockpitTab::Overview => {
+            CockpitTab::Dashboard => {
                 app.pet_selected_action = (app.pet_selected_action + 3) % 4;
                 app.overview_proc_scroll = app.overview_proc_scroll.saturating_sub(1);
             }
-            CockpitTab::Services => {
-                app.selected_app = app.selected_app.saturating_sub(1);
+            CockpitTab::Project => {
+                match app.project_view {
+                    ProjectView::Tracked => {
+                        app.selected_project = app.selected_project.saturating_sub(1);
+                    }
+                    ProjectView::Containers => {
+                        app.selected_container = app.selected_container.saturating_sub(1);
+                    }
+                }
+            }
+            CockpitTab::Uptime => {
+                app.selected_monitor = app.selected_monitor.saturating_sub(1);
+            }
+            CockpitTab::Server => {
+                app.selected_server = app.selected_server.saturating_sub(1);
             }
             CockpitTab::Audit => {
                 app.selected_report = app.selected_report.saturating_sub(1);
             }
             CockpitTab::Cron => {}
-            CockpitTab::Settings => {
-                app.selected_field = app.selected_field.saturating_sub(1);
+            CockpitTab::Log => {
+                app.log_scroll = app.log_scroll.saturating_sub(1);
             }
-            CockpitTab::Chat => {
+            CockpitTab::Terminal => {
+                app.term_scroll = app.term_scroll.saturating_sub(1);
+            }
+            CockpitTab::AI => {
                 app.scroll_chat_up();
+            }
+            CockpitTab::Setting => {
+                app.selected_field = app.selected_field.saturating_sub(1);
             }
         },
         KeyCode::Down | KeyCode::Char('j') => match app.current_tab {
-            CockpitTab::Overview => {
+            CockpitTab::Dashboard => {
                 app.pet_selected_action = (app.pet_selected_action + 1) % 4;
                 app.overview_proc_scroll = (app.overview_proc_scroll + 1).min(30);
             }
-            CockpitTab::Services => {
-                if !app.apps.is_empty() {
-                    app.selected_app = (app.selected_app + 1).min(app.apps.len() - 1);
+            CockpitTab::Project => {
+                match app.project_view {
+                    ProjectView::Tracked => {
+                        if !app.latest_snap.tracked_projects.is_empty() {
+                            app.selected_project = (app.selected_project + 1).min(app.latest_snap.tracked_projects.len() - 1);
+                        }
+                    }
+                    ProjectView::Containers => {
+                        if !app.latest_snap.docker_containers.is_empty() {
+                            app.selected_container = (app.selected_container + 1).min(app.latest_snap.docker_containers.len() - 1);
+                        }
+                    }
+                }
+            }
+            CockpitTab::Uptime => {
+                if !app.latest_snap.uptime_monitors.is_empty() {
+                    app.selected_monitor = (app.selected_monitor + 1).min(app.latest_snap.uptime_monitors.len() - 1);
+                }
+            }
+            CockpitTab::Server => {
+                if !app.server_probe_results.is_empty() {
+                    app.selected_server = (app.selected_server + 1).min(app.server_probe_results.len() - 1);
                 }
             }
             CockpitTab::Audit => {
@@ -2073,24 +2667,52 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 }
             }
             CockpitTab::Cron => {}
-            CockpitTab::Settings => {
-                app.selected_field = (app.selected_field + 1).min(SETTINGS_FIELDS.len() - 1);
+            CockpitTab::Log => {
+                app.log_scroll = (app.log_scroll + 1).min(app.log_buffer.len().saturating_sub(1));
             }
-            CockpitTab::Chat => {
+            CockpitTab::Terminal => {
+                app.term_scroll = (app.term_scroll + 1).min(app.term_output.len().saturating_sub(1));
+            }
+            CockpitTab::AI => {
                 app.scroll_chat_down();
+            }
+            CockpitTab::Setting => {
+                app.selected_field = (app.selected_field + 1).min(SETTINGS_FIELDS.len() - 1);
             }
         },
 
-        KeyCode::Left | KeyCode::Char('h') => {
-            if app.current_tab == CockpitTab::Settings {
-                app.cycle_field_value(false);
+        KeyCode::Left | KeyCode::Char('h') => match app.current_tab {
+            CockpitTab::Setting => app.cycle_field_value(false),
+            CockpitTab::Project => {
+                app.project_view = ProjectView::Tracked;
             }
-        }
-        KeyCode::Right | KeyCode::Char('l') => {
-            if app.current_tab == CockpitTab::Settings {
-                app.cycle_field_value(true);
+            CockpitTab::Log => {
+                let next = match app.log_source {
+                    LogSource::Journal => LogSource::Agents,
+                    LogSource::Docker => LogSource::Journal,
+                    LogSource::Agents => LogSource::Docker,
+                };
+                app.log_source = next;
+                app.load_logs();
             }
-        }
+            _ => {}
+        },
+        KeyCode::Right | KeyCode::Char('l') => match app.current_tab {
+            CockpitTab::Setting => app.cycle_field_value(true),
+            CockpitTab::Project => {
+                app.project_view = ProjectView::Containers;
+            }
+            CockpitTab::Log => {
+                app.log_level = match app.log_level {
+                    LogLevelFilter::All => LogLevelFilter::Error,
+                    LogLevelFilter::Error => LogLevelFilter::Warn,
+                    LogLevelFilter::Warn => LogLevelFilter::Info,
+                    LogLevelFilter::Info => LogLevelFilter::All,
+                };
+                app.set_notification(format!("Log level filter: {}", app.log_level.label()));
+            }
+            _ => {}
+        },
 
         KeyCode::Enter if app.show_cron_wizard => {
             if let Some(ref d) = app.db {
@@ -2100,66 +2722,59 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             app.show_cron_wizard = false;
         }
         KeyCode::Enter => match app.current_tab {
-            CockpitTab::Services => {
-                app.inspector_open = !app.inspector_open;
-            }
-            CockpitTab::Settings => {
+            CockpitTab::Setting => {
                 start_field_edit(app);
+            }
+            CockpitTab::Project => {
+                // Toggle view between Tracked Projects and Containers
+                app.project_view = match app.project_view {
+                    ProjectView::Tracked => ProjectView::Containers,
+                    ProjectView::Containers => ProjectView::Tracked,
+                };
             }
             _ => {}
         },
 
-        KeyCode::Char('p') => {
-            if app.current_tab == CockpitTab::Services {
-                app.probe_all_ports();
-                app.set_notification("Probed all ports & services");
-            } else {
-                app.show_pet_modal = !app.show_pet_modal;
-            }
-        }
-        KeyCode::Char('c') if app.show_pet_modal => {
-            if let Some(ref d) = app.db {
-                let _ = d.create_pet("ayam", "Ciko");
-                app.set_notification("🐣 Created pet Ayam Ciko!");
-            }
-        }
-        KeyCode::Char('f') if app.show_pet_modal => {
-            if let Some(ref d) = app.db {
-                if let Ok(Some(pet)) = d.get_active_pet() {
-                    let _ = d.add_pet_xp(pet.id, 10);
-                    app.set_notification("🍖 Fed Ciko! +10 XP");
-                }
-            }
-        }
-        KeyCode::Char('n') if app.show_pet_modal => {
-            if let Some(ref d) = app.db {
-                let _ = d.create_pet("singa", "Simba");
-                app.set_notification("🦁 Created pet Singa Simba!");
-            }
-        }
-        KeyCode::Char('n') if app.current_tab == CockpitTab::Cron => {
-            app.show_cron_wizard = true;
-        }
-        KeyCode::Char('i') if app.current_tab == CockpitTab::Services => {
-            app.inspector_open = !app.inspector_open;
-        }
-        KeyCode::Char('a') | KeyCode::Char('n') if app.current_tab == CockpitTab::Services => {
-            app.show_server_wizard = true;
-            app.server_wizard_field = 0;
-        }
-        KeyCode::Char('m') | KeyCode::Char('u') if app.current_tab == CockpitTab::Overview => {
-            app.show_monitor_wizard = true;
-            app.monitor_wizard_field = 0;
-        }
-        KeyCode::Char('d') if app.current_tab == CockpitTab::Overview || app.current_tab == CockpitTab::Services => {
-            app.show_container_wizard = true;
-            app.container_wizard_field = 0;
-        }
-        KeyCode::Char('o') | KeyCode::Char('P') if app.current_tab == CockpitTab::Overview => {
+        // Project Tab shortcuts: 'o'/'P': Add project, 'd': Add container, 's': Start, 'x': Stop, 'r': Restart
+        KeyCode::Char('o') | KeyCode::Char('P') if app.current_tab == CockpitTab::Project || app.current_tab == CockpitTab::Dashboard => {
             app.show_project_wizard = true;
             app.project_wizard_field = 0;
         }
+        KeyCode::Char('d') if app.current_tab == CockpitTab::Project || app.current_tab == CockpitTab::Dashboard => {
+            app.show_container_wizard = true;
+            app.container_wizard_field = 0;
+        }
+        KeyCode::Char('s') if app.current_tab == CockpitTab::Project => {
+            app.start_selected_container();
+        }
+        KeyCode::Char('x') if app.current_tab == CockpitTab::Project => {
+            app.stop_selected_container();
+        }
+        KeyCode::Char('r') if app.current_tab == CockpitTab::Project => {
+            app.restart_selected_container();
+        }
 
+        // Uptime Tab shortcuts: 'm'/'u': Add monitor, 'p': Probe monitors
+        KeyCode::Char('m') | KeyCode::Char('u') if app.current_tab == CockpitTab::Uptime || app.current_tab == CockpitTab::Dashboard => {
+            app.show_monitor_wizard = true;
+            app.monitor_wizard_field = 0;
+        }
+        KeyCode::Char('p') if app.current_tab == CockpitTab::Uptime => {
+            app.probe_all_ports();
+            app.set_notification("Probed all monitors & endpoints");
+        }
+
+        // Server Tab shortcuts: 'a'/'n': Add server, 'p': Probe servers
+        KeyCode::Char('a') | KeyCode::Char('n') if app.current_tab == CockpitTab::Server => {
+            app.show_server_wizard = true;
+            app.server_wizard_field = 0;
+        }
+        KeyCode::Char('p') if app.current_tab == CockpitTab::Server => {
+            app.probe_servers();
+            app.set_notification("Probed all multi-node server latencies");
+        }
+
+        // Audit Tab shortcuts: 'a': Turbo Audit, 'f': Run Fix
         KeyCode::Char('a') if app.current_tab == CockpitTab::Audit => {
             trigger_turbo_audit(app, terminal)?;
         }
@@ -2167,17 +2782,57 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             trigger_run_fix(app, terminal)?;
         }
 
-        KeyCode::Char('s') if app.current_tab == CockpitTab::Settings => {
-            app.save_current_config();
+        // Cron Tab shortcuts: 'n': New Cron Job
+        KeyCode::Char('n') if app.current_tab == CockpitTab::Cron => {
+            app.show_cron_wizard = true;
         }
-        KeyCode::Char('r') if app.current_tab == CockpitTab::Settings => {
-            app.reload_config();
+
+        // Log Tab shortcuts: 'r': Reload logs, 'l': Cycle log level
+        KeyCode::Char('r') if app.current_tab == CockpitTab::Log => {
+            app.load_logs();
+            app.set_notification("Logs refreshed from active stream");
         }
-        KeyCode::Char('c') if app.current_tab == CockpitTab::Settings => {
+        KeyCode::Char('f') if app.current_tab == CockpitTab::Log => {
+            app.log_level = match app.log_level {
+                LogLevelFilter::All => LogLevelFilter::Error,
+                LogLevelFilter::Error => LogLevelFilter::Warn,
+                LogLevelFilter::Warn => LogLevelFilter::Info,
+                LogLevelFilter::Info => LogLevelFilter::All,
+            };
+            app.set_notification(format!("Log level filter: {}", app.log_level.label()));
+        }
+
+        // AI Tab shortcuts: 'm': Cycle model, 'c': Clear chat
+        KeyCode::Char('m') if app.current_tab == CockpitTab::AI => {
+            app.cycle_ai_model();
+        }
+        KeyCode::Char('c') if app.current_tab == CockpitTab::AI => {
             app.clear_chat_history();
         }
-        KeyCode::Char('v') if app.current_tab == CockpitTab::Settings => {
+
+        // Setting Tab shortcuts: 's': Save, 'r': Reload, 'c': Clear chat, 'v': Vacuum
+        KeyCode::Char('s') if app.current_tab == CockpitTab::Setting => {
+            app.save_current_config();
+        }
+        KeyCode::Char('r') if app.current_tab == CockpitTab::Setting => {
+            app.reload_config();
+        }
+        KeyCode::Char('c') if app.current_tab == CockpitTab::Setting => {
+            app.clear_chat_history();
+        }
+        KeyCode::Char('v') if app.current_tab == CockpitTab::Setting => {
             app.vacuum_database();
+        }
+
+        // Pet modal shortcut in Dashboard
+        KeyCode::Char('p') if app.current_tab == CockpitTab::Dashboard => {
+            app.show_pet_modal = !app.show_pet_modal;
+        }
+        KeyCode::Char('c') if app.show_pet_modal => {
+            if let Some(ref d) = app.db {
+                let _ = d.create_pet("ayam", "Ciko");
+                app.set_notification("🐣 Created pet Ayam Ciko!");
+            }
         }
 
         _ => {}
@@ -2333,24 +2988,54 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
 ) -> Result<()> {
     match mouse.kind {
         MouseEventKind::ScrollUp => match app.current_tab {
-            CockpitTab::Overview => app.overview_proc_scroll = app.overview_proc_scroll.saturating_sub(1),
-            CockpitTab::Chat => app.scroll_chat_up(),
+            CockpitTab::Dashboard => app.overview_proc_scroll = app.overview_proc_scroll.saturating_sub(1),
+            CockpitTab::Project => match app.project_view {
+                ProjectView::Tracked => app.selected_project = app.selected_project.saturating_sub(1),
+                ProjectView::Containers => app.selected_container = app.selected_container.saturating_sub(1),
+            },
+            CockpitTab::Uptime => app.selected_monitor = app.selected_monitor.saturating_sub(1),
+            CockpitTab::Server => app.selected_server = app.selected_server.saturating_sub(1),
             CockpitTab::Audit => app.report_scroll = app.report_scroll.saturating_sub(2),
-            CockpitTab::Services => app.selected_app = app.selected_app.saturating_sub(1),
             CockpitTab::Cron => {},
-            CockpitTab::Settings => app.selected_field = app.selected_field.saturating_sub(1),
+            CockpitTab::Log => app.log_scroll = app.log_scroll.saturating_sub(1),
+            CockpitTab::Terminal => app.term_scroll = app.term_scroll.saturating_sub(1),
+            CockpitTab::AI => app.scroll_chat_up(),
+            CockpitTab::Setting => app.selected_field = app.selected_field.saturating_sub(1),
         },
         MouseEventKind::ScrollDown => match app.current_tab {
-            CockpitTab::Overview => app.overview_proc_scroll = (app.overview_proc_scroll + 1).min(30),
-            CockpitTab::Chat => app.scroll_chat_down(),
-            CockpitTab::Audit => app.report_scroll = app.report_scroll.saturating_add(2),
-            CockpitTab::Services => {
-                if !app.apps.is_empty() {
-                    app.selected_app = (app.selected_app + 1).min(app.apps.len() - 1);
+            CockpitTab::Dashboard => app.overview_proc_scroll = (app.overview_proc_scroll + 1).min(30),
+            CockpitTab::Project => match app.project_view {
+                ProjectView::Tracked => {
+                    if !app.latest_snap.tracked_projects.is_empty() {
+                        app.selected_project = (app.selected_project + 1).min(app.latest_snap.tracked_projects.len() - 1);
+                    }
+                }
+                ProjectView::Containers => {
+                    if !app.latest_snap.docker_containers.is_empty() {
+                        app.selected_container = (app.selected_container + 1).min(app.latest_snap.docker_containers.len() - 1);
+                    }
+                }
+            },
+            CockpitTab::Uptime => {
+                if !app.latest_snap.uptime_monitors.is_empty() {
+                    app.selected_monitor = (app.selected_monitor + 1).min(app.latest_snap.uptime_monitors.len() - 1);
                 }
             }
+            CockpitTab::Server => {
+                if !app.server_probe_results.is_empty() {
+                    app.selected_server = (app.selected_server + 1).min(app.server_probe_results.len() - 1);
+                }
+            }
+            CockpitTab::Audit => app.report_scroll = app.report_scroll.saturating_add(2),
             CockpitTab::Cron => {},
-            CockpitTab::Settings => {
+            CockpitTab::Log => {
+                app.log_scroll = (app.log_scroll + 1).min(app.log_buffer.len().saturating_sub(1));
+            }
+            CockpitTab::Terminal => {
+                app.term_scroll = (app.term_scroll + 1).min(app.term_output.len().saturating_sub(1));
+            }
+            CockpitTab::AI => app.scroll_chat_down(),
+            CockpitTab::Setting => {
                 app.selected_field = (app.selected_field + 1).min(SETTINGS_FIELDS.len() - 1);
             }
         },
@@ -2399,6 +3084,74 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                     }
                     HitboxAction::VacuumDb => {
                         app.vacuum_database();
+                    }
+                    HitboxAction::SelectProjectView(view) => {
+                        app.project_view = view;
+                    }
+                    HitboxAction::SelectProject(idx) => {
+                        app.project_view = ProjectView::Tracked;
+                        app.selected_project = idx;
+                    }
+                    HitboxAction::SelectContainer(idx) => {
+                        app.project_view = ProjectView::Containers;
+                        app.selected_container = idx;
+                    }
+                    HitboxAction::ContainerStart(_) => {
+                        app.start_selected_container();
+                    }
+                    HitboxAction::ContainerStop(_) => {
+                        app.stop_selected_container();
+                    }
+                    HitboxAction::ContainerRestart(_) => {
+                        app.restart_selected_container();
+                    }
+                    HitboxAction::SelectMonitor(idx) => {
+                        app.selected_monitor = idx;
+                    }
+                    HitboxAction::ProbeMonitors => {
+                        app.probe_all_ports();
+                        app.set_notification("Probed all Uptime monitors & gateways");
+                    }
+                    HitboxAction::SelectServer(idx) => {
+                        app.selected_server = idx;
+                    }
+                    HitboxAction::ProbeServers => {
+                        app.probe_servers();
+                        app.set_notification("Probed all multi-node server latencies");
+                    }
+                    HitboxAction::SelectLogSource(src) => {
+                        app.log_source = src;
+                        app.load_logs();
+                    }
+                    HitboxAction::SelectLogLevel(lvl) => {
+                        app.log_level = lvl;
+                        app.set_notification(format!("Log level filter: {}", lvl.label()));
+                    }
+                    HitboxAction::RefreshLogs => {
+                        app.load_logs();
+                        app.set_notification("Logs refreshed from active stream");
+                    }
+                    HitboxAction::FocusTerminalInput => {
+                        // Focus already on Terminal tab input by keyboard
+                    }
+                    HitboxAction::RunTerminalCommand => {
+                        app.run_terminal_command();
+                    }
+                    HitboxAction::SelectTerminalRemote(target) => {
+                        app.term_remote = target;
+                        app.set_notification(match &app.term_remote {
+                            Some(name) => format!("Terminal target: Remote [{name}]"),
+                            None => "Terminal target: Local (ThinkPad X1)".to_string(),
+                        });
+                    }
+                    HitboxAction::CycleAiModel => {
+                        app.cycle_ai_model();
+                    }
+                    HitboxAction::ClearAiChat => {
+                        app.clear_chat_history();
+                    }
+                    HitboxAction::NewCronWizard => {
+                        app.show_cron_wizard = true;
                     }
                     HitboxAction::ToggleHelp => {
                         app.show_help_modal = !app.show_help_modal;
@@ -2874,17 +3627,21 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     draw_tabs(f, app, chunks[1]);
 
     match app.current_tab {
-        CockpitTab::Overview => draw_overview_tab(f, app, chunks[2]),
-        CockpitTab::Services => draw_services_tab(f, app, chunks[2]),
+        CockpitTab::Dashboard => draw_dashboard_tab(f, app, chunks[2]),
+        CockpitTab::Project => draw_project_tab(f, app, chunks[2]),
+        CockpitTab::Uptime => draw_uptime_tab(f, app, chunks[2]),
+        CockpitTab::Server => draw_server_tab(f, app, chunks[2]),
         CockpitTab::Audit => draw_audit_tab(f, app, chunks[2]),
         CockpitTab::Cron => draw_cron_tab(f, app, chunks[2]),
-        CockpitTab::Settings => draw_settings_tab(f, app, chunks[2]),
-        CockpitTab::Chat => draw_chat_tab(f, app, chunks[2]),
+        CockpitTab::Log => draw_log_tab(f, app, chunks[2]),
+        CockpitTab::Terminal => draw_terminal_tab(f, app, chunks[2]),
+        CockpitTab::AI => draw_ai_tab(f, app, chunks[2]),
+        CockpitTab::Setting => draw_setting_tab(f, app, chunks[2]),
     }
 
     draw_footer(f, app, chunks[3]);
 
-    if app.inspector_open && app.current_tab == CockpitTab::Services {
+    if app.inspector_open && app.current_tab == CockpitTab::Project {
         draw_app_inspector_modal(f, app, area);
     }
 
@@ -3201,6 +3958,7 @@ fn format_core_span(core: Option<&CpuCoreInfo>, id: usize, bar_len: usize) -> Ve
     ]
 }
 
+#[cfg(test)]
 fn format_kbps(kbps: f64) -> String {
     if kbps >= 1024.0 {
         format!("{:.1} MB/s", kbps / 1024.0)
@@ -3209,13 +3967,13 @@ fn format_kbps(kbps: f64) -> String {
     }
 }
 
-fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(12), // Top: CPU Grid + Tamagotchi Pet + Memory/Docker/Projects
-            Constraint::Length(6),  // Middle 1: Uptime Kuma Endpoint Monitors
-            Constraint::Length(3),  // Middle 2: Network & Tailscale Mesh
+            Constraint::Length(12), // Top: CPU Grid + Tamagotchi Pet + Memory/Storage
+            Constraint::Length(4),  // Middle: Fleet Health & Active Alerts Matrix
             Constraint::Min(8),     // Bottom: Live Dokploy Fleet & Top Processes
         ])
         .split(area);
@@ -3224,7 +3982,7 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Percentage(36), // CPU Telemetry
-            Constraint::Percentage(36), // 🐾 Tamagotchi Pet Play Arena
+            Constraint::Percentage(36), // Tamagotchi Pet Play Arena
             Constraint::Percentage(28), // Memory & Storage
         ])
         .split(chunks[0]);
@@ -3239,11 +3997,11 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         format!(" CPU Telemetry ({:.1}%) ", snap.cpu_pct)
     };
     let cpu_border_color = if thermal_alert {
-        Color::Red
+        palette.status_err
     } else if snap.cpu_pct > 80.0 {
-        Color::Yellow
+        palette.status_warn
     } else {
-        Color::Green
+        palette.status_ok
     };
 
     let cpu_block = Block::default()
@@ -3255,25 +4013,25 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     if cpu_inner.width > 10 && cpu_inner.height > 2 {
         let mut header_spans = vec![
-            Span::styled("Load: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Load: ", Style::default().fg(palette.text_muted)),
             Span::styled(
                 format!("[{:.2}, {:.2}, {:.2}]  ", snap.load_avg[0], snap.load_avg[1], snap.load_avg[2]),
-                Style::default().fg(Color::Cyan),
+                Style::default().fg(palette.accent),
             ),
-            Span::styled("Fan: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Fan: ", Style::default().fg(palette.text_muted)),
             Span::styled(
                 format!("{}  ", snap.fan_speed.as_deref().unwrap_or("N/A")),
                 Style::default().fg(Color::White),
             ),
-            Span::styled("Temp: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Temp: ", Style::default().fg(palette.text_muted)),
             Span::styled(
                 format!("{:.1}°C", snap.cpu_temp_c),
                 if snap.cpu_temp_c > 88.0 {
-                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                    Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD)
                 } else if snap.cpu_temp_c > 75.0 {
-                    Style::default().fg(Color::Yellow)
+                    Style::default().fg(palette.status_warn)
                 } else {
-                    Style::default().fg(Color::Green)
+                    Style::default().fg(palette.status_ok)
                 },
             ),
         ];
@@ -3281,16 +4039,14 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         if thermal_alert {
             header_spans.push(Span::styled(
                 "  [🔥 THERMAL ALERT]",
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD),
             ));
         }
 
-        // Braille curves for CPU history
         let cpu_hist_vec: Vec<f32> = app.cpu_history.iter().copied().collect();
         let braille_height = if cpu_inner.height >= 8 { 2 } else { 1 };
         let braille_lines = render_braille_curve(&cpu_hist_vec, cpu_inner.width as usize, braille_height);
 
-        // 8-Core Grid: 2 columns of 4 cores (C0..C3 on left, C4..C7 on right)
         let half_w = (cpu_inner.width.saturating_sub(3) / 2) as usize;
         let bar_len = if half_w >= 26 { 10 } else if half_w >= 20 { 6 } else { 4 };
 
@@ -3303,7 +4059,7 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             let right_spans = format_core_span(snap.cpus.get(c_right_idx), c_right_idx, bar_len);
 
             let mut line_spans = left_spans;
-            line_spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+            line_spans.push(Span::styled(" │ ", Style::default().fg(palette.text_muted)));
             line_spans.extend(right_spans);
             core_lines.push(Line::from(line_spans));
         }
@@ -3316,14 +4072,14 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         f.render_widget(Paragraph::new(full_cpu_lines), cpu_inner);
     }
 
-    // ── Center: Tamagotchi Pet Play Arena (Animated Hardware-Reactive) ───────
+    // ── Center: Tamagotchi Pet Play Arena ───────────────────────────────────
     draw_pet_play_area(f, app, top_chunks[1]);
 
     // ── Right: Memory & Mount Table ──────────────────────────────────────────
     let mem_block = Block::default()
         .borders(Borders::ALL)
         .title(" Memory & Storage Telemetry ")
-        .border_style(Style::default().fg(Color::LightBlue));
+        .border_style(Style::default().fg(palette.border));
     let mem_inner = mem_block.inner(top_chunks[2]);
     f.render_widget(mem_block, top_chunks[2]);
 
@@ -3334,33 +4090,27 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 Constraint::Length(1), // RAM gauge
                 Constraint::Length(1), // Swap gauge
                 Constraint::Length(1), // GPU telemetry info
-                Constraint::Length(1), // Docker container summary
                 Constraint::Min(3),    // Storage mounts table
             ])
             .split(mem_inner);
 
-        // RAM Gauge with breakdown: Used (Cyan/Red), Cached, Free
         let ram_used = snap.ram_used_mb;
         let ram_total = snap.ram_total_mb.max(1);
         let ram_pct = ((ram_used * 100) / ram_total) as u16;
         let ram_color = if ram_pct > 85 {
-            Color::Red
+            palette.status_err
         } else if ram_pct > 70 {
-            Color::Yellow
+            palette.status_warn
         } else {
-            Color::Cyan
+            palette.chart_cpu
         };
-        let ram_label = format!(
-            "RAM: {ram_used}MB/{ram_total}MB ({ram_pct}%) [Cached: {}MB Free: {}MB]",
-            snap.ram_cached_mb, snap.ram_available_mb
-        );
+        let ram_label = format!("RAM: {ram_used}M/{ram_total}M ({ram_pct}%) [Cached: {}M]", snap.ram_cached_mb);
         let ram_gauge = Gauge::default()
             .gauge_style(Style::default().fg(ram_color).bg(Color::DarkGray))
             .ratio(((ram_used as f64) / (ram_total as f64)).clamp(0.0, 1.0))
             .label(ram_label);
         f.render_widget(ram_gauge, mem_layout[0]);
 
-        // Swap Gauge (Magenta)
         let swap_used = snap.swap_used_mb;
         let swap_total = snap.swap_total_mb.max(1);
         let swap_pct = if snap.swap_total_mb > 0 {
@@ -3368,9 +4118,9 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         } else {
             0
         };
-        let swap_label = format!("SWP: {swap_used}MB/{swap_total}MB ({swap_pct}%)");
+        let swap_label = format!("SWP: {swap_used}M/{swap_total}M ({swap_pct}%)");
         let swap_gauge = Gauge::default()
-            .gauge_style(Style::default().fg(Color::Magenta).bg(Color::DarkGray))
+            .gauge_style(Style::default().fg(palette.chart_ram).bg(Color::DarkGray))
             .ratio(if snap.swap_total_mb > 0 {
                 ((swap_used as f64) / (swap_total as f64)).clamp(0.0, 1.0)
             } else {
@@ -3379,7 +4129,6 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             .label(swap_label);
         f.render_widget(swap_gauge, mem_layout[1]);
 
-        // GPU telemetry snippet
         let gpu_info = if snap.gpu_label != "No GPU" && !snap.gpu_label.is_empty() {
             let util = snap.gpu_pct.map(|p| format!("{p:.0}%")).unwrap_or_else(|| "N/A".to_string());
             let temp = snap.gpu_temp_c.map(|t| format!("{t:.0}°C")).unwrap_or_else(|| "N/A".to_string());
@@ -3388,49 +4137,11 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             "GPU: Integrated Graphics (Intel Xe / AMD DRM)".to_string()
         };
         let gpu_line = Line::from(vec![
-            Span::styled("◆ ", Style::default().fg(Color::Yellow)),
-            Span::styled(gpu_info, Style::default().fg(Color::DarkGray)),
+            Span::styled("◆ ", Style::default().fg(palette.status_warn)),
+            Span::styled(gpu_info, Style::default().fg(palette.text_muted)),
         ]);
         f.render_widget(Paragraph::new(gpu_line), mem_layout[2]);
 
-        // Docker Containers & Projects Summary Bar + Add Buttons
-        let running_cnt = snap.docker_containers.iter().filter(|c| c.state == "running").count();
-        let stopped_cnt = snap.docker_containers.iter().filter(|c| c.state != "running").count();
-        let proj_count = snap.tracked_projects.len();
-        let docker_line = Line::from(vec![
-            Span::styled("🐳 ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{running_cnt}R/{stopped_cnt}S "), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-            Span::styled("[+ Cont]", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::raw(" "),
-            Span::styled("📁 ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{proj_count} "), Style::default().fg(Color::Cyan)),
-            Span::styled("[+ Proj]", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        ]);
-        f.render_widget(Paragraph::new(docker_line), mem_layout[3]);
-
-        // Register hitboxes for [+ Cont] and [+ Proj] buttons
-        let cont_x = mem_layout[3].x + 5;
-        app.register_hitbox(
-            Rect {
-                x: cont_x,
-                y: mem_layout[3].y,
-                width: 8,
-                height: 1,
-            },
-            HitboxAction::AddContainer,
-        );
-        let proj_x = cont_x + 8 + 4;
-        app.register_hitbox(
-            Rect {
-                x: proj_x,
-                y: mem_layout[3].y,
-                width: 8,
-                height: 1,
-            },
-            HitboxAction::AddProject,
-        );
-
-        // Storage Mounts Table: List "/" (Root NVMe) and "/DATA" (External)
         let mut mount_rows = Vec::new();
         for m in &snap.mounts {
             let mount_label = if m.mountpoint == "/" {
@@ -3441,22 +4152,21 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 m.mountpoint.as_str()
             };
             let used_total = format!("{}G / {}G", m.used_gb, m.total_gb);
-            let bar_len: usize = 8;
+            let bar_len: usize = 6;
             let filled = ((m.pct as f32 / 100.0) * bar_len as f32).round() as usize;
             let unfilled = bar_len.saturating_sub(filled);
             let bar_str = format!("[{}{}] {:>3}%", "█".repeat(filled), "░".repeat(unfilled), m.pct);
             let pct_color = if m.pct >= 90 {
-                Color::Red
+                palette.status_err
             } else if m.pct >= 75 {
-                Color::Yellow
+                palette.status_warn
             } else {
-                Color::Green
+                palette.status_ok
             };
 
             mount_rows.push(Row::new(vec![
                 Cell::from(mount_label.to_string()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                Cell::from(m.fstype.clone()).style(Style::default().fg(Color::DarkGray)),
-                Cell::from(used_total).style(Style::default().fg(Color::Cyan)),
+                Cell::from(used_total).style(Style::default().fg(palette.accent)),
                 Cell::from(bar_str).style(Style::default().fg(pct_color)),
             ]));
         }
@@ -3464,84 +4174,96 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         if mount_rows.is_empty() {
             mount_rows.push(Row::new(vec![
                 Cell::from("/ (Root NVMe)").style(Style::default().fg(Color::White)),
-                Cell::from("ext4").style(Style::default().fg(Color::DarkGray)),
                 Cell::from(format!("{}G / {}G", snap.disk_used_gb, snap.disk_total_gb)),
-                Cell::from("[████░░░░] 50%").style(Style::default().fg(Color::Green)),
+                Cell::from("[███░░░] 50%").style(Style::default().fg(palette.status_ok)),
             ]));
         }
 
         let mount_table = Table::new(
             mount_rows,
             [
-                Constraint::Length(18),
-                Constraint::Length(8),
-                Constraint::Length(15),
-                Constraint::Min(14),
+                Constraint::Length(16),
+                Constraint::Length(12),
+                Constraint::Min(12),
             ],
         )
         .header(
-            Row::new(vec!["MOUNT", "FSTYPE", "USED/TOTAL", "USAGE"])
-                .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Row::new(vec!["MOUNT", "USED/TOTAL", "USAGE"])
+                .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
         );
-        f.render_widget(mount_table, mem_layout[4]);
+        f.render_widget(mount_table, mem_layout[3]);
     }
 
-    // ── Middle Row 1: Uptime Kuma Endpoint Monitors ──────────────────────────
-    draw_uptime_kuma_panel(f, app, chunks[1]);
-
-    // ── Middle Row 2: Network & Tailscale Mesh Bar ───────────────────────────
-    let net_block = Block::default()
+    // ── Middle: Fleet Health & Active Alerts Matrix ──────────────────────────
+    let alerts_block = Block::default()
         .borders(Borders::ALL)
-        .title(" Network & Tailscale Mesh Telemetry ")
-        .border_style(Style::default().fg(Color::LightBlue));
-    let net_inner = net_block.inner(chunks[2]);
-    f.render_widget(net_block, chunks[2]);
+        .title(" Fleet Health & Active System Alerts Matrix ")
+        .border_style(Style::default().fg(palette.accent));
+    let alerts_inner = alerts_block.inner(chunks[1]);
+    f.render_widget(alerts_block, chunks[1]);
 
-    if net_inner.width > 10 && net_inner.height > 0 {
-        let mut net_spans = vec![
-            Span::styled("NET [", Style::default().fg(Color::DarkGray)),
-            Span::styled(&snap.active_net_iface, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::styled("]: ", Style::default().fg(Color::DarkGray)),
-            Span::styled("▼ RX: ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-            Span::styled(
-                format!("{} ({:.1} GB)  ", format_kbps(snap.net_rx_rate_kbps), snap.net_total_rx_gb),
-                Style::default().fg(Color::White),
-            ),
-            Span::styled("▲ TX: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::styled(
-                format!("{} ({:.1} GB)", format_kbps(snap.net_tx_rate_kbps), snap.net_total_tx_gb),
-                Style::default().fg(Color::White),
-            ),
-            Span::styled("  │  MESH: ", Style::default().fg(Color::DarkGray)),
-        ];
-
-        for (i, peer) in snap.mesh_peers.iter().enumerate() {
-            if i > 0 {
-                net_spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
-            }
-            net_spans.push(Span::styled(
-                format!("{}: {} ", peer.name, peer.endpoint),
-                Style::default().fg(Color::White),
-            ));
-            if let Some(lat) = peer.latency_ms {
-                net_spans.push(Span::styled("● ", Style::default().fg(Color::Green)));
-                net_spans.push(Span::styled(format!("{lat}ms"), Style::default().fg(Color::Green)));
-            } else {
-                net_spans.push(Span::styled("● ", Style::default().fg(Color::Red)));
-                net_spans.push(Span::styled("DOWN", Style::default().fg(Color::Red)));
-            }
-        }
-
-        f.render_widget(Paragraph::new(Line::from(net_spans)), net_inner);
+    let mut alerts_spans = Vec::new();
+    let is_mesh_ok = app.is_tailscale_ok;
+    alerts_spans.push(Span::styled("Fleet Mesh: ", Style::default().fg(palette.text_muted)));
+    if is_mesh_ok {
+        alerts_spans.push(Span::styled("● TAILSCALE OK  ", Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD)));
+    } else {
+        alerts_spans.push(Span::styled("✖ TAILSCALE DOWN  ", Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD)));
     }
 
-    // ── Bottom Half: Live Dokploy Fleet & Top Processes ──────────────────────
+    alerts_spans.push(Span::styled("AI Proxy: ", Style::default().fg(palette.text_muted)));
+    if app.is_9router_online {
+        alerts_spans.push(Span::styled("● 9ROUTER :20128 ONLINE  ", Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD)));
+    } else {
+        alerts_spans.push(Span::styled("✖ 9ROUTER DOWN  ", Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)));
+    }
+
+    let down_monitors = snap.uptime_monitors.iter().filter(|m| !m.is_up).count();
+    alerts_spans.push(Span::styled("Monitors: ", Style::default().fg(palette.text_muted)));
+    if down_monitors == 0 {
+        alerts_spans.push(Span::styled(format!("● ALL {} UP  ", snap.uptime_monitors.len()), Style::default().fg(palette.status_ok)));
+    } else {
+        alerts_spans.push(Span::styled(format!("✖ {down_monitors} DOWN  "), Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD)));
+    }
+
+    let running_cont = snap.docker_containers.iter().filter(|c| c.state == "running").count();
+    let total_cont = snap.docker_containers.len();
+    alerts_spans.push(Span::styled(format!("Containers: {running_cont}/{total_cont} Running"), Style::default().fg(palette.accent)));
+
+    let mut alert_line2 = vec![
+        Span::styled("Active Alerts: ", Style::default().fg(palette.text_muted)),
+    ];
+    let mut any_alert = false;
+    if snap.cpu_temp_c > 85.0 {
+        alert_line2.push(Span::styled(" [🔥 Thermal Alert > 85°C] ", Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD)));
+        any_alert = true;
+    }
+    if snap.cpu_pct > 80.0 {
+        alert_line2.push(Span::styled(" [⚡ High CPU Load > 80%] ", Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)));
+        any_alert = true;
+    }
+    let ram_ratio = (snap.ram_used_mb as f64) / (snap.ram_total_mb.max(1) as f64);
+    if ram_ratio > 0.85 {
+        alert_line2.push(Span::styled(" [💾 Low RAM Available] ", Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD)));
+        any_alert = true;
+    }
+    if !any_alert {
+        alert_line2.push(Span::styled("✔ Fleet healthy. All telemetry metrics nominal.", Style::default().fg(palette.status_ok)));
+    }
+
+    let summary_lines = vec![
+        Line::from(alerts_spans),
+        Line::from(alert_line2),
+    ];
+    f.render_widget(Paragraph::new(summary_lines), alerts_inner);
+
+    // ── Bottom: Live Dokploy Fleet & Top Processes ──────────────────────────
     let fleet_block = Block::default()
         .borders(Borders::ALL)
         .title(" Live Dokploy Fleet & Top Processes (Press 'j'/'k' to scroll) ")
-        .border_style(Style::default().fg(Color::Cyan));
-    let fleet_inner = fleet_block.inner(chunks[3]);
-    f.render_widget(fleet_block, chunks[3]);
+        .border_style(Style::default().fg(palette.border));
+    let fleet_inner = fleet_block.inner(chunks[2]);
+    f.render_widget(fleet_block, chunks[2]);
 
     struct FleetEntry {
         pid: String,
@@ -3570,7 +4292,6 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let mut entries = Vec::new();
     let mut matched_pids = std::collections::HashSet::new();
 
-    // 1. Process primary agent roster
     for (key, display_name, def_role, desc) in &primary_agents {
         let found = snap.top_processes.iter().find(|p| {
             p.name.to_lowercase().contains(key) || p.role.to_lowercase().contains(key)
@@ -3600,7 +4321,6 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         }
     }
 
-    // 2. Add remaining active top processes from snap.top_processes
     for p in &snap.top_processes {
         if !matched_pids.contains(&p.pid) {
             entries.push(FleetEntry {
@@ -3615,7 +4335,6 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         }
     }
 
-    // Sort entries: Active ones first, then by cpu_pct desc, then mem desc
     entries.sort_by(|a, b| {
         b.is_active
             .cmp(&a.is_active)
@@ -3623,38 +4342,37 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             .then_with(|| b.mem_mb.cmp(&a.mem_mb))
     });
 
-    // Apply scroll
     let scroll_offset = app.overview_proc_scroll.min(entries.len().saturating_sub(1));
     let display_entries = entries.into_iter().skip(scroll_offset);
 
     let rows: Vec<Row> = display_entries
         .map(|e| {
             let cpu_color = if e.cpu_pct >= 80.0 {
-                Color::Red
+                palette.status_err
             } else if e.cpu_pct >= 50.0 {
-                Color::Yellow
+                palette.status_warn
             } else if e.cpu_pct > 0.0 {
-                Color::LightGreen
+                palette.status_ok
             } else {
-                Color::DarkGray
+                palette.text_muted
             };
 
-            let mem_color = if e.mem_mb > 0 { Color::White } else { Color::DarkGray };
+            let mem_color = if e.mem_mb > 0 { Color::White } else { palette.text_muted };
 
             let (status_label, status_color) = if e.is_active {
-                ("● Active", Color::Green)
+                ("● Active", palette.status_ok)
             } else {
-                ("● Standby", Color::Cyan)
+                ("● Standby", palette.chart_cpu)
             };
 
             Row::new(vec![
-                Cell::from(e.pid).style(Style::default().fg(Color::DarkGray)),
+                Cell::from(e.pid).style(Style::default().fg(palette.text_muted)),
                 Cell::from(e.name).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                Cell::from(e.role).style(Style::default().fg(Color::Cyan)),
+                Cell::from(e.role).style(Style::default().fg(palette.accent)),
                 Cell::from(status_label).style(Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
                 Cell::from(format!("{:>5.1}%", e.cpu_pct)).style(Style::default().fg(cpu_color)),
                 Cell::from(format!("{:>6} MB", e.mem_mb)).style(Style::default().fg(mem_color)),
-                Cell::from(e.details).style(Style::default().fg(Color::DarkGray)),
+                Cell::from(e.details).style(Style::default().fg(palette.text_muted)),
             ])
         })
         .collect();
@@ -3681,13 +4399,801 @@ fn draw_overview_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             "MEM",
             "DETAILS",
         ])
-        .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
     );
 
     f.render_widget(table, fleet_inner);
 }
+// ── Tab 2: Project & Containers (Tracked Projects + Docker Lifecycle) ────────
 
-// ── 🐾 Tamagotchi Pet Play Arena (Animated & Hardware Reactive) ─────────────
+fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(8)])
+        .split(area);
+
+    let action_bar = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(palette.border));
+    let action_inner = action_bar.inner(chunks[0]);
+    f.render_widget(action_bar, chunks[0]);
+
+    let (btn_tracked_bg, btn_tracked_fg) = if app.project_view == ProjectView::Tracked {
+        (palette.highlight_bg, palette.highlight_fg)
+    } else {
+        (Color::Reset, palette.text_muted)
+    };
+    let (btn_cont_bg, btn_cont_fg) = if app.project_view == ProjectView::Containers {
+        (palette.highlight_bg, palette.highlight_fg)
+    } else {
+        (Color::Reset, palette.text_muted)
+    };
+
+    let btn_tracked_w = 20u16;
+    let btn_cont_w = 22u16;
+    let btn_add_proj_w = 18u16;
+    let btn_add_cont_w = 20u16;
+    let btn_start_w = 11u16;
+    let btn_stop_w = 10u16;
+    let btn_restart_w = 13u16;
+
+    let mut cur_x = action_inner.x + 1;
+    let y = action_inner.y;
+
+    app.register_hitbox(
+        Rect { x: cur_x, y, width: btn_tracked_w, height: 1 },
+        HitboxAction::SelectProjectView(ProjectView::Tracked),
+    );
+    cur_x += btn_tracked_w + 1;
+
+    app.register_hitbox(
+        Rect { x: cur_x, y, width: btn_cont_w, height: 1 },
+        HitboxAction::SelectProjectView(ProjectView::Containers),
+    );
+    cur_x += btn_cont_w + 1;
+
+    app.register_hitbox(
+        Rect { x: cur_x, y, width: btn_add_proj_w, height: 1 },
+        HitboxAction::AddProject,
+    );
+    cur_x += btn_add_proj_w + 1;
+
+    app.register_hitbox(
+        Rect { x: cur_x, y, width: btn_add_cont_w, height: 1 },
+        HitboxAction::AddContainer,
+    );
+    cur_x += btn_add_cont_w + 2;
+
+    app.register_hitbox(
+        Rect { x: cur_x, y, width: btn_start_w, height: 1 },
+        HitboxAction::ContainerStart(app.selected_container),
+    );
+    cur_x += btn_start_w + 1;
+
+    app.register_hitbox(
+        Rect { x: cur_x, y, width: btn_stop_w, height: 1 },
+        HitboxAction::ContainerStop(app.selected_container),
+    );
+    cur_x += btn_stop_w + 1;
+
+    app.register_hitbox(
+        Rect { x: cur_x, y, width: btn_restart_w, height: 1 },
+        HitboxAction::ContainerRestart(app.selected_container),
+    );
+
+    let bar_spans = vec![
+        Span::styled(" [📁 Tracked Projects] ", Style::default().fg(btn_tracked_fg).bg(btn_tracked_bg).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [🐳 Docker Containers] ", Style::default().fg(btn_cont_fg).bg(btn_cont_bg).add_modifier(Modifier::BOLD)),
+        Span::raw(" │ "),
+        Span::styled(" [+ Add Project] ", Style::default().fg(Color::Black).bg(palette.status_warn).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [+ Add Container] ", Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::raw(" │ Actions: "),
+        Span::styled(" [▶ Start] ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [■ Stop] ", Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [↺ Restart] ", Style::default().fg(Color::Black).bg(palette.status_warn).add_modifier(Modifier::BOLD)),
+    ];
+    f.render_widget(Paragraph::new(Line::from(bar_spans)), action_inner);
+
+    match app.project_view {
+        ProjectView::Tracked => {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" Tracked Workspace Projects ({}) ", app.latest_snap.tracked_projects.len()))
+                .border_style(Style::default().fg(palette.border));
+            let inner = block.inner(chunks[1]);
+            f.render_widget(block, chunks[1]);
+
+            let rows: Vec<Row> = app
+                .latest_snap
+                .tracked_projects
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    let is_sel = i == app.selected_project;
+                    let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
+                    let (dirty_badge, dirty_col) = if p.is_dirty {
+                        ("● DIRTY", palette.status_warn)
+                    } else {
+                        ("● CLEAN", palette.status_ok)
+                    };
+                    Row::new(vec![
+                        Cell::from(p.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                        Cell::from(p.category.clone()).style(Style::default().fg(palette.accent)),
+                        Cell::from(p.branch.clone()).style(Style::default().fg(palette.chart_cpu)),
+                        Cell::from(dirty_badge).style(Style::default().fg(dirty_col).add_modifier(Modifier::BOLD)),
+                    ])
+                    .style(Style::default().bg(bg))
+                })
+                .collect();
+
+            let table = Table::new(
+                rows,
+                [
+                    Constraint::Length(26),
+                    Constraint::Length(16),
+                    Constraint::Length(18),
+                    Constraint::Min(25),
+                ],
+            )
+            .header(
+                Row::new(vec!["PROJECT NAME", "CATEGORY", "GIT BRANCH", "STATUS"])
+                    .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+            );
+            f.render_widget(table, inner);
+
+            for i in 0..app.latest_snap.tracked_projects.len() {
+                if (i as u16) < inner.height.saturating_sub(1) {
+                    app.register_hitbox(
+                        Rect {
+                            x: inner.x,
+                            y: inner.y + 1 + (i as u16),
+                            width: inner.width,
+                            height: 1,
+                        },
+                        HitboxAction::SelectProject(i),
+                    );
+                }
+            }
+        }
+        ProjectView::Containers => {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" Docker Containers & Local Services ({}) ", app.latest_snap.docker_containers.len()))
+                .border_style(Style::default().fg(palette.border));
+            let inner = block.inner(chunks[1]);
+            f.render_widget(block, chunks[1]);
+
+            let rows: Vec<Row> = app
+                .latest_snap
+                .docker_containers
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    let is_sel = i == app.selected_container;
+                    let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
+                    let (state_icon, state_col) = match c.state.as_str() {
+                        "running" => ("● RUNNING", palette.status_ok),
+                        "paused" => ("● PAUSED", palette.status_warn),
+                        _ => ("✖ EXITED", palette.status_err),
+                    };
+
+                    Row::new(vec![
+                        Cell::from(c.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                        Cell::from(c.image.clone()).style(Style::default().fg(palette.chart_cpu)),
+                        Cell::from(state_icon).style(Style::default().fg(state_col).add_modifier(Modifier::BOLD)),
+                        Cell::from(c.status_detail.clone()).style(Style::default().fg(palette.text_muted)),
+                    ])
+                    .style(Style::default().bg(bg))
+                })
+                .collect();
+
+            let table = Table::new(
+                rows,
+                [
+                    Constraint::Length(24),
+                    Constraint::Length(26),
+                    Constraint::Length(16),
+                    Constraint::Min(25),
+                ],
+            )
+            .header(
+                Row::new(vec!["CONTAINER NAME", "IMAGE", "STATE", "STATUS / PORTS"])
+                    .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+            );
+            f.render_widget(table, inner);
+
+            for i in 0..app.latest_snap.docker_containers.len() {
+                if (i as u16) < inner.height.saturating_sub(1) {
+                    app.register_hitbox(
+                        Rect {
+                            x: inner.x,
+                            y: inner.y + 1 + (i as u16),
+                            width: inner.width,
+                            height: 1,
+                        },
+                        HitboxAction::SelectContainer(i),
+                    );
+                }
+            }
+        }
+    }
+}
+
+// ── Tab 3: Uptime (Endpoint Monitors, HTTP/HTTPS, TCP, Cloudflare tunnels) ───
+
+fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(8)])
+        .split(area);
+
+    let bar_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(palette.border));
+    let bar_inner = bar_block.inner(chunks[0]);
+    f.render_widget(bar_block, chunks[0]);
+
+    let btn_add_w = 20u16;
+    let btn_probe_w = 22u16;
+
+    app.register_hitbox(
+        Rect { x: bar_inner.x + 1, y: bar_inner.y, width: btn_add_w, height: 1 },
+        HitboxAction::AddMonitor,
+    );
+    app.register_hitbox(
+        Rect { x: bar_inner.x + btn_add_w + 3, y: bar_inner.y, width: btn_probe_w, height: 1 },
+        HitboxAction::ProbeMonitors,
+    );
+
+    let up_count = app.latest_snap.uptime_monitors.iter().filter(|m| m.is_up).count();
+    let total_count = app.latest_snap.uptime_monitors.len();
+    let pct = if total_count > 0 {
+        (up_count as f32 / total_count as f32) * 100.0
+    } else {
+        100.0
+    };
+
+    let bar_spans = vec![
+        Span::styled(" [+ Add Monitor] (m) ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
+        Span::styled(" [🔍 Probe Monitors] (p) ", Style::default().fg(Color::Black).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
+        Span::raw("  │  "),
+        Span::styled(format!("Health: {up_count}/{total_count} Up ({pct:.1}%)"), Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+    ];
+    f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 🌐 Endpoint Uptime Monitors (HTTP/HTTPS, TCP, Cloudflare Tunnels, Gateways) ")
+        .border_style(Style::default().fg(palette.border));
+    let inner = block.inner(chunks[1]);
+    f.render_widget(block, chunks[1]);
+
+    let snap = &app.latest_snap;
+    let rows: Vec<Row> = snap
+        .uptime_monitors
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let is_sel = i == app.selected_monitor;
+            let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
+            let (status_badge, badge_color) = if m.is_up {
+                (format!("● UP ({:.1}%)", m.uptime_pct), palette.status_ok)
+            } else {
+                (format!("✖ DOWN ({:.1}%)", m.uptime_pct), palette.status_err)
+            };
+
+            let latency_str = m
+                .latency_ms
+                .map(|l| format!("{l:>3}ms"))
+                .unwrap_or_else(|| " -- ".to_string());
+            let code_str = m
+                .status_code
+                .map(|c| format!("{c} OK"))
+                .unwrap_or_else(|| "--".to_string());
+
+            let bar_spans: Vec<Span<'static>> = m
+                .history
+                .iter()
+                .map(|&up| {
+                    if up {
+                        Span::styled("█", Style::default().fg(Color::Green))
+                    } else {
+                        Span::styled("█", Style::default().fg(Color::Red))
+                    }
+                })
+                .collect();
+
+            Row::new(vec![
+                Cell::from(m.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Cell::from(status_badge).style(Style::default().fg(badge_color).add_modifier(Modifier::BOLD)),
+                Cell::from(latency_str).style(Style::default().fg(palette.accent)),
+                Cell::from(Line::from(bar_spans)),
+                Cell::from(code_str).style(Style::default().fg(palette.status_warn)),
+                Cell::from(m.target.clone()).style(Style::default().fg(palette.text_muted)),
+            ])
+            .style(Style::default().bg(bg))
+        })
+        .collect();
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(22),
+            Constraint::Length(16),
+            Constraint::Length(10),
+            Constraint::Length(24),
+            Constraint::Length(10),
+            Constraint::Min(25),
+        ],
+    )
+    .header(
+        Row::new(vec![
+            "MONITOR",
+            "STATUS",
+            "LATENCY",
+            "HEARTBEATS (20)",
+            "CODE",
+            "ENDPOINT URL",
+        ])
+        .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+    );
+    f.render_widget(table, inner);
+
+    for i in 0..snap.uptime_monitors.len() {
+        if (i as u16) < inner.height.saturating_sub(1) {
+            app.register_hitbox(
+                Rect {
+                    x: inner.x,
+                    y: inner.y + 1 + (i as u16),
+                    width: inner.width,
+                    height: 1,
+                },
+                HitboxAction::SelectMonitor(i),
+            );
+        }
+    }
+}
+
+// ── Tab 4: Server (Multi-Node Server Resources & Latency Matrix) ─────────────
+
+fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(8)])
+        .split(area);
+
+    let bar_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(palette.border));
+    let bar_inner = bar_block.inner(chunks[0]);
+    f.render_widget(bar_block, chunks[0]);
+
+    let btn_add_w = 18u16;
+    let btn_probe_w = 26u16;
+
+    app.register_hitbox(
+        Rect { x: bar_inner.x + 1, y: bar_inner.y, width: btn_add_w, height: 1 },
+        HitboxAction::AddServer,
+    );
+    app.register_hitbox(
+        Rect { x: bar_inner.x + btn_add_w + 3, y: bar_inner.y, width: btn_probe_w, height: 1 },
+        HitboxAction::ProbeServers,
+    );
+
+    let bar_spans = vec![
+        Span::styled(" [+ Add Server] (a) ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
+        Span::styled(" [🔍 Probe Latency Matrix] (p) ", Style::default().fg(Color::Black).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
+        Span::raw("  │  "),
+        Span::styled("Fleet Nodes: X1, YPC, Hostinger VPS, XPC, Gerlink", Style::default().fg(palette.accent)),
+    ];
+    f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
+
+    let sub_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+        .split(chunks[1]);
+
+    let list_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Multi-Node Latency & Fleet Matrix ")
+        .border_style(Style::default().fg(palette.border));
+    let list_inner = list_block.inner(sub_chunks[0]);
+    f.render_widget(list_block, sub_chunks[0]);
+
+    let mut rows = Vec::new();
+    for (i, (node_name, lat)) in app.server_probe_results.iter().enumerate() {
+        let is_sel = i == app.selected_server;
+        let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
+        let (lat_str, status_str, status_col) = match lat {
+            Some(ms) => (format!("{ms}ms"), "● REACHABLE", palette.status_ok),
+            None => ("--".to_string(), "✖ UNREACHABLE", palette.status_err),
+        };
+        rows.push(
+            Row::new(vec![
+                Cell::from(node_name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Cell::from(status_str).style(Style::default().fg(status_col).add_modifier(Modifier::BOLD)),
+                Cell::from(lat_str).style(Style::default().fg(palette.accent)),
+            ])
+            .style(Style::default().bg(bg)),
+        );
+    }
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(22),
+            Constraint::Length(16),
+            Constraint::Min(10),
+        ],
+    )
+    .header(
+        Row::new(vec!["SERVER NODE", "STATUS", "RTT LATENCY"])
+            .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+    );
+    f.render_widget(table, list_inner);
+
+    for i in 0..app.server_probe_results.len() {
+        if (i as u16) < list_inner.height.saturating_sub(1) {
+            app.register_hitbox(
+                Rect {
+                    x: list_inner.x,
+                    y: list_inner.y + 1 + (i as u16),
+                    width: list_inner.width,
+                    height: 1,
+                },
+                HitboxAction::SelectServer(i),
+            );
+        }
+    }
+
+    let sel_name = app.server_probe_results.get(app.selected_server).map(|(n, _)| n.as_str()).unwrap_or("ThinkPad X1");
+    let detail_block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Node Resources — {} ", sel_name))
+        .border_style(Style::default().fg(palette.accent));
+    let detail_inner = detail_block.inner(sub_chunks[1]);
+    f.render_widget(detail_block, sub_chunks[1]);
+
+    let snap = &app.latest_snap;
+    let mut details = Vec::new();
+    if sel_name.contains("X1") || sel_name.contains("Local") {
+        details.push(Line::from(vec![
+            Span::styled("Hardware:     ", Style::default().fg(palette.text_muted)),
+            Span::styled("ThinkPad X1 Carbon (Intel 8-Core / Btrfs NVMe)", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        ]));
+        details.push(Line::from(vec![
+            Span::styled("CPU Cores:    ", Style::default().fg(palette.text_muted)),
+            Span::styled(format!("{} cores │ Usage: {:.1}% │ Temp: {:.1}°C", snap.cpus.len(), snap.cpu_pct, snap.cpu_temp_c), Style::default().fg(palette.accent)),
+        ]));
+        details.push(Line::from(vec![
+            Span::styled("Memory (RAM): ", Style::default().fg(palette.text_muted)),
+            Span::styled(format!("{}/{} MB (Cached: {} MB, Free: {} MB)", snap.ram_used_mb, snap.ram_total_mb, snap.ram_cached_mb, snap.ram_available_mb), Style::default().fg(palette.chart_cpu)),
+        ]));
+        details.push(Line::from(vec![
+            Span::styled("Storage/NVMe: ", Style::default().fg(palette.text_muted)),
+            Span::styled(format!("Root /: {}G / {}G", snap.disk_used_gb, snap.disk_total_gb), Style::default().fg(palette.status_ok)),
+        ]));
+        details.push(Line::from(vec![
+            Span::styled("Thermal State:", Style::default().fg(palette.text_muted)),
+            Span::styled(format!("{:.1}°C (Fan: {})", snap.cpu_temp_c, snap.fan_speed.as_deref().unwrap_or("Dynamic")), Style::default().fg(if snap.cpu_temp_c > 85.0 { palette.status_err } else { palette.status_ok })),
+        ]));
+        details.push(Line::from(""));
+        details.push(Line::from(Span::styled("Per-Core Telemetry Grid:", Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD))));
+        for row in 0..4 {
+            let left_spans = format_core_span(snap.cpus.get(row), row, 6);
+            let right_spans = format_core_span(snap.cpus.get(row + 4), row + 4, 6);
+            let mut l = left_spans;
+            l.push(Span::styled(" │ ", Style::default().fg(palette.text_muted)));
+            l.extend(right_spans);
+            details.push(Line::from(l));
+        }
+    } else {
+        let node_cfg = app.cfg.daemon.nodes.get(sel_name);
+        let ip = node_cfg.map(|n| n.ip.as_str()).unwrap_or("100.x.y.z (Tailscale Mesh)");
+        let user = node_cfg.map(|n| n.user.as_str()).unwrap_or("root");
+        let svcs = node_cfg.map(|n| n.services.iter().map(|s| format!("{}:{}", s.name, s.port)).collect::<Vec<_>>().join(", ")).unwrap_or_else(|| "ssh:22, http:80".to_string());
+
+        details.push(Line::from(vec![
+            Span::styled("Node ID:       ", Style::default().fg(palette.text_muted)),
+            Span::styled(sel_name, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        ]));
+        details.push(Line::from(vec![
+            Span::styled("Tailscale IP:  ", Style::default().fg(palette.text_muted)),
+            Span::styled(ip, Style::default().fg(palette.accent)),
+        ]));
+        details.push(Line::from(vec![
+            Span::styled("SSH Username:  ", Style::default().fg(palette.text_muted)),
+            Span::styled(user, Style::default().fg(Color::White)),
+        ]));
+        details.push(Line::from(vec![
+            Span::styled("Services:      ", Style::default().fg(palette.text_muted)),
+            Span::styled(svcs.clone(), Style::default().fg(palette.status_warn)),
+        ]));
+        details.push(Line::from(""));
+        details.push(Line::from(Span::styled("Press 'a' to add a new server node, or 'p' to re-probe network latencies.", Style::default().fg(palette.text_muted))));
+    }
+
+    f.render_widget(Paragraph::new(details), detail_inner);
+}
+
+// ── Tab 7: Log (Live / Buffered Stream Viewer with Level Filtering) ──────────
+
+fn draw_log_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(8)])
+        .split(area);
+
+    let bar_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(palette.border));
+    let bar_inner = bar_block.inner(chunks[0]);
+    f.render_widget(bar_block, chunks[0]);
+
+    let btn_j_w = 14u16;
+    let btn_d_w = 15u16;
+    let btn_a_w = 14u16;
+    let btn_refresh_w = 13u16;
+
+    let mut cur_x = bar_inner.x + 1;
+    let y = bar_inner.y;
+
+    app.register_hitbox(
+        Rect { x: cur_x, y, width: btn_j_w, height: 1 },
+        HitboxAction::SelectLogSource(LogSource::Journal),
+    );
+    cur_x += btn_j_w + 1;
+
+    app.register_hitbox(
+        Rect { x: cur_x, y, width: btn_d_w, height: 1 },
+        HitboxAction::SelectLogSource(LogSource::Docker),
+    );
+    cur_x += btn_d_w + 1;
+
+    app.register_hitbox(
+        Rect { x: cur_x, y, width: btn_a_w, height: 1 },
+        HitboxAction::SelectLogSource(LogSource::Agents),
+    );
+    cur_x += btn_a_w + 2;
+
+    app.register_hitbox(
+        Rect { x: cur_x, y, width: btn_refresh_w, height: 1 },
+        HitboxAction::RefreshLogs,
+    );
+
+    let (j_bg, j_fg) = if app.log_source == LogSource::Journal { (palette.highlight_bg, palette.highlight_fg) } else { (Color::Reset, palette.text_muted) };
+    let (d_bg, d_fg) = if app.log_source == LogSource::Docker { (palette.highlight_bg, palette.highlight_fg) } else { (Color::Reset, palette.text_muted) };
+    let (a_bg, a_fg) = if app.log_source == LogSource::Agents { (palette.highlight_bg, palette.highlight_fg) } else { (Color::Reset, palette.text_muted) };
+
+    let bar_spans = vec![
+        Span::styled(" [journalctl] ", Style::default().fg(j_fg).bg(j_bg).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [docker logs] ", Style::default().fg(d_fg).bg(d_bg).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [agent logs] ", Style::default().fg(a_fg).bg(a_bg).add_modifier(Modifier::BOLD)),
+        Span::raw(" │ "),
+        Span::styled(" [↺ Refresh] ", Style::default().fg(Color::Black).bg(palette.status_warn).add_modifier(Modifier::BOLD)),
+        Span::raw("  Filter: "),
+        Span::styled(format!(" [{}] (Press 'l') ", app.log_level.label()), Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD)),
+    ];
+    f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Log Stream Viewer — Source: {} (Filtered: {}) ", app.log_source.label(), app.log_level.label()))
+        .border_style(Style::default().fg(palette.border));
+    let inner = block.inner(chunks[1]);
+    f.render_widget(block, chunks[1]);
+
+    let filtered: Vec<&(String, String, String)> = app
+        .log_buffer
+        .iter()
+        .filter(|(lvl, _, _)| {
+            match app.log_level {
+                LogLevelFilter::All => true,
+                LogLevelFilter::Error => lvl == "ERROR",
+                LogLevelFilter::Warn => lvl == "WARN" || lvl == "ERROR",
+                LogLevelFilter::Info => true,
+            }
+        })
+        .collect();
+
+    let display_lines: Vec<Line> = filtered
+        .iter()
+        .skip(app.log_scroll)
+        .map(|(lvl, src, msg)| {
+            let (badge, col) = match lvl.as_str() {
+                "ERROR" => ("✖ ERROR", palette.status_err),
+                "WARN" => ("⚠ WARN ", palette.status_warn),
+                _ => ("● INFO ", palette.status_ok),
+            };
+            Line::from(vec![
+                Span::styled(format!("{:<8} ", badge), Style::default().fg(col).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("[{:<12}] ", src), Style::default().fg(palette.accent)),
+                Span::styled(msg.clone(), Style::default().fg(Color::White)),
+            ])
+        })
+        .collect();
+
+    f.render_widget(Paragraph::new(display_lines).wrap(Wrap { trim: false }), inner);
+}
+
+// ── Tab 8: Terminal (Embedded Terminal / Command Execution Runner Pane) ───────
+
+fn draw_terminal_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(8), Constraint::Length(3)])
+        .split(area);
+
+    let bar_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(palette.border));
+    let bar_inner = bar_block.inner(chunks[0]);
+    f.render_widget(bar_block, chunks[0]);
+
+    let target_label = match &app.term_remote {
+        Some(name) => format!("Remote: [{name}]"),
+        None => "Local: ThinkPad X1".to_string(),
+    };
+
+    let bar_spans = vec![
+        Span::styled(format!(" Target: [{target_label}] (Press 'r') "), Style::default().fg(Color::Black).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
+        Span::raw(" │ Quick Presets: "),
+        Span::styled(" [cas doctor] ", Style::default().fg(palette.accent)),
+        Span::raw(" "),
+        Span::styled(" [cas git-status] ", Style::default().fg(palette.chart_cpu)),
+        Span::raw(" "),
+        Span::styled(" [docker ps] ", Style::default().fg(palette.status_ok)),
+        Span::raw(" "),
+        Span::styled(" [tailscale status] ", Style::default().fg(palette.status_warn)),
+    ];
+    f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
+
+    let out_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Execution History & Console Output (Press '↑'/'↓' to scroll) ")
+        .border_style(Style::default().fg(palette.border));
+    let out_inner = out_block.inner(chunks[1]);
+    f.render_widget(out_block, chunks[1]);
+
+    let out_lines: Vec<Line> = app
+        .term_output
+        .iter()
+        .skip(app.term_scroll)
+        .map(|l| {
+            let col = if l.starts_with("$") {
+                palette.accent
+            } else if l.starts_with("!") || l.starts_with("✗") {
+                palette.status_err
+            } else {
+                Color::White
+            };
+            Line::from(Span::styled(l.clone(), Style::default().fg(col)))
+        })
+        .collect();
+    f.render_widget(Paragraph::new(out_lines).wrap(Wrap { trim: false }), out_inner);
+
+    let in_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Command Input ($ > Enter to run | Esc to clear) ")
+        .border_style(Style::default().fg(palette.status_ok));
+    let in_inner = in_block.inner(chunks[2]);
+    f.render_widget(in_block, chunks[2]);
+
+    let prompt_line = Line::from(vec![
+        Span::styled("$ > ", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(&app.term_input, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled("█", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+    ]);
+    f.render_widget(Paragraph::new(prompt_line), in_inner);
+}
+
+// ── Tab 9: AI (Workspace AI Chat Connected to OmniRoute / 9router) ────────────
+
+fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(8), Constraint::Length(3)])
+        .split(area);
+
+    let bar_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(palette.border));
+    let bar_inner = bar_block.inner(chunks[0]);
+    f.render_widget(bar_block, chunks[0]);
+
+    let active_model = app.current_ai_model();
+    let btn_model_w = (active_model.len() as u16) + 26;
+    let btn_clear_w = 16u16;
+
+    app.register_hitbox(
+        Rect { x: bar_inner.x + 1, y: bar_inner.y, width: btn_model_w, height: 1 },
+        HitboxAction::CycleAiModel,
+    );
+    app.register_hitbox(
+        Rect { x: bar_inner.x + btn_model_w + 3, y: bar_inner.y, width: btn_clear_w, height: 1 },
+        HitboxAction::ClearAiChat,
+    );
+
+    let bar_spans = vec![
+        Span::styled(format!(" [🤖 Model: {active_model} (m)] "), Style::default().fg(Color::Black).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
+        Span::styled(" [🗑 Clear Chat] ", Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+        Span::raw("  │  Gateway: "),
+        Span::styled("OmniRoute / 9router (localhost:20128 / :3007)", Style::default().fg(palette.accent)),
+    ];
+    f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
+
+    let hist_block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Workspace AI Chat — Persona: {} ({}) ", app.cfg.persona.user_name, app.cfg.persona.assistant_role))
+        .border_style(Style::default().fg(palette.border));
+    let hist_inner = hist_block.inner(chunks[1]);
+    f.render_widget(hist_block, chunks[1]);
+
+    let items: Vec<ListItem> = app
+        .chat_lines
+        .iter()
+        .map(|l| {
+            let style = if l.starts_with("User:") {
+                Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)
+            } else if l.starts_with("AI:") {
+                Style::default().fg(Color::White)
+            } else if l.starts_with("Error:") {
+                Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(palette.text_muted)
+            };
+            ListItem::new(Line::from(Span::styled(l.clone(), style)))
+        })
+        .collect();
+
+    let chat_list = List::new(items)
+        .highlight_style(Style::default().bg(palette.row_selected_bg))
+        .highlight_symbol("▶ ");
+    f.render_stateful_widget(chat_list, hist_inner, &mut app.chat_state);
+
+    let in_block = Block::default()
+        .borders(Borders::ALL)
+        .title(if app.is_chat_processing {
+            " AI is thinking... "
+        } else {
+            " Prompt Input ($ > Enter to send | 'm': Model | 'c': Clear) "
+        })
+        .border_style(if app.is_chat_processing {
+            Style::default().fg(palette.status_warn)
+        } else {
+            Style::default().fg(palette.status_ok)
+        });
+    let in_inner = in_block.inner(chunks[2]);
+    f.render_widget(in_block, chunks[2]);
+
+    let prompt_line = Line::from(vec![
+        Span::styled("$ > ", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(&app.chat_input, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled("█", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+    ]);
+    f.render_widget(Paragraph::new(prompt_line), in_inner);
+}
+
+// ── Tab 10: Setting (Visual Settings GUI for config.toml) ─────────────────────
+
+fn draw_setting_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    draw_settings_tab(f, app, area);
+}
 
 fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let palette = ThemePalette::get(&app.cfg.output.theme);
@@ -3922,239 +5428,9 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
 // ── Uptime Kuma Style Endpoint Monitors Panel ───────────────────────────────
 
-fn draw_uptime_kuma_panel(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" 🌐 Uptime Kuma Endpoint Monitors (HTTP/HTTPS, TCP & Gateways) ")
-        .border_style(Style::default().fg(Color::LightGreen));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
-    // [+ Add Monitor] button in panel header
-    if area.width >= 45 {
-        let btn_w = 19u16;
-        let btn_x = area.right().saturating_sub(btn_w + 2);
-        let btn_rect = Rect {
-            x: btn_x,
-            y: area.y,
-            width: btn_w,
-            height: 1,
-        };
-        app.register_hitbox(btn_rect, HitboxAction::AddMonitor);
-        let btn = Paragraph::new(Line::from(vec![
-            Span::styled(" [+ Add Monitor] (m) ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
-        ]));
-        f.render_widget(btn, btn_rect);
-    }
-
-    if inner.width < 10 || inner.height < 2 {
-        return;
-    }
-
-    let snap = &app.latest_snap;
-    let rows: Vec<Row> = snap.uptime_monitors.iter().map(|m| {
-        let (status_badge, badge_color) = if m.is_up {
-            (format!("● UP ({:.1}%)", m.uptime_pct), Color::Green)
-        } else {
-            (format!("✖ DOWN ({:.1}%)", m.uptime_pct), Color::Red)
-        };
-
-        let latency_str = m
-            .latency_ms
-            .map(|l| format!("{l:>3}ms"))
-            .unwrap_or_else(|| " -- ".to_string());
-        let code_str = m
-            .status_code
-            .map(|c| format!("{c} OK"))
-            .unwrap_or_else(|| "--".to_string());
-
-        // Uptime Kuma 20-segment heartbeat timeline
-        let bar_spans: Vec<Span<'static>> = m
-            .history
-            .iter()
-            .map(|&up| {
-                if up {
-                    Span::styled("█", Style::default().fg(Color::Green))
-                } else {
-                    Span::styled("█", Style::default().fg(Color::Red))
-                }
-            })
-            .collect();
-
-        Row::new(vec![
-            Cell::from(m.name.clone())
-                .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-            Cell::from(status_badge)
-                .style(Style::default().fg(badge_color).add_modifier(Modifier::BOLD)),
-            Cell::from(latency_str).style(Style::default().fg(Color::Cyan)),
-            Cell::from(Line::from(bar_spans)),
-            Cell::from(code_str).style(Style::default().fg(Color::Yellow)),
-            Cell::from(m.target.clone()).style(Style::default().fg(Color::DarkGray)),
-        ])
-    })
-    .collect();
-
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(20),
-            Constraint::Length(15),
-            Constraint::Length(8),
-            Constraint::Length(22),
-            Constraint::Length(8),
-            Constraint::Min(20),
-        ],
-    )
-    .header(
-        Row::new(vec![
-            "MONITOR",
-            "STATUS",
-            "LATENCY",
-            "HEARTBEATS (20)",
-            "CODE",
-            "ENDPOINT",
-        ])
-        .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-    );
-    f.render_widget(table, inner);
-}
 
 // ── Tab 2: Services / Apps (Dokploy-style) ───────────────────────────────────
 
-fn draw_services_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(8)])
-        .split(area);
-
-    // Header action buttons bar
-    let action_bar = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray));
-    let action_inner = action_bar.inner(chunks[0]);
-    f.render_widget(action_bar, chunks[0]);
-
-    let btn_probe_rect = Rect {
-        x: action_inner.x + 1,
-        y: action_inner.y,
-        width: 17,
-        height: 1,
-    };
-    let btn_inspect_rect = Rect {
-        x: action_inner.x + 20,
-        y: action_inner.y,
-        width: 19,
-        height: 1,
-    };
-    let btn_add_server_rect = Rect {
-        x: action_inner.x + 41,
-        y: action_inner.y,
-        width: 16,
-        height: 1,
-    };
-
-    app.register_hitbox(btn_probe_rect, HitboxAction::ProbePorts);
-    app.register_hitbox(btn_inspect_rect, HitboxAction::InspectApp(app.selected_app));
-    app.register_hitbox(btn_add_server_rect, HitboxAction::AddServer);
-
-    let btn_probe = Span::styled(
-        " [🔍 Probe Ports] ",
-        Style::default()
-            .fg(Color::Black)
-            .bg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    );
-    let btn_inspect = Span::styled(
-        " [⚙ Inspect Config] ",
-        Style::default()
-            .fg(Color::Black)
-            .bg(Color::Yellow)
-            .add_modifier(Modifier::BOLD),
-    );
-    let btn_add_server = Span::styled(
-        " [+ Add Server] ",
-        Style::default()
-            .fg(Color::Black)
-            .bg(Color::Green)
-            .add_modifier(Modifier::BOLD),
-    );
-    let hint = Span::styled(
-        "  ('a'/'n': Add Server, 'p': Probe, 'i'/Enter: Inspect)",
-        Style::default().fg(Color::DarkGray),
-    );
-
-    f.render_widget(Paragraph::new(Line::from(vec![btn_probe, Span::raw(" "), btn_inspect, Span::raw(" "), btn_add_server, hint])), action_inner);
-
-    // Apps Cards List
-    let list_block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Dokploy Infrastructure & Applications ")
-        .border_style(Style::default().fg(Color::Cyan));
-    let list_inner = list_block.inner(chunks[1]);
-    f.render_widget(list_block, chunks[1]);
-
-    let items: Vec<ListItem> = app
-        .apps
-        .iter()
-        .enumerate()
-        .map(|(i, item)| {
-            let (status_icon, status_color) = match item.status {
-                ServiceStatus::Healthy => ("● Healthy", Color::Green),
-                ServiceStatus::Listening => ("● Listening", Color::Cyan),
-                ServiceStatus::Down => ("✖ Down", Color::Red),
-                ServiceStatus::Probing => ("◌ Probing", Color::Yellow),
-            };
-
-            let is_selected = i == app.selected_app;
-            let row_bg = if is_selected {
-                Color::Rgb(30, 45, 70)
-            } else {
-                Color::Reset
-            };
-
-            let latency = item
-                .latency_ms
-                .map(|ms| format!("({ms}ms)"))
-                .unwrap_or_default();
-
-            let line = Line::from(vec![
-                Span::styled(format!(" {:<18} ", item.name), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("{:<14} ", item.category), Style::default().fg(Color::DarkGray)),
-                Span::styled(format!("{:<24} ", item.target), Style::default().fg(Color::LightBlue)),
-                Span::styled(format!("{:<12} ", status_icon), Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
-                Span::styled(latency, Style::default().fg(Color::Gray)),
-            ]);
-
-            ListItem::new(line).style(Style::default().bg(row_bg))
-        })
-        .collect();
-
-    let apps_list = List::new(items)
-        .highlight_style(
-            Style::default()
-                .bg(Color::Rgb(35, 55, 90))
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol("▶ ");
-
-    let mut state = ListState::default();
-    state.select(Some(app.selected_app));
-    f.render_stateful_widget(apps_list, list_inner, &mut state);
-
-    // Register hitboxes for each app row
-    let apps_count = app.apps.len();
-    for i in 0..apps_count {
-        if (i as u16) < list_inner.height {
-            let row_rect = Rect {
-                x: list_inner.x,
-                y: list_inner.y + (i as u16),
-                width: list_inner.width,
-                height: 1,
-            };
-            app.register_hitbox(row_rect, HitboxAction::SelectApp(i));
-        }
-    }
-}
 
 // ── App Inspector Modal ─────────────────────────────────────────────────────
 
@@ -4661,92 +5937,12 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
 // ── Tab 5: AI Chat (Hana AI chat interface) ──────────────────────────────────
 
-fn draw_chat_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(8), Constraint::Length(3)])
-        .split(area);
-
-    // Chat History
-    let history_block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(
-            " Hana AI Assistant (Model: {}, Role: {}) ",
-            app.cfg.ai.default_provider, app.cfg.persona.user_name
-        ))
-        .border_style(Style::default().fg(palette.border));
-    let history_inner = history_block.inner(chunks[0]);
-    f.render_widget(history_block, chunks[0]);
-
-    let items: Vec<ListItem> = app
-        .chat_lines
-        .iter()
-        .map(|l| {
-            let style = if l.starts_with("User:") {
-                Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)
-            } else if l.starts_with("AI:") {
-                Style::default().fg(palette.text)
-            } else if l.starts_with("Error:") {
-                Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(palette.text_muted)
-            };
-            ListItem::new(Line::from(Span::styled(l.clone(), style)))
-        })
-        .collect();
-
-    let chat_list = List::new(items)
-        .highlight_style(
-            Style::default()
-                .fg(palette.text)
-                .bg(palette.row_selected_bg)
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol("▶ ");
-
-    f.render_stateful_widget(chat_list, history_inner, &mut app.chat_state);
-
-    // Prompt Input Bar
-    let input_block = Block::default()
-        .borders(Borders::ALL)
-        .title(if app.is_chat_processing {
-            " Hana AI is thinking... "
-        } else {
-            " Terminal Prompt ($ > Enter to send | Shift+1..5 to switch tabs) "
-        })
-        .border_style(if app.is_chat_processing {
-            Style::default().fg(palette.status_warn)
-        } else {
-            Style::default().fg(palette.status_ok)
-        });
-    let input_inner = input_block.inner(chunks[1]);
-    f.render_widget(input_block, chunks[1]);
-
-    app.register_hitbox(chunks[1], HitboxAction::FocusChatInput);
-
-    let prompt_line = Line::from(vec![
-        Span::styled(
-            "$ > ",
-            Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            &app.chat_input,
-            Style::default().fg(palette.text).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "█",
-            Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
-        ),
-    ]);
-    f.render_widget(Paragraph::new(prompt_line), input_inner);
-}
 
 // ── Footer & Compact Fallback ────────────────────────────────────────────────
 
 fn draw_footer(f: &mut Frame, app: &CockpitApp, area: Rect) {
     let palette = ThemePalette::get(&app.cfg.output.theme);
-    let keybinds = " [1-6]: Tabs │ Tab: Cycle │ Shift+1-6: Jump │ Ctrl+L: Lock │ ?: Help │ Esc/q: Quit │ Enter: Edit ";
+    let keybinds = " [1-9/0]: Tabs │ Tab: Cycle │ Shift+1-9/0: Jump │ ↑/↓: Nav │ ?: Help │ Esc/q: Quit ";
     let content = if let Some((msg, _)) = &app.notification {
         Line::from(vec![
             Span::styled(
@@ -4796,7 +5992,7 @@ fn draw_compact_fallback(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             if app.is_tailscale_ok { "OK" } else { "DOWN" }
         )),
         Line::from(""),
-        Line::from("Tabs: [1] Overview [2] Apps [3] Audit [4] Settings [5] Chat"),
+        Line::from("Tabs: [1]Dash [2]Proj [3]Uptime [4]Server [5]Audit [6]CRON [7]Log [8]Term [9]AI [0]Setting"),
         Line::from("Press 'q' or 'Esc' to exit. Resize terminal to >= 80x24 for full Cockpit."),
     ];
 
@@ -4831,56 +6027,56 @@ fn draw_help_modal(f: &mut Frame, app: &CockpitApp, area: Rect) {
 
     let rows = vec![
         Row::new(vec![
-            Cell::from("1..5 / Shift+1..5"),
-            Cell::from("Switch tabs (Overview, Services, Audit, Settings, Chat)"),
+            Cell::from("1..9, 0 / Shift+1..9, 0"),
+            Cell::from("Switch tabs directly (Dashboard, Project, Uptime, Server, Audit, CRON, Log, Terminal, AI, Setting)"),
         ]),
         Row::new(vec![
-            Cell::from("Tab / BackTab"),
-            Cell::from("Cycle through tabs forward / backward"),
-        ]),
-        Row::new(vec![
-            Cell::from("? / F1"),
-            Cell::from("Toggle this Keybindings Help cheat sheet"),
-        ]),
-        Row::new(vec![
-            Cell::from("q / Esc"),
-            Cell::from("Close modal / Inspector / Exit Cockpit"),
+            Cell::from("Tab / BackTab (Shift+Tab)"),
+            Cell::from("Cycle through 10 tabs forward / backward"),
         ]),
         Row::new(vec![
             Cell::from("↑ / ↓ (k / j)"),
-            Cell::from("Navigate items, lists, or scroll content"),
+            Cell::from("Navigate items, lists, tables, or scroll content"),
         ]),
         Row::new(vec![
-            Cell::from("Overview: d / o / m"),
-            Cell::from("d: Add Docker | o/P: Add Project | m/u: Add Monitor"),
+            Cell::from("Project: o / d / s / x / r"),
+            Cell::from("o: Add Project | d: Add Container | s/x/r: Start/Stop/Restart | Enter/←→: View"),
         ]),
         Row::new(vec![
-            Cell::from("Services: a / n / p"),
-            Cell::from("a/n: Add Server | p: Probe ports | i: Inspect app"),
+            Cell::from("Uptime: m / p"),
+            Cell::from("m: Add Monitor wizard | p: Probe all monitors & gateways"),
+        ]),
+        Row::new(vec![
+            Cell::from("Server: a / p"),
+            Cell::from("a/n: Add Server wizard | p: Probe multi-node latency matrix"),
         ]),
         Row::new(vec![
             Cell::from("Audit: a / f"),
-            Cell::from("a: Run Turbo Audit | f: Run Fix script"),
+            Cell::from("a: Run Turbo Audit | f: Run Fix diff auto-patcher"),
         ]),
         Row::new(vec![
-            Cell::from("Settings: Enter / ← →"),
-            Cell::from("Enter: Edit field | ← / →: Cycle theme & provider"),
+            Cell::from("CRON: n"),
+            Cell::from("n: Create New Scheduled Cron Job wizard"),
         ]),
         Row::new(vec![
-            Cell::from("Settings: s / r"),
-            Cell::from("s: Save config.toml | r: Reload from disk"),
+            Cell::from("Log: l / r / ← →"),
+            Cell::from("l: Cycle level filter | r: Refresh logs | ←/→: Switch source (journal/docker/agent)"),
         ]),
         Row::new(vec![
-            Cell::from("Settings: c / v"),
-            Cell::from("c: Clear chat history | v: Vacuum SQLite database"),
+            Cell::from("Terminal: Enter / r"),
+            Cell::from("Enter: Execute shell command | r: Toggle local / remote node"),
         ]),
         Row::new(vec![
-            Cell::from("Chat: Enter"),
-            Cell::from("Send prompt to Hana AI (persisted in SQLite DB)"),
+            Cell::from("AI: Enter / m / c"),
+            Cell::from("Enter: Send prompt to OmniRoute/9router | m: Cycle model | c: Clear chat"),
         ]),
         Row::new(vec![
-            Cell::from("Mouse"),
-            Cell::from("Click tabs, action buttons, cards; wheel to scroll"),
+            Cell::from("Setting: Enter / ← → / s / r / v"),
+            Cell::from("Enter: Edit field | ←/→: Cycle values | s: Save | r: Reload | v: Vacuum"),
+        ]),
+        Row::new(vec![
+            Cell::from("? / F1 │ q / Esc"),
+            Cell::from("? / F1: Keybindings cheat sheet │ q / Esc: Quit / Close modal"),
         ]),
     ];
 
@@ -4933,9 +6129,18 @@ fn draw_cron_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         .constraints([Constraint::Length(3), Constraint::Min(5)])
         .split(area);
 
+    let new_job_btn_w = 32u16;
+    let new_job_btn_rect = Rect {
+        x: chunks[0].x.saturating_add(120),
+        y: chunks[0].y,
+        width: new_job_btn_w,
+        height: 1,
+    };
+    app.register_hitbox(new_job_btn_rect, HitboxAction::NewCronWizard);
+
     let top_bar = Paragraph::new(Line::from(vec![
-        Span::styled(" [4] CRON & SCHEDULED JOBS ", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
-        Span::raw(" │ Manage automated background jobs  "),
+        Span::styled(" [6] CRON & SCHEDULED JOBS ", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::raw(" │ Manage user crontab, systemd timers & managed CAShell jobs  "),
         Span::styled("[+ New Cron Job] (Press 'n')", Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
     ]))
     .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(palette.border)));
@@ -4976,7 +6181,7 @@ fn draw_cron_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let list_widget = List::new(items)
         .block(
             Block::default()
-                .title(" Active Scheduled Jobs ")
+                .title(" Active Scheduled Jobs (User Crontab & CAShell Managed Jobs) ")
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(palette.border)),
         );
@@ -5803,6 +7008,10 @@ mod tests {
             (KeyCode::Char('$'), 3),
             (KeyCode::Char('%'), 4),
             (KeyCode::Char('^'), 5),
+            (KeyCode::Char('&'), 6),
+            (KeyCode::Char('*'), 7),
+            (KeyCode::Char('('), 8),
+            (KeyCode::Char(')'), 9),
         ];
         for (code, expected_idx) in keys {
             let shift_tab = match code {
@@ -5812,6 +7021,10 @@ mod tests {
                 KeyCode::Char('$') => Some(3),
                 KeyCode::Char('%') => Some(4),
                 KeyCode::Char('^') => Some(5),
+                KeyCode::Char('&') => Some(6),
+                KeyCode::Char('*') => Some(7),
+                KeyCode::Char('(') => Some(8),
+                KeyCode::Char(')') => Some(9),
                 _ => None,
             };
             assert_eq!(shift_tab, Some(expected_idx));
@@ -5820,11 +7033,42 @@ mod tests {
 
     #[test]
     fn test_cockpit_tabs_index_roundtrip() {
-        for idx in 0..6 {
+        for idx in 0..10 {
             let tab = CockpitTab::from_index(idx);
             assert_eq!(tab.to_index(), idx);
         }
-        assert_eq!(CockpitTab::titles().len(), 6);
+        assert_eq!(CockpitTab::titles().len(), 10);
+        assert_eq!(CockpitTab::COUNT, 10);
+    }
+
+    #[test]
+    fn test_ai_model_switcher() {
+        let mut app = CockpitApp::new(&Config::default());
+        let initial = app.current_ai_model();
+        assert!(!initial.is_empty());
+        app.cycle_ai_model();
+        assert_ne!(app.current_ai_model(), initial);
+    }
+
+    #[test]
+    fn test_log_source_and_filter() {
+        let mut app = CockpitApp::new(&Config::default());
+        assert_eq!(app.log_source, LogSource::Journal);
+        assert_eq!(app.log_level, LogLevelFilter::All);
+
+        app.log_source = LogSource::Agents;
+        assert_eq!(app.log_source, LogSource::Agents);
+        app.log_level = LogLevelFilter::Error;
+        assert_eq!(app.log_level, LogLevelFilter::Error);
+    }
+
+    #[test]
+    fn test_terminal_command_runner() {
+        let mut app = CockpitApp::new(&Config::default());
+        app.term_input = "echo 'cashell cockpit'".to_string();
+        app.run_terminal_command();
+        assert!(app.term_input.is_empty());
+        assert!(app.term_output.iter().any(|line| line.contains("cashell cockpit")));
     }
 
     #[test]
