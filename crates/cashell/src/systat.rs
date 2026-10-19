@@ -90,6 +90,7 @@ pub struct DaemonHealthInfo {
 /// A tracked project directory from ~/Product and ~/Project.
 #[derive(Debug, Clone, Default)]
 pub struct TrackedProject {
+    pub path: String,
     pub name: String,
     pub category: String, // "Product" or "Project"
     pub branch: String,
@@ -107,6 +108,19 @@ pub struct UptimeMonitor {
     pub uptime_pct: f32,
     /// Last 20 probe results (true = up, false = down), newest last.
     pub history: Vec<bool>,
+}
+
+/// Sovereign web analytics summary (Umami-like) from SQLite.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AnalyticsSummary {
+    pub pageviews: u64,
+    pub unique_visitors: u64,
+    pub active_visitors: u64,
+    pub bounce_rate: f64,
+    pub top_pages: Vec<(String, u64)>,
+    pub top_referrers: Vec<(String, u64)>,
+    pub device_breakdown: Vec<(String, u64)>,
+    pub daily_traffic: Vec<(String, u64)>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -142,6 +156,7 @@ pub struct SysSnapshot {
     pub uptime_monitors: Vec<UptimeMonitor>,
     pub fleet_nodes: Vec<FleetNodeResume>,
     pub service_health: Vec<DaemonHealthInfo>,
+    pub web_analytics: AnalyticsSummary,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -222,6 +237,7 @@ pub fn snapshot() -> SysSnapshot {
     let fleet_nodes = probe_fleet_nodes(cpu_pct, ram_pct, disk_pct);
     let running_containers = docker_containers.iter().filter(|c| c.state == "running").count();
     let service_health = probe_services_health(running_containers, docker_containers.len());
+    let web_analytics = probe_analytics_summary();
 
     SysSnapshot {
         cpu_pct,
@@ -255,7 +271,19 @@ pub fn snapshot() -> SysSnapshot {
         uptime_monitors,
         fleet_nodes,
         service_health,
+        web_analytics,
     }
+}
+
+// ── Sovereign Web Analytics Probe (Umami-like) ──────────────────────────────
+
+pub fn probe_analytics_summary() -> AnalyticsSummary {
+    if let Ok(db) = crate::db::Database::open() {
+        if let Ok(summary) = db.get_analytics_summary(None) {
+            return summary;
+        }
+    }
+    AnalyticsSummary::default()
 }
 
 // ── Docker Containers Probe ─────────────────────────────────────────────────
@@ -527,6 +555,7 @@ pub fn probe_tracked_projects() -> Vec<TrackedProject> {
                             let is_git = p.join(".git").exists();
                             if is_git || p.join("Cargo.toml").exists() || p.join("package.json").exists() || p.join("go.mod").exists() {
                                 list.push(TrackedProject {
+                                    path: p.to_string_lossy().to_string(),
                                     name,
                                     category: cat.to_string(),
                                     branch: "main".to_string(),
@@ -552,11 +581,12 @@ pub fn probe_tracked_projects() -> Vec<TrackedProject> {
             } else {
                 cp.clone()
             };
-            let p = std::path::PathBuf::from(expanded);
+            let p = std::path::PathBuf::from(expanded.clone());
             if p.is_dir() {
                 let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
                 if !name.is_empty() && !list.iter().any(|item| item.name == name) {
                     list.push(TrackedProject {
+                        path: expanded.clone(),
                         name,
                         category: "Custom".to_string(),
                         branch: "main".to_string(),
@@ -573,6 +603,7 @@ pub fn probe_tracked_projects() -> Vec<TrackedProject> {
             for proj in db_projs {
                 if !list.iter().any(|item| item.name == proj.name) {
                     list.push(TrackedProject {
+                        path: proj.path,
                         name: proj.name,
                         category: proj.category,
                         branch: proj.branch,

@@ -290,7 +290,165 @@ pub fn build_router(token: String) -> Router {
         .route("/api/containers", get(containers_handler))
         .route("/api/action", post(action_handler))
         .route("/api/node/heartbeat", post(node_heartbeat_handler))
+        .route("/tracker.js", get(tracker_js_handler))
+        .route("/api/collect", post(collect_analytics_handler))
+        .route("/api/analytics/summary", get(analytics_summary_handler))
         .with_state(state)
+}
+
+// ── Sovereign Web Analytics / Umami-like Endpoints ──────────────────────────
+
+/// Serve the 2KB lightweight JavaScript tracking script for sovereign web analytics.
+async fn tracker_js_handler() -> &'static str {
+    r#"
+(function(){
+  var host = document.currentScript && document.currentScript.src ? document.currentScript.src.split('/').slice(0, 3).join('/') : (location.protocol + '//' + location.hostname + ':8090');
+  var siteId = (document.currentScript && document.currentScript.getAttribute('data-site')) || 'default';
+  function send(){
+    var data = {
+      website_id: siteId,
+      url: location.href,
+      referrer: document.referrer,
+      title: document.title,
+      screen: screen.width + 'x' + screen.height,
+      session_id: (function(){
+        try {
+          var s = sessionStorage.getItem('cashell_sid');
+          if(!s){ s = 's_' + Math.random().toString(36).substr(2, 10); sessionStorage.setItem('cashell_sid', s); }
+          return s;
+        } catch(e){ return 's_fallback_' + Math.floor(Math.random()*999999); }
+      })()
+    };
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(host + '/api/collect', new Blob([JSON.stringify(data)], {type: 'application/json'}));
+    } else if (XMLHttpRequest) {
+      var x = new XMLHttpRequest();
+      x.open('POST', host + '/api/collect', true);
+      x.setRequestHeader('Content-Type', 'application/json');
+      x.send(JSON.stringify(data));
+    }
+  }
+  if(document.readyState === 'complete') send();
+  else window.addEventListener('load', send);
+})();
+"#
+}
+
+/// Receive and persist a web pageview event to the sovereign SQLite analytics database.
+async fn collect_analytics_handler(
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let website_id = payload.get("website_id").and_then(|v| v.as_str()).unwrap_or("default").to_string();
+    let url = payload.get("url").and_then(|v| v.as_str()).unwrap_or("/").to_string();
+    let referrer = payload.get("referrer").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let title = payload.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let session_id = payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("fallback").to_string();
+
+    // Extract X-Forwarded-For or client IP for anonymized hashing
+    let forwarded = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()).unwrap_or("");
+    let client_ip = forwarded.split(',').next().unwrap_or("").trim().to_string();
+
+    // User-Agent parsing for browser, OS, device
+    let ua = headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let (browser, os, device) = parse_user_agent(&ua);
+
+    // Daily sovereign salt for PII-protected Visitor Hash (no cookies/PII stored)
+    let today_str = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let hash_input = format!("{client_ip}_{today_str}");
+    let visitor_hash = hex_sha256(&hash_input);
+
+    let db = crate::db::Database::open();
+    let result = db.map(|d| {
+        d.record_pageview(
+            &website_id,
+            &session_id,
+            &url,
+            &referrer,
+            &title,
+            &browser,
+            &os,
+            &device,
+            "",
+            &visitor_hash,
+        )
+    });
+
+    match result {
+        Ok(Ok(())) => (StatusCode::OK, Json(serde_json::json!({"status": "ok"}))).into_response(),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "db_write_failure"}))).into_response(),
+    }
+}
+
+/// Fetch overall web traffic & analytics summary from the SQLite database.
+async fn analytics_summary_handler() -> impl IntoResponse {
+    let db = crate::db::Database::open();
+    match db {
+        Ok(d) => match d.get_analytics_summary(None) {
+            Ok(summary) => {
+                let json_val = serde_json::json!({
+                    "pageviews": summary.pageviews,
+                    "unique_visitors": summary.unique_visitors,
+                    "active_visitors": summary.active_visitors,
+                    "bounce_rate": summary.bounce_rate,
+                    "top_pages": summary.top_pages,
+                    "top_referrers": summary.top_referrers,
+                    "device_breakdown": summary.device_breakdown,
+                    "daily_traffic": summary.daily_traffic,
+                });
+                (StatusCode::OK, Json(json_val)).into_response()
+            }
+            Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "db_error").into_response(),
+        },
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "db_open_error").into_response(),
+    }
+}
+
+// ── Analytics Helpers ──────────────────────────────────────────────────────
+
+fn parse_user_agent(ua: &str) -> (String, String, String) {
+    let ua_lower = ua.to_lowercase();
+    let device = if ua_lower.contains("mobile") || ua_lower.contains("android") || ua_lower.contains("iphone") {
+        "Mobile".to_string()
+    } else {
+        "Desktop".to_string()
+    };
+
+    let browser = if ua_lower.contains("edge") || ua_lower.contains("edg") {
+        "Edge".to_string()
+    } else if ua_lower.contains("chrome") && !ua_lower.contains("chromium") {
+        "Chrome".to_string()
+    } else if ua_lower.contains("firefox") {
+        "Firefox".to_string()
+    } else if ua_lower.contains("safari") && !ua_lower.contains("chrome") {
+        "Safari".to_string()
+    } else {
+        "Unknown".to_string()
+    };
+
+    let os = if ua_lower.contains("linux") {
+        "Linux".to_string()
+    } else if ua_lower.contains("mac os") {
+        "MacOS".to_string()
+    } else if ua_lower.contains("windows") {
+        "Windows".to_string()
+    } else if ua_lower.contains("android") {
+        "Android".to_string()
+    } else if ua_lower.contains("iphone") || ua_lower.contains("ipad") {
+        "iOS".to_string()
+    } else {
+        "Unknown".to_string()
+    };
+
+    (browser, os, device)
+}
+
+fn hex_sha256(input: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    let result = hasher.finalize();
+    result.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 async fn node_heartbeat_handler(

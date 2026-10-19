@@ -225,6 +225,20 @@ impl Database {
                  ports TEXT,
                  env TEXT,
                  started_at DATETIME DEFAULT CURRENT_TIMESTAMP
+             );
+             CREATE TABLE IF NOT EXISTS analytics_events (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 website_id TEXT NOT NULL,
+                 session_id TEXT NOT NULL,
+                 url TEXT NOT NULL,
+                 referrer TEXT,
+                 page_title TEXT,
+                 browser TEXT,
+                 os TEXT,
+                 device TEXT,
+                 country TEXT,
+                 visitor_hash TEXT NOT NULL,
+                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
              );",
         )?;
         Ok(())
@@ -739,6 +753,166 @@ impl Database {
         self.conn.execute("VACUUM", [])?;
         Ok(())
     }
+
+    // ── Delete Functions (Full CRUD) ─────────────────────────────────────────
+
+    /// Remove a tracked project from the `tracked_projects` table.
+    pub fn delete_tracked_project(&self, path: &str) -> Result<usize> {
+        let n = self.conn.execute("DELETE FROM tracked_projects WHERE path = ?1", params![path])?;
+        Ok(n)
+    }
+
+    /// Remove an uptime monitor from the `uptime_monitors` table.
+    pub fn delete_uptime_monitor(&self, name: &str) -> Result<usize> {
+        let n = self.conn.execute("DELETE FROM uptime_monitors WHERE name = ?1", params![name])?;
+        Ok(n)
+    }
+
+    /// Remove a docker container record from the `docker_containers` table.
+    pub fn delete_docker_container(&self, name: &str) -> Result<usize> {
+        let n = self.conn.execute("DELETE FROM docker_containers WHERE name = ?1", params![name])?;
+        Ok(n)
+    }
+
+    /// Remove a registered node from the `registered_nodes` table.
+    pub fn delete_registered_node(&self, node_id: &str) -> Result<usize> {
+        let n = self.conn.execute("DELETE FROM registered_nodes WHERE node_id = ?1", params![node_id])?;
+        Ok(n)
+    }
+
+    // ── Sovereign Web Analytics (Umami-like) ─────────────────────────────────
+
+    /// Record a new web pageview event in the `analytics_events` table.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_pageview(
+        &self,
+        website_id: &str,
+        session_id: &str,
+        url: &str,
+        referrer: &str,
+        page_title: &str,
+        browser: &str,
+        os: &str,
+        device: &str,
+        country: &str,
+        visitor_hash: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO analytics_events (website_id, session_id, url, referrer, page_title, browser, os, device, country, visitor_hash)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                website_id,
+                session_id,
+                url,
+                referrer,
+                page_title,
+                browser,
+                os,
+                device,
+                country,
+                visitor_hash
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve overall web analytics summary for a specific website or `None` for global stats.
+    pub fn get_analytics_summary(&self, website_id: Option<&str>) -> Result<crate::systat::AnalyticsSummary> {
+        let target = website_id.map(|id| id.to_string());
+        let ref_val = target.as_deref();
+
+        // Total pageviews
+        let pageviews = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1)",
+                params![ref_val],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        // Unique visitors
+        let unique_visitors = self
+            .conn
+            .query_row(
+                "SELECT COUNT(DISTINCT visitor_hash) FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1)",
+                params![ref_val],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        // Active visitors (last 5 mins)
+        let active_visitors = self
+            .conn
+            .query_row(
+                "SELECT COUNT(DISTINCT visitor_hash) FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) AND created_at >= datetime('now', '-5 minutes')",
+                params![ref_val],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        // Bounce rate
+        let bounce_rate = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(SUM(CASE WHEN pv = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 0.0)
+                 FROM (SELECT session_id, COUNT(*) as pv FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) GROUP BY session_id)",
+                params![ref_val],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
+
+        // Top 5 pages
+        let mut top_pages: Vec<(String, u64)> = Vec::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT url, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) GROUP BY url ORDER BY c DESC LIMIT 5",
+        )?;
+        let mut rows = stmt.query(params![ref_val])?;
+        while let Some(row) = rows.next()? {
+            top_pages.push((row.get(0)?, row.get(1)?));
+        }
+
+        // Top 5 referrers
+        let mut top_referrers: Vec<(String, u64)> = Vec::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT COALESCE(referrer, 'Direct') as ref, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) AND referrer IS NOT NULL AND referrer != '' GROUP BY ref ORDER BY c DESC LIMIT 5",
+        )?;
+        let mut rows = stmt.query(params![ref_val])?;
+        while let Some(row) = rows.next()? {
+            top_referrers.push((row.get(0)?, row.get(1)?));
+        }
+
+        // Device breakdown
+        let mut device_breakdown: Vec<(String, u64)> = Vec::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT COALESCE(device, 'Unknown') as dev, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) GROUP BY dev ORDER BY c DESC",
+        )?;
+        let mut rows = stmt.query(params![ref_val])?;
+        while let Some(row) = rows.next()? {
+            device_breakdown.push((row.get(0)?, row.get(1)?));
+        }
+
+        // Daily traffic history (last 7 days)
+        let mut daily_traffic: Vec<(String, u64)> = Vec::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT date(created_at) as day, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) AND created_at >= date('now', '-7 day') GROUP BY day ORDER BY day ASC",
+        )?;
+        let mut rows = stmt.query(params![ref_val])?;
+        while let Some(row) = rows.next()? {
+            daily_traffic.push((row.get(0)?, row.get(1)?));
+        }
+
+        Ok(crate::systat::AnalyticsSummary {
+            pageviews,
+            unique_visitors,
+            active_visitors,
+            bounce_rate,
+            top_pages,
+            top_referrers,
+            device_breakdown,
+            daily_traffic,
+        })
+    }
 }
 
 // ── Top-level convenience wrappers ──────────────────────────────────────────
@@ -900,6 +1074,63 @@ mod tests {
         assert_eq!(containers[0].1, "nginx:alpine");
         assert_eq!(containers[0].2, "80:80");
         assert_eq!(containers[0].3, "ENV=test");
+        Ok(())
+    }
+
+    #[test]
+    fn test_db_delete_operations() -> Result<()> {
+        let db = Database::open_in_memory()?;
+        db.add_tracked_project("/path/to/test", "test", "Project", "main", false)?;
+        assert_eq!(db.get_tracked_projects()?.len(), 1);
+        assert_eq!(db.delete_tracked_project("/path/to/test")?, 1);
+        assert_eq!(db.get_tracked_projects()?.len(), 0);
+
+        db.add_uptime_monitor("Test Monitor", "https://test.com")?;
+        assert_eq!(db.get_uptime_monitors()?.len(), 1);
+        assert_eq!(db.delete_uptime_monitor("Test Monitor")?, 1);
+        assert_eq!(db.get_uptime_monitors()?.len(), 0);
+
+        db.add_docker_container("test-box", "alpine", "80:80", "")?;
+        assert_eq!(db.get_docker_containers()?.len(), 1);
+        assert_eq!(db.delete_docker_container("test-box")?, 1);
+        assert_eq!(db.get_docker_containers()?.len(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_db_analytics_tracking() -> Result<()> {
+        let db = Database::open_in_memory()?;
+        db.record_pageview(
+            "caterm",
+            "sess_1",
+            "/",
+            "https://google.com",
+            "CATerm Home",
+            "Chrome",
+            "Linux",
+            "Desktop",
+            "ID",
+            "hash_abc",
+        )?;
+        db.record_pageview(
+            "caterm",
+            "sess_2",
+            "/docs",
+            "Direct",
+            "CATerm Docs",
+            "Firefox",
+            "Linux",
+            "Desktop",
+            "ID",
+            "hash_def",
+        )?;
+
+        let summary = db.get_analytics_summary(Some("caterm"))?;
+        assert_eq!(summary.pageviews, 2);
+        assert_eq!(summary.unique_visitors, 2);
+        assert_eq!(summary.top_pages.len(), 2);
+        assert!(summary.top_referrers.iter().any(|(r, _)| r == "https://google.com"));
+        assert!(summary.top_referrers.iter().any(|(r, _)| r == "Direct"));
         Ok(())
     }
 
