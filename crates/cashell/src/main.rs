@@ -41,6 +41,11 @@ fn main() -> Result<()> {
             banner::print(args.quiet);
             commands::product::run(&cmd)?;
         }
+        Some(Commands::Project(cmd)) => {
+            banner::print(args.quiet);
+            let code = commands::project::run(&cmd, &cfg)?;
+            std::process::exit(code);
+        }
         Some(Commands::Version(cmd)) => {
             banner::print(args.quiet);
             commands::version::run(&cmd)?;

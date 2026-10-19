@@ -6,6 +6,8 @@
 //! for 5 sovereign shadow companions: Ayam (Shadow Hunter), Singa (Shadow Beast),
 //! Burung (Shadow Falcon), Ular (Shadow Serpent), Beruang (Shadow Golem).
 
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::Span;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -242,71 +244,71 @@ impl PetStatus {
 
 const HUNTER_ISO_IDLE: [&[&str]; 4] = [
     &[
-        "        ▄▄████▄▄        ",
-        "       ◢████████◣       ",
-        "      ███▌[◉ ◉]▐███     ",
-        "     ⚡  ▀████▀  ⚡      ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
+        "         ▄▄████▄▄         ",
+        "        ◢██▌▐████▐◣        ",
+        "       ██▌◢▐[◉ ◉]▐▌██      ",
+        "      ⚡ ▀▀▀█▼▼█▀▀ ⚡       ",
+        "       ██▐▀▄▀██▄▀██        ",
+        "      ░▒▓████████▓▒░       ",
     ],
     &[
-        "        ▄▄████▄▄        ",
-        "       ◢████████◣       ",
-        "      ███▌[─ ─]▐███     ",
-        "        ▀████▀   ⚡     ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
+        "         ▄▄████▄▄         ",
+        "        ◢██▌▐████▐◣        ",
+        "       ██▌◢▐[─ ─]▐▌██      ",
+        "         ▀▀▀█▼▼█▀▀  ⚡      ",
+        "       ██▐▀▄▀██▄▀██        ",
+        "      ░▒▓████████▓▒░       ",
     ],
     &[
-        "        ▄▄████▄▄   ⚡    ",
-        "       ◢████████◣       ",
-        "      ███▌[◉ ◉]▐███     ",
-        "     ⚡  ▀████▀         ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
+        "         ▄▄████▄▄   ⚡     ",
+        "        ◢██▌▐████▐◣        ",
+        "       ██▌◢▐[◉ ◉]▐▌██      ",
+        "      ⚡ ▀▀▀█▼▼█▀▀          ",
+        "       ██▐▀▄▀██▄▀██        ",
+        "      ░▒▓████████▓▒░       ",
     ],
     &[
-        "        ▄▄████▄▄        ",
-        "       ◢████████◣       ",
-        "      ███▌[✦ ✦]▐███     ",
-        "     ⚡  ▀████▀  ⚡      ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
+        "         ▄▄████▄▄         ",
+        "        ◢██▌▐████▐◣        ",
+        "       ██▌◢▐[✦ ✦]▐▌██      ",
+        "      ⚡ ▀▀▀█▼▼█▀▀ ⚡       ",
+        "       ██▐▀▄▀██▄▀██        ",
+        "      ░▒▓████████▓▒░       ",
     ],
 ];
 
 const HUNTER_ISO_WALK: [&[&str]; 4] = [
     &[
-        "        ▄▄████▄▄        ",
-        "       ◢████████◣       ",
-        "      ███▌[◉ ◉]▐███     ",
-        "        ▀████▀         ",
-        "      ▄▀        ▀▄      ",
-        "     ░▒▓████████▓▒░     ",
+        "         ▄▄████▄▄         ",
+        "        ◢██▌▐████▐◣        ",
+        "       ██▌◢▐[◉ ◉]▐▌██      ",
+        "         ▀▀▀█▼▼█▀▀         ",
+        "      ▄▀▀      ▀▄▄          ",
+        "      ░▒▓████████▓▒░       ",
     ],
     &[
-        "        ▄▄████▄▄        ",
-        "       ◢████████◣       ",
-        "      ███▌[◉ ◉]▐███     ",
-        "        ▀████▀         ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
+        "         ▄▄████▄▄         ",
+        "        ◢██▌▐████▐◣        ",
+        "       ██▌◢▐[◉ ◉]▐▌██      ",
+        "         ▀▀▀█▼▼█▀▀         ",
+        "        ▄▀▀    ▀▄▄         ",
+        "      ░▒▓████████▓▒░       ",
     ],
     &[
-        "        ▄▄████▄▄        ",
-        "       ◢████████◣       ",
-        "      ███▌[◉ ◉]▐███     ",
-        "        ▀████▀         ",
-        "       ▀▄      ▄▀       ",
-        "     ░▒▓████████▓▒░     ",
+        "         ▄▄████▄▄         ",
+        "        ◢██▌▐████▐◣        ",
+        "       ██▌◢▐[◉ ◉]▐▌██      ",
+        "         ▀▀▀█▼▼█▀▀         ",
+        "       ▀▄▄      ▄▀▀        ",
+        "      ░▒▓████████▓▒░       ",
     ],
     &[
-        "        ▄▄████▄▄        ",
-        "       ◢████████◣       ",
-        "      ███▌[◉ ◉]▐███     ",
-        "        ▀████▀         ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
+        "         ▄▄████▄▄         ",
+        "        ◢██▌▐████▐◣        ",
+        "       ██▌◢▐[◉ ◉]▐▌██      ",
+        "         ▀▀▀█▼▼█▀▀         ",
+        "        ▄▀▀    ▀▄▄         ",
+        "      ░▒▓████████▓▒░       ",
     ],
 ];
 
@@ -1654,9 +1656,171 @@ pub fn determine_mood(cpu_pct: f32, cpu_temp_c: f32, ram_pct: u8, swap_pct: u8) 
     PetMood::Idle
 }
 
+/// Colorizes a single row of an 8-bit isometric sprite into rich retro multi-hued spans.
+pub fn colorize_retro_sprite_line(
+    species: PetSpecies,
+    state: PetActionState,
+    line_idx: usize,
+    text: &str,
+    _mood: PetMood,
+    is_stopped: bool,
+) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut current_buf = String::new();
+    let mut current_color: Option<Color> = None;
+
+    for ch in text.chars() {
+        let ch_color = if ch == ' ' {
+            current_color.unwrap_or(Color::Reset)
+        } else if is_stopped {
+            Color::Rgb(115, 135, 120)
+        } else {
+            match ch {
+                '⚡' => Color::Rgb(255, 235, 60),
+                '💥' => Color::Rgb(255, 135, 45),
+                '💦' => Color::Rgb(100, 210, 255),
+                '彡' => Color::Rgb(185, 195, 215),
+                '═' | '<' => Color::Rgb(255, 85, 155),
+                '>' => {
+                    if state == PetActionState::Run || state == PetActionState::Dash {
+                        Color::Rgb(255, 210, 75)
+                    } else {
+                        Color::Rgb(255, 85, 155)
+                    }
+                }
+                '✦' => {
+                    if state == PetActionState::Death {
+                        Color::Rgb(190, 160, 230)
+                    } else {
+                        Color::Rgb(255, 245, 140)
+                    }
+                }
+                '[' | ']' => Color::Rgb(140, 145, 160),
+                '◉' => Color::Rgb(255, 255, 255),
+                '•' => Color::Rgb(255, 115, 115),
+                '─' => Color::Rgb(185, 195, 215),
+                '►' => Color::Rgb(80, 230, 255),
+                '(' | ')' => Color::Rgb(150, 155, 170),
+                '▲' => {
+                    if species == PetSpecies::Burung && line_idx == 2 {
+                        Color::Rgb(255, 185, 30)
+                    } else if species == PetSpecies::Burung && line_idx == 0 {
+                        Color::Rgb(50, 225, 255)
+                    } else {
+                        Color::Rgb(250, 195, 60)
+                    }
+                }
+                '▼' => {
+                    if species == PetSpecies::Ayam || species == PetSpecies::Burung {
+                        Color::Rgb(255, 145, 30)
+                    } else if species == PetSpecies::Singa {
+                        Color::Rgb(255, 245, 225)
+                    } else {
+                        Color::Rgb(255, 120, 120)
+                    }
+                }
+                '∿' => Color::Rgb(185, 245, 125),
+                '●' => Color::Rgb(0, 240, 255),
+                '爪' => Color::Rgb(255, 215, 90),
+                '░' => Color::Rgb(50, 58, 75),
+                '▒' => Color::Rgb(65, 75, 95),
+                '▓' => {
+                    if species == PetSpecies::Singa && line_idx < 3 {
+                        Color::Rgb(215, 105, 45) // Auburn mane
+                    } else {
+                        Color::Rgb(75, 88, 112)
+                    }
+                }
+                _ => {
+                    if line_idx == 5 {
+                        Color::Rgb(45, 52, 70)
+                    } else {
+                        match species {
+                            PetSpecies::Ayam => match line_idx {
+                                0 => Color::Rgb(235, 65, 65),  // Crest comb
+                                1 => Color::Rgb(255, 205, 65), // Head
+                                2 => Color::Rgb(255, 180, 50), // Upper torso
+                                3 => Color::Rgb(240, 175, 45), // Body
+                                _ => Color::Rgb(220, 140, 40), // Feet
+                            },
+                            PetSpecies::Singa => match line_idx {
+                                0 => Color::Rgb(215, 105, 45), // Mane
+                                1 => Color::Rgb(250, 195, 70), // Face
+                                2 => Color::Rgb(245, 185, 60), // Muzzle
+                                3 => Color::Rgb(230, 165, 50), // Torso
+                                _ => Color::Rgb(220, 150, 50), // Paws
+                            },
+                            PetSpecies::Burung => match line_idx {
+                                0 => Color::Rgb(50, 225, 255),  // Cyan crown
+                                1 => Color::Rgb(245, 250, 255), // White face
+                                2 => Color::Rgb(75, 150, 245),  // Azure wings
+                                3 => Color::Rgb(235, 245, 255), // Chest
+                                _ => Color::Rgb(250, 195, 50),  // Talons
+                            },
+                            PetSpecies::Ular => match line_idx {
+                                0 => Color::Rgb(200, 130, 240), // Violet crown
+                                1 => Color::Rgb(50, 215, 120),  // Emerald hood
+                                2 => Color::Rgb(185, 245, 125), // Lime body
+                                3 => Color::Rgb(40, 185, 105),  // Jade coils
+                                _ => Color::Rgb(30, 155, 85),   // Forest tail
+                            },
+                            PetSpecies::Beruang => match line_idx {
+                                0 => Color::Rgb(220, 175, 75),  // Bronze horns
+                                1 => Color::Rgb(115, 145, 185), // Steel helm
+                                2 => Color::Rgb(100, 125, 165), // Shoulders
+                                3 => Color::Rgb(95, 120, 160),  // Golem plate
+                                _ => Color::Rgb(80, 100, 135),  // Heavy treads
+                            },
+                        }
+                    }
+                }
+            }
+        };
+
+        if let Some(cur) = current_color {
+            if ch != ' ' && cur != ch_color {
+                spans.push(Span::styled(
+                    std::mem::take(&mut current_buf),
+                    Style::default().fg(cur).add_modifier(Modifier::BOLD),
+                ));
+                current_color = Some(ch_color);
+            }
+        } else {
+            current_color = Some(ch_color);
+        }
+
+        current_buf.push(ch);
+    }
+
+    if !current_buf.is_empty() {
+        let col = current_color.unwrap_or(Color::Reset);
+        spans.push(Span::styled(
+            current_buf,
+            Style::default().fg(col).add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    spans
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_colorize_retro_sprite_line() {
+        let spans = colorize_retro_sprite_line(
+            PetSpecies::Ayam,
+            PetActionState::Idle,
+            2,
+            "      ███▌[◉ ◉]▐███     ",
+            PetMood::Idle,
+            false,
+        );
+        assert!(!spans.is_empty());
+        // Should have colored spans for eye brackets/pupils and feathers
+        assert!(spans.iter().any(|s| s.content.contains("◉")));
+    }
 
     #[test]
     fn test_stage_from_xp() {

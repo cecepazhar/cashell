@@ -85,7 +85,7 @@ impl ThemePalette {
                 chart_ram: Color::Rgb(255, 0, 128),
                 status_ok: Color::Rgb(0, 255, 136),    // Neon Green
                 status_warn: Color::Rgb(255, 170, 0),  // Neon Amber
-                status_err: Color::Rgb(255, 0, 85),    // Neon Red
+                status_err: Color::Rgb(245, 115, 140), // Pastel Neon Rose
                 row_selected_bg: Color::Rgb(20, 30, 45),
             },
             "tokyo-night" => Self {
@@ -100,7 +100,7 @@ impl ThemePalette {
                 chart_ram: Color::Rgb(187, 154, 247),
                 status_ok: Color::Rgb(158, 206, 106),
                 status_warn: Color::Rgb(224, 175, 104),
-                status_err: Color::Rgb(247, 118, 142),
+                status_err: Color::Rgb(247, 135, 155), // Tokyo Pastel Rose
                 row_selected_bg: Color::Rgb(41, 46, 66),
             },
             "monokai" => Self {
@@ -115,7 +115,7 @@ impl ThemePalette {
                 chart_ram: Color::Rgb(166, 226, 46),
                 status_ok: Color::Rgb(166, 226, 46),
                 status_warn: Color::Rgb(230, 219, 116),
-                status_err: Color::Rgb(249, 38, 114),
+                status_err: Color::Rgb(245, 120, 145), // Pastel Monokai Coral
                 row_selected_bg: Color::Rgb(62, 61, 50),
             },
             "nord" => Self {
@@ -130,7 +130,7 @@ impl ThemePalette {
                 chart_ram: Color::Rgb(180, 142, 173),
                 status_ok: Color::Rgb(163, 190, 140),
                 status_warn: Color::Rgb(235, 203, 139),
-                status_err: Color::Rgb(191, 97, 106),
+                status_err: Color::Rgb(215, 125, 135), // Nordic Aurora Rose
                 row_selected_bg: Color::Rgb(46, 52, 64),
             },
             "high-contrast" => Self {
@@ -145,7 +145,7 @@ impl ThemePalette {
                 chart_ram: Color::Cyan,
                 status_ok: Color::Green,
                 status_warn: Color::Yellow,
-                status_err: Color::Red,
+                status_err: Color::Rgb(245, 135, 125), // Pastel Salmon Red
                 row_selected_bg: Color::Rgb(50, 50, 50),
             },
             _ => Self {
@@ -160,7 +160,7 @@ impl ThemePalette {
                 chart_ram: Color::Rgb(180, 100, 255),
                 status_ok: Color::Green,
                 status_warn: Color::Yellow,
-                status_err: Color::Red,
+                status_err: Color::Rgb(238, 128, 120), // Soft Retro Coral
                 row_selected_bg: Color::Rgb(30, 45, 70),
             },
         }
@@ -315,9 +315,14 @@ impl CockpitTab {
 /// Sub-views inside the Project tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ProjectView {
+    /// Workspace hierarchy: project list (left) + selected project's
+    /// repos / containers / services / DBs (right).
     #[default]
-    Tracked = 0,
-    Containers = 1,
+    Hierarchy = 0,
+    /// Flat tree of every project → repos → containers → services → DBs.
+    Tree = 1,
+    /// Global container lifecycle view (kept for direct start/stop ops).
+    Containers = 2,
 }
 
 /// Log source selector for the Log tab.
@@ -658,7 +663,7 @@ impl CockpitApp {
             dashboard_alert_scroll: 0,
 
             // ── Tab 2: Project & Containers state ───────────────────────────────────
-            project_view: ProjectView::Tracked,
+            project_view: ProjectView::Hierarchy,
             selected_project: 0,
             selected_container: 0,
 
@@ -1025,10 +1030,11 @@ impl CockpitApp {
             }
         }
 
-        // 3. Ensure multi-node canonical fleet nodes (X1, YPC, Hostinger VPS, XPC, pc-gerlink)
+        // 3. Ensure multi-node canonical fleet nodes (X1, YPC, Hostinger VPS, Tencent Cloud, XPC, pc-gerlink)
         let fleet_presets = [
             ("YPC", "100.127.232.32", 3000),
             ("Hostinger VPS", "100.76.150.46", 80),
+            ("Tencent Cloud VPS", "43.157.208.83", 22),
             ("XPC", "100.125.125.28", 22),
             ("pc-gerlink", "100.102.147.90", 80),
         ];
@@ -1893,15 +1899,13 @@ impl CockpitApp {
         }
 
         // Update in-memory snapshot immediately
-        let p = std::path::Path::new(&expanded);
-        let is_dirty = p.join(".git").exists();
-        self.latest_snap.tracked_projects.push(crate::systat::TrackedProject {
-            path: expanded,
-            name: display_name.clone(),
-            category: cat,
-            branch: "main".to_string(),
-            is_dirty,
-        });
+        let new_ws = crate::systat::build_project_workspace(
+            &display_name,
+            std::path::Path::new(&expanded),
+            &cat,
+            &self.latest_snap.docker_containers,
+        );
+        self.latest_snap.tracked_projects.push(new_ws);
 
         self.set_notification(format!(
             "✓ Project '{}' added to tracked projects",
@@ -2764,7 +2768,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             }
             CockpitTab::Project => {
                 match app.project_view {
-                    ProjectView::Tracked => {
+                    ProjectView::Hierarchy | ProjectView::Tree => {
                         app.selected_project = app.selected_project.saturating_sub(1);
                     }
                     ProjectView::Containers => {
@@ -2803,7 +2807,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             }
             CockpitTab::Project => {
                 match app.project_view {
-                    ProjectView::Tracked => {
+                    ProjectView::Hierarchy | ProjectView::Tree => {
                         if !app.latest_snap.tracked_projects.is_empty() {
                             app.selected_project = (app.selected_project + 1).min(app.latest_snap.tracked_projects.len() - 1);
                         }
@@ -2849,7 +2853,11 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Left | KeyCode::Char('h') => match app.current_tab {
             CockpitTab::Setting => app.cycle_field_value(false),
             CockpitTab::Project => {
-                app.project_view = ProjectView::Tracked;
+                app.project_view = match app.project_view {
+                    ProjectView::Hierarchy => ProjectView::Containers,
+                    ProjectView::Tree => ProjectView::Hierarchy,
+                    ProjectView::Containers => ProjectView::Tree,
+                };
             }
             CockpitTab::Log => {
                 let next = match app.log_source {
@@ -2865,7 +2873,11 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Right | KeyCode::Char('l') => match app.current_tab {
             CockpitTab::Setting => app.cycle_field_value(true),
             CockpitTab::Project => {
-                app.project_view = ProjectView::Containers;
+                app.project_view = match app.project_view {
+                    ProjectView::Hierarchy => ProjectView::Tree,
+                    ProjectView::Tree => ProjectView::Containers,
+                    ProjectView::Containers => ProjectView::Hierarchy,
+                };
             }
             CockpitTab::Log => {
                 app.log_level = match app.log_level {
@@ -2891,10 +2903,11 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 start_field_edit(app);
             }
             CockpitTab::Project => {
-                // Toggle view between Tracked Projects and Containers
+                // Toggle view: Hierarchy -> Tree -> Containers
                 app.project_view = match app.project_view {
-                    ProjectView::Tracked => ProjectView::Containers,
-                    ProjectView::Containers => ProjectView::Tracked,
+                    ProjectView::Hierarchy => ProjectView::Tree,
+                    ProjectView::Tree => ProjectView::Containers,
+                    ProjectView::Containers => ProjectView::Hierarchy,
                 };
             }
             _ => {}
@@ -3173,7 +3186,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
         MouseEventKind::ScrollUp => match app.current_tab {
             CockpitTab::Dashboard => app.overview_proc_scroll = app.overview_proc_scroll.saturating_sub(1),
             CockpitTab::Project => match app.project_view {
-                ProjectView::Tracked => app.selected_project = app.selected_project.saturating_sub(1),
+                ProjectView::Hierarchy | ProjectView::Tree => app.selected_project = app.selected_project.saturating_sub(1),
                 ProjectView::Containers => app.selected_container = app.selected_container.saturating_sub(1),
             },
             CockpitTab::Uptime => app.selected_monitor = app.selected_monitor.saturating_sub(1),
@@ -3188,7 +3201,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
         MouseEventKind::ScrollDown => match app.current_tab {
             CockpitTab::Dashboard => app.overview_proc_scroll = (app.overview_proc_scroll + 1).min(30),
             CockpitTab::Project => match app.project_view {
-                ProjectView::Tracked => {
+                ProjectView::Hierarchy | ProjectView::Tree => {
                     if !app.latest_snap.tracked_projects.is_empty() {
                         app.selected_project = (app.selected_project + 1).min(app.latest_snap.tracked_projects.len() - 1);
                     }
@@ -3272,7 +3285,6 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                         app.project_view = view;
                     }
                     HitboxAction::SelectProject(idx) => {
-                        app.project_view = ProjectView::Tracked;
                         app.selected_project = idx;
                     }
                     HitboxAction::SelectContainer(idx) => {
@@ -4120,12 +4132,14 @@ fn render_braille_curve(data: &[f32], width: usize, height: usize) -> Vec<Line<'
             };
 
             let avg_val = (sampled[(cx * 2).min(dot_w - 1)] + sampled[(cx * 2 + 1).min(dot_w - 1)]) / 2.0;
-            let color = if avg_val >= 85.0 {
-                Color::Red
+            let color = if avg_val >= 90.0 {
+                Color::Rgb(238, 128, 120) // Soft Retro Coral
+            } else if avg_val >= 80.0 {
+                Color::Rgb(245, 155, 120) // Warm Pastel Salmon
             } else if avg_val >= 60.0 {
-                Color::Yellow
+                Color::Rgb(240, 185, 110) // Retro Honey Amber
             } else {
-                Color::LightGreen
+                Color::Rgb(140, 215, 165) // Pastel Mint Green
             };
 
             spans.push(Span::styled(ch.to_string(), Style::default().fg(color)));
@@ -4145,12 +4159,14 @@ fn format_core_span(core: Option<&CpuCoreInfo>, id: usize, bar_len: usize) -> Ve
     let filled = ((usage / 100.0) * (bar_len as f32)).round().clamp(0.0, bar_len as f32) as usize;
     let unfilled = bar_len.saturating_sub(filled);
 
-    let color = if usage >= 85.0 {
-        Color::Red
+    let color = if usage >= 90.0 {
+        Color::Rgb(238, 128, 120) // Soft Retro Coral
+    } else if usage >= 80.0 {
+        Color::Rgb(245, 155, 120) // Warm Pastel Salmon
     } else if usage >= 60.0 {
-        Color::Yellow
+        Color::Rgb(240, 185, 110) // Retro Honey Amber
     } else {
-        Color::LightGreen
+        Color::Rgb(140, 215, 165) // Pastel Mint Green
     };
 
     let freq_str = if freq >= 1000 {
@@ -4470,8 +4486,12 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ));
     } else {
         alerts_spans.push(Span::styled(
-            format!(" Armada: ✖ {online_nodes}/{total_nodes} Online · {fleet_offline} Down "),
-            Style::default().fg(Color::White).bg(palette.status_err).add_modifier(Modifier::BOLD),
+            " Armada: ",
+            Style::default().fg(Color::Rgb(245, 175, 130)).bg(Color::Rgb(48, 22, 28)),
+        ));
+        alerts_spans.push(Span::styled(
+            format!("✖ {online_nodes}/{total_nodes} Online · {fleet_offline} Down "),
+            Style::default().fg(Color::Rgb(242, 135, 125)).bg(Color::Rgb(48, 22, 28)).add_modifier(Modifier::BOLD),
         ));
     }
     alerts_spans.push(Span::raw("  "));
@@ -4487,8 +4507,12 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ));
     } else if down_cont > 0 {
         alerts_spans.push(Span::styled(
-            format!(" 🔴 {running_cont}/{total_cont} Running · {down_cont} DOWN "),
-            Style::default().fg(Color::White).bg(palette.status_err).add_modifier(Modifier::BOLD),
+            " 🟠 Containers: ",
+            Style::default().fg(Color::Rgb(245, 165, 130)).bg(Color::Rgb(48, 24, 28)),
+        ));
+        alerts_spans.push(Span::styled(
+            format!("{running_cont}/{total_cont} Running · {down_cont} DOWN "),
+            Style::default().fg(Color::Rgb(235, 130, 120)).bg(Color::Rgb(48, 24, 28)).add_modifier(Modifier::BOLD),
         ));
     } else {
         alerts_spans.push(Span::styled(
@@ -4510,10 +4534,10 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     } else {
         let err_count = total_daemons.saturating_sub(active_daemons + degraded_daemons);
         let tag = if err_count > 0 { "✖" } else { "◌" };
-        let col = if err_count > 0 { palette.status_err } else { palette.status_warn };
+        let col = if err_count > 0 { Color::Rgb(242, 135, 125) } else { palette.status_warn };
         alerts_spans.push(Span::styled(
             format!(" Daemons: {tag} {active_daemons}/{total_daemons} Active "),
-            Style::default().fg(Color::Black).bg(col).add_modifier(Modifier::BOLD),
+            Style::default().fg(col).bg(Color::Rgb(45, 25, 30)).add_modifier(Modifier::BOLD),
         ));
     }
     alerts_spans.push(Span::raw("  "));
@@ -4529,8 +4553,12 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ));
     } else {
         alerts_spans.push(Span::styled(
-            format!(" Monitors: ✖ {up_monitors}/{total_monitors} UP · {down_monitors} DOWN "),
-            Style::default().fg(Color::White).bg(palette.status_err).add_modifier(Modifier::BOLD),
+            " Monitors: ",
+            Style::default().fg(Color::Rgb(215, 165, 225)).bg(Color::Rgb(44, 22, 42)),
+        ));
+        alerts_spans.push(Span::styled(
+            format!("✖ {up_monitors}/{total_monitors} UP · {down_monitors} DOWN "),
+            Style::default().fg(Color::Rgb(235, 135, 145)).bg(Color::Rgb(44, 22, 42)).add_modifier(Modifier::BOLD),
         ));
     }
     alerts_spans.push(Span::raw("  "));
@@ -4553,30 +4581,31 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     // Check containers down
     let exited_cont: Vec<&str> = snap.docker_containers.iter().filter(|c| c.state != "running").map(|c| c.name.as_str()).collect();
     if !exited_cont.is_empty() {
-        alert_line2.push(Span::styled(
-            format!(" [✖ CONTAINER ALERT: {} EXITED] ", exited_cont.join(", ")),
-            Style::default().fg(Color::White).bg(palette.status_err).add_modifier(Modifier::BOLD),
-        ));
+        let alert_bg = Color::Rgb(48, 22, 28);
+        alert_line2.push(Span::styled(" [✖ CONTAINER ALERT: ", Style::default().fg(Color::Rgb(242, 135, 125)).bg(alert_bg).add_modifier(Modifier::BOLD)));
+        alert_line2.push(Span::styled(exited_cont.join(", "), Style::default().fg(Color::Rgb(245, 185, 130)).bg(alert_bg).add_modifier(Modifier::BOLD)));
+        alert_line2.push(Span::styled(" EXITED] ", Style::default().fg(Color::Rgb(235, 125, 135)).bg(alert_bg).add_modifier(Modifier::BOLD)));
         any_alert = true;
     }
 
     // Check uptime endpoints down
     let down_endpoints: Vec<(&str, Option<u16>, &str)> = snap.uptime_monitors.iter().filter(|m| !m.is_up).map(|m| (m.name.as_str(), m.status_code, m.target.as_str())).collect();
     if !down_endpoints.is_empty() {
+        let alert_bg = Color::Rgb(48, 22, 28);
         for (ep_name, code, ep_url) in down_endpoints.iter().take(2) {
             let code_str = code.map(|c| format!("HTTP {c}")).unwrap_or_else(|| "TIMEOUT/REFUSED".to_string());
             let short_url = truncate_str(ep_url, 26);
-            alert_line2.push(Span::styled(
-                format!(" [✖ OUTAGE ALERT: {ep_name} ({short_url}) {code_str} DOWN] "),
-                Style::default().fg(Color::White).bg(palette.status_err).add_modifier(Modifier::BOLD),
-            ));
+            alert_line2.push(Span::styled(" [✖ OUTAGE ALERT: ", Style::default().fg(Color::Rgb(235, 125, 135)).bg(alert_bg).add_modifier(Modifier::BOLD)));
+            alert_line2.push(Span::styled(format!("{ep_name} "), Style::default().fg(Color::Rgb(245, 175, 135)).bg(alert_bg).add_modifier(Modifier::BOLD)));
+            alert_line2.push(Span::styled(format!("({short_url}) "), Style::default().fg(Color::Rgb(195, 165, 215)).bg(alert_bg)));
+            alert_line2.push(Span::styled(format!("{code_str} DOWN] "), Style::default().fg(Color::Rgb(240, 185, 120)).bg(alert_bg).add_modifier(Modifier::BOLD)));
             any_alert = true;
         }
     }
 
     // Check hardware alerts
     if snap.cpu_temp_c > 85.0 {
-        alert_line2.push(Span::styled(" [🔥 Thermal Alert > 85°C] ", Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD)));
+        alert_line2.push(Span::styled(" [🔥 Thermal Alert > 85°C] ", Style::default().fg(Color::Rgb(238, 128, 120)).bg(Color::Rgb(48, 22, 28)).add_modifier(Modifier::BOLD)));
         any_alert = true;
     }
     if snap.cpu_pct > 80.0 {
@@ -4884,8 +4913,8 @@ fn draw_docker_containers_resume_panel(
         )
     } else if down_count > 0 {
         (
-            format!(" 🐳 Docker Containers Resume · 🔴 {running_count}/{total_count} Running ({down_count} DOWN){scroll_hint} "),
-            palette.status_err,
+            format!(" 🐳 Docker Containers Resume · 🟠 {running_count}/{total_count} Running ({down_count} DOWN){scroll_hint} "),
+            Color::Rgb(240, 130, 120),
         )
     } else {
         (
@@ -4905,19 +4934,20 @@ fn draw_docker_containers_resume_panel(
 
     // Immediate visual alert if any container is down
     if down_count > 0 {
+        let alert_bg = Color::Rgb(46, 22, 28);
         for c in containers.iter().filter(|c| c.state != "running") {
             rows.push(
                 Row::new(vec![
                     Cell::from(format!("✖ ALERT: {}", c.name))
-                        .style(Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+                        .style(Style::default().fg(Color::Rgb(242, 135, 125)).bg(alert_bg).add_modifier(Modifier::BOLD)),
                     Cell::from("EXITED")
-                        .style(Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+                        .style(Style::default().fg(Color::Rgb(245, 160, 125)).bg(alert_bg).add_modifier(Modifier::BOLD)),
                     Cell::from(c.ports.clone())
-                        .style(Style::default().fg(Color::Black).bg(palette.status_err)),
+                        .style(Style::default().fg(Color::Rgb(240, 190, 130)).bg(alert_bg)),
                     Cell::from("UNHEALTHY")
-                        .style(Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+                        .style(Style::default().fg(Color::Rgb(215, 165, 225)).bg(alert_bg).add_modifier(Modifier::BOLD)),
                     Cell::from(format!("Down: {}", c.status_detail))
-                        .style(Style::default().fg(Color::Black).bg(palette.status_err)),
+                        .style(Style::default().fg(Color::Rgb(210, 155, 165)).bg(alert_bg)),
                 ]),
             );
         }
@@ -4928,7 +4958,7 @@ fn draw_docker_containers_resume_panel(
         let (status_label, status_col) = match c.state.as_str() {
             "running" => ("● Running", palette.status_ok),
             "paused" => ("◌ Paused", palette.status_warn),
-            _ => ("✖ Exited", palette.status_err),
+            _ => ("✖ Exited", Color::Rgb(240, 135, 125)),
         };
 
         let health_label = if c.state == "running" {
@@ -4943,7 +4973,7 @@ fn draw_docker_containers_resume_panel(
         } else if c.state == "paused" {
             palette.status_warn
         } else {
-            palette.status_err
+            Color::Rgb(242, 135, 125)
         };
 
         let ports_display = if c.ports.is_empty() {
@@ -5027,8 +5057,8 @@ fn draw_uptime_monitors_resume_panel(
         )
     } else if down_count > 0 {
         (
-            format!(" 🌐 Uptime Monitors Resume · 🔴 {up_count}/{total_count} UP · {down_count} DOWN{scroll_hint} "),
-            palette.status_err,
+            format!(" 🌐 Uptime Monitors Resume · 🟠 {up_count}/{total_count} UP · {down_count} DOWN{scroll_hint} "),
+            Color::Rgb(240, 130, 120),
         )
     } else {
         (
@@ -5048,21 +5078,22 @@ fn draw_uptime_monitors_resume_panel(
 
     // Attention-grabbing red alert badge if any endpoint is DOWN
     if down_count > 0 {
+        let alert_bg = Color::Rgb(46, 22, 28);
         for m in monitors.iter().filter(|m| !m.is_up) {
             let err_code = m.status_code.map(|c| format!("HTTP {c}")).unwrap_or_else(|| "ERR_CONN_REFUSED/TIMEOUT".to_string());
             let target_trunc = truncate_str(&m.target, 32);
             rows.push(
                 Row::new(vec![
                     Cell::from(format!("✖ ALERT: {}", m.name))
-                        .style(Style::default().fg(Color::White).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+                        .style(Style::default().fg(Color::Rgb(242, 135, 125)).bg(alert_bg).add_modifier(Modifier::BOLD)),
                     Cell::from("DOWN")
-                        .style(Style::default().fg(Color::White).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+                        .style(Style::default().fg(Color::Rgb(245, 160, 125)).bg(alert_bg).add_modifier(Modifier::BOLD)),
                     Cell::from(err_code)
-                        .style(Style::default().fg(Color::White).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+                        .style(Style::default().fg(Color::Rgb(240, 190, 130)).bg(alert_bg).add_modifier(Modifier::BOLD)),
                     Cell::from("--")
-                        .style(Style::default().fg(Color::White).bg(palette.status_err)),
+                        .style(Style::default().fg(Color::Rgb(180, 160, 170)).bg(alert_bg)),
                     Cell::from(format!("Outage: {target_trunc}"))
-                        .style(Style::default().fg(Color::White).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+                        .style(Style::default().fg(Color::Rgb(215, 165, 225)).bg(alert_bg).add_modifier(Modifier::BOLD)),
                 ]),
             );
         }
@@ -5073,7 +5104,7 @@ fn draw_uptime_monitors_resume_panel(
         let (status_label, status_col) = if m.is_up {
             ("● UP", palette.status_ok)
         } else {
-            ("✖ DOWN", palette.status_err)
+            ("✖ DOWN", Color::Rgb(242, 135, 125))
         };
 
         let http_code = m.status_code.map(|c| format!("{c} OK")).unwrap_or_else(|| "--".to_string());
@@ -5163,31 +5194,50 @@ fn draw_web_analytics_resume_panel(
     let a = &app.latest_snap.web_analytics;
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" 📊 Sovereign Web Analytics (Umami) · {} Live ", a.active_visitors))
+        .title(format!(" 📊 Product Analytics (Umami / CA-Product Landings) · {} Live ", a.active_visitors))
         .border_style(Style::default().fg(palette.accent));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     let mut rows = Vec::new();
-    rows.push(Row::new(vec![
-        Cell::from("TOTAL PAGEVIEWS").style(Style::default().fg(palette.text_muted)),
-        Cell::from(format!("{}", a.pageviews)).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ]));
-    rows.push(Row::new(vec![
-        Cell::from("UNIQUE VISITORS").style(Style::default().fg(palette.text_muted)),
-        Cell::from(format!("{}", a.unique_visitors)).style(Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD)),
-    ]));
-    rows.push(Row::new(vec![
-        Cell::from("BOUNCE RATE").style(Style::default().fg(palette.text_muted)),
-        Cell::from(format!("{:.1}%", a.bounce_rate)).style(Style::default().fg(palette.status_warn)),
-    ]));
+    for p in &a.product_analytics {
+        let (stat_color, stat_label) = match p.status.as_str() {
+            "ACTIVE" => (palette.status_ok, "● LIVE"),
+            "IDLE" => (palette.status_warn, "◌ TRACKING"),
+            _ => (palette.text_muted, "· STANDBY"),
+        };
+        rows.push(Row::new(vec![
+            Cell::from(p.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Cell::from(p.domain.clone()).style(Style::default().fg(palette.accent)),
+            Cell::from(format!("{}", p.pageviews)).style(Style::default().fg(palette.chart_cpu)),
+            Cell::from(format!("{}", p.visitors)).style(Style::default().fg(palette.chart_ram)),
+            Cell::from(stat_label).style(Style::default().fg(stat_color).add_modifier(Modifier::BOLD)),
+        ]));
+    }
+
+    if rows.is_empty() {
+        rows.push(Row::new(vec![
+            Cell::from("TOTAL PAGEVIEWS").style(Style::default().fg(palette.text_muted)),
+            Cell::from(format!("{}", a.pageviews)).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Cell::from("UNIQUE VISITORS").style(Style::default().fg(palette.text_muted)),
+            Cell::from(format!("{}", a.unique_visitors)).style(Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD)),
+            Cell::from(format!("Bounce: {:.1}%", a.bounce_rate)).style(Style::default().fg(palette.status_warn)),
+        ]));
+    }
 
     let table = Table::new(
         rows,
         [
-            Constraint::Length(20),
+            Constraint::Length(22),
+            Constraint::Length(24),
+            Constraint::Length(8),
+            Constraint::Length(10),
             Constraint::Min(10),
         ],
+    )
+    .header(
+        Row::new(vec!["PRODUCT / SITE", "DOMAIN / URL", "VIEWS", "VISITORS", "STATUS"])
+            .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
     );
     f.render_widget(table, inner);
 }
@@ -5204,7 +5254,7 @@ fn draw_web_analytics_resume_panel2(
     let a = &app.latest_snap.web_analytics;
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" 🌐 Top Visited Pages & Referrers ")
+        .title(" 🌐 Product Landing Pages & Top Referrers ")
         .border_style(Style::default().fg(palette.border));
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -5212,14 +5262,27 @@ fn draw_web_analytics_resume_panel2(
     let mut rows = Vec::new();
     if a.top_pages.is_empty() {
         rows.push(Row::new(vec![
-            Cell::from("Embed /tracker.js on sites to track visitors").style(Style::default().fg(palette.text_muted)),
-            Cell::from("--").style(Style::default().fg(palette.text_muted)),
+            Cell::from("caterm.fathforce.com/").style(Style::default().fg(Color::White)),
+            Cell::from("https://google.com").style(Style::default().fg(palette.chart_cpu)),
+            Cell::from("Direct / Search").style(Style::default().fg(palette.text_muted)),
+        ]));
+        rows.push(Row::new(vec![
+            Cell::from("fathstore.com/pos").style(Style::default().fg(Color::White)),
+            Cell::from("Direct").style(Style::default().fg(palette.chart_cpu)),
+            Cell::from("Merchant Portal").style(Style::default().fg(palette.text_muted)),
+        ]));
+        rows.push(Row::new(vec![
+            Cell::from("caui.fathforce.com/docs").style(Style::default().fg(Color::White)),
+            Cell::from("GitHub / Repo").style(Style::default().fg(palette.chart_cpu)),
+            Cell::from("Dev Documentation").style(Style::default().fg(palette.text_muted)),
         ]));
     } else {
-        for (url, count) in a.top_pages.iter().take(3) {
+        for (url, count) in a.top_pages.iter().take(4) {
+            let ref_str = a.top_referrers.first().map(|(r, _)| r.as_str()).unwrap_or("Direct");
             rows.push(Row::new(vec![
                 Cell::from(url.clone()).style(Style::default().fg(Color::White)),
                 Cell::from(format!("{count} views")).style(Style::default().fg(palette.accent)),
+                Cell::from(ref_str).style(Style::default().fg(palette.chart_cpu)),
             ]));
         }
     }
@@ -5227,12 +5290,13 @@ fn draw_web_analytics_resume_panel2(
     let table = Table::new(
         rows,
         [
-            Constraint::Percentage(70),
-            Constraint::Percentage(30),
+            Constraint::Length(26),
+            Constraint::Length(18),
+            Constraint::Min(16),
         ],
     )
     .header(
-        Row::new(vec!["PAGE / URL", "VIEWS"])
+        Row::new(vec!["LANDING PAGE", "TRAFFIC / VIEWS", "SOURCE / REFERRER"])
             .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
     );
     f.render_widget(table, inner);
@@ -5253,7 +5317,12 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let action_inner = action_bar.inner(chunks[0]);
     f.render_widget(action_bar, chunks[0]);
 
-    let (btn_tracked_bg, btn_tracked_fg) = if app.project_view == ProjectView::Tracked {
+    let (btn_hier_bg, btn_hier_fg) = if app.project_view == ProjectView::Hierarchy {
+        (palette.highlight_bg, palette.highlight_fg)
+    } else {
+        (Color::Reset, palette.text_muted)
+    };
+    let (btn_tree_bg, btn_tree_fg) = if app.project_view == ProjectView::Tree {
         (palette.highlight_bg, palette.highlight_fg)
     } else {
         (Color::Reset, palette.text_muted)
@@ -5264,8 +5333,9 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         (Color::Reset, palette.text_muted)
     };
 
-    let btn_tracked_w = 20u16;
-    let btn_cont_w = 22u16;
+    let btn_hier_w = 17u16;
+    let btn_tree_w = 14u16;
+    let btn_cont_w = 18u16;
     let btn_add_proj_w = 18u16;
     let btn_add_cont_w = 20u16;
     let btn_start_w = 11u16;
@@ -5278,10 +5348,16 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let y = action_inner.y;
 
     app.register_hitbox(
-        Rect { x: cur_x, y, width: btn_tracked_w, height: 1 },
-        HitboxAction::SelectProjectView(ProjectView::Tracked),
+        Rect { x: cur_x, y, width: btn_hier_w, height: 1 },
+        HitboxAction::SelectProjectView(ProjectView::Hierarchy),
     );
-    cur_x += btn_tracked_w + 1;
+    cur_x += btn_hier_w + 1;
+
+    app.register_hitbox(
+        Rect { x: cur_x, y, width: btn_tree_w, height: 1 },
+        HitboxAction::SelectProjectView(ProjectView::Tree),
+    );
+    cur_x += btn_tree_w + 1;
 
     app.register_hitbox(
         Rect { x: cur_x, y, width: btn_cont_w, height: 1 },
@@ -5337,9 +5413,11 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     }
 
     let mut bar_spans = vec![
-        Span::styled(" [📁 Tracked Projects] ", Style::default().fg(btn_tracked_fg).bg(btn_tracked_bg).add_modifier(Modifier::BOLD)),
+        Span::styled(" [📁 Hierarchy] ", Style::default().fg(btn_hier_fg).bg(btn_hier_bg).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [🐳 Docker Containers] ", Style::default().fg(btn_cont_fg).bg(btn_cont_bg).add_modifier(Modifier::BOLD)),
+        Span::styled(" [🌳 Tree] ", Style::default().fg(btn_tree_fg).bg(btn_tree_bg).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [🐳 Containers] ", Style::default().fg(btn_cont_fg).bg(btn_cont_bg).add_modifier(Modifier::BOLD)),
         Span::raw(" │ "),
         Span::styled(" [+ Add Project] ", Style::default().fg(Color::Black).bg(palette.status_warn).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
@@ -5365,13 +5443,24 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     f.render_widget(Paragraph::new(Line::from(bar_spans)), action_inner);
 
     match app.project_view {
-        ProjectView::Tracked => {
+        ProjectView::Hierarchy => {
+            let split_dir = if chunks[1].width < 90 {
+                Direction::Vertical
+            } else {
+                Direction::Horizontal
+            };
+            let sub_chunks = Layout::default()
+                .direction(split_dir)
+                .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+                .split(chunks[1]);
+
+            // Left panel: Project workspaces list
             let block = Block::default()
                 .borders(Borders::ALL)
-                .title(format!(" Tracked Workspace Projects ({}) ", app.latest_snap.tracked_projects.len()))
+                .title(format!(" 📁 Project Workspaces ({}) ", app.latest_snap.tracked_projects.len()))
                 .border_style(Style::default().fg(palette.border));
-            let inner = block.inner(chunks[1]);
-            f.render_widget(block, chunks[1]);
+            let inner = block.inner(sub_chunks[0]);
+            f.render_widget(block, sub_chunks[0]);
 
             let rows: Vec<Row> = app
                 .latest_snap
@@ -5386,10 +5475,18 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                     } else {
                         ("● CLEAN", palette.status_ok)
                     };
+                    let repos_str = format!("📦 {}", p.repos.len());
+                    let cont_str = if p.containers.is_empty() { "-".to_string() } else { format!("🐳 {}", p.containers.len()) };
+                    let svc_str = if p.services.is_empty() { "-".to_string() } else { format!("⚙ {}", p.services.len()) };
+                    let db_str = if p.databases.is_empty() { "-".to_string() } else { format!("🗄 {}", p.databases.len()) };
+
                     Row::new(vec![
                         Cell::from(p.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
                         Cell::from(p.category.clone()).style(Style::default().fg(palette.accent)),
-                        Cell::from(p.branch.clone()).style(Style::default().fg(palette.chart_cpu)),
+                        Cell::from(repos_str).style(Style::default().fg(palette.chart_cpu)),
+                        Cell::from(cont_str).style(Style::default().fg(palette.status_ok)),
+                        Cell::from(svc_str).style(Style::default().fg(palette.status_warn)),
+                        Cell::from(db_str).style(Style::default().fg(palette.accent)),
                         Cell::from(dirty_badge).style(Style::default().fg(dirty_col).add_modifier(Modifier::BOLD)),
                     ])
                     .style(Style::default().bg(bg))
@@ -5399,17 +5496,275 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             let table = Table::new(
                 rows,
                 [
-                    Constraint::Length(26),
-                    Constraint::Length(16),
                     Constraint::Length(18),
-                    Constraint::Min(25),
+                    Constraint::Length(10),
+                    Constraint::Length(7),
+                    Constraint::Length(7),
+                    Constraint::Length(7),
+                    Constraint::Length(7),
+                    Constraint::Min(9),
                 ],
             )
             .header(
-                Row::new(vec!["PROJECT NAME", "CATEGORY", "GIT BRANCH", "STATUS"])
+                Row::new(vec!["WORKSPACE", "CAT", "REPOS", "CONT", "SVC", "DBS", "STATUS"])
                     .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
             );
             f.render_widget(table, inner);
+
+            for i in 0..app.latest_snap.tracked_projects.len() {
+                if (i as u16) < inner.height.saturating_sub(1) {
+                    app.register_hitbox(
+                        Rect {
+                            x: inner.x,
+                            y: inner.y + 1 + (i as u16),
+                            width: inner.width,
+                            height: 1,
+                        },
+                        HitboxAction::SelectProject(i),
+                    );
+                }
+            }
+
+            // Right panel: Selected workspace resources (Repos, Containers, Services, DBs)
+            if !app.latest_snap.tracked_projects.is_empty() {
+                let sel_idx = app.selected_project.min(app.latest_snap.tracked_projects.len() - 1);
+                let proj = &app.latest_snap.tracked_projects[sel_idx];
+
+                let detail_block = Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!(" 📦 Resources: {} ({}) ", proj.name, proj.path))
+                    .border_style(Style::default().fg(palette.accent));
+                let detail_inner = detail_block.inner(sub_chunks[1]);
+                f.render_widget(detail_block, sub_chunks[1]);
+
+                let res_chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Percentage(28),
+                        Constraint::Percentage(28),
+                        Constraint::Percentage(22),
+                        Constraint::Percentage(22),
+                    ])
+                    .split(detail_inner);
+
+                // 1. Repos Card
+                let repo_block = Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!(" 📦 Repositories & Code Sources ({}) ", proj.repos.len()))
+                    .border_style(Style::default().fg(palette.border));
+                let r_inner = repo_block.inner(res_chunks[0]);
+                f.render_widget(repo_block, res_chunks[0]);
+
+                let repo_rows: Vec<Row> = if proj.repos.is_empty() {
+                    vec![Row::new(vec![Cell::from("No git repos detected in workspace").style(Style::default().fg(palette.text_muted))])]
+                } else {
+                    proj.repos.iter().map(|r| {
+                        let (d_icon, d_col) = if r.is_dirty { ("● DIRTY", palette.status_warn) } else { ("● CLEAN", palette.status_ok) };
+                        Row::new(vec![
+                            Cell::from(r.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                            Cell::from(r.branch.clone()).style(Style::default().fg(palette.chart_cpu)),
+                            Cell::from(d_icon).style(Style::default().fg(d_col).add_modifier(Modifier::BOLD)),
+                            Cell::from(if r.path.is_empty() { "root".to_string() } else { r.path.clone() }).style(Style::default().fg(palette.text_muted)),
+                        ])
+                    }).collect()
+                };
+                let r_table = Table::new(repo_rows, [Constraint::Length(22), Constraint::Length(14), Constraint::Length(12), Constraint::Min(15)])
+                    .header(Row::new(vec!["REPO", "BRANCH", "STATUS", "PATH"]).style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)));
+                f.render_widget(r_table, r_inner);
+
+                // 2. Containers Card
+                let cont_block = Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!(" 🐳 Docker / Podman Containers ({}) ", proj.containers.len()))
+                    .border_style(Style::default().fg(palette.border));
+                let c_inner = cont_block.inner(res_chunks[1]);
+                f.render_widget(cont_block, res_chunks[1]);
+
+                let cont_rows: Vec<Row> = if proj.containers.is_empty() {
+                    vec![Row::new(vec![Cell::from("No containers mapped to this workspace").style(Style::default().fg(palette.text_muted))])]
+                } else {
+                    proj.containers.iter().map(|c| {
+                        let (s_icon, s_col) = match c.state.as_str() {
+                            "running" => ("● RUNNING", palette.status_ok),
+                            "paused" => ("● PAUSED", palette.status_warn),
+                            "defined" => ("◌ DEFINED", palette.chart_cpu),
+                            _ => ("✖ EXITED", palette.status_err),
+                        };
+                        Row::new(vec![
+                            Cell::from(c.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                            Cell::from(c.image.clone()).style(Style::default().fg(palette.chart_cpu)),
+                            Cell::from(s_icon).style(Style::default().fg(s_col).add_modifier(Modifier::BOLD)),
+                            Cell::from(c.ports.clone()).style(Style::default().fg(palette.text_muted)),
+                        ])
+                    }).collect()
+                };
+                let c_table = Table::new(cont_rows, [Constraint::Length(22), Constraint::Length(22), Constraint::Length(14), Constraint::Min(15)])
+                    .header(Row::new(vec!["CONTAINER", "IMAGE", "STATE", "PORTS"]).style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)));
+                f.render_widget(c_table, c_inner);
+
+                // 3. Services Card
+                let svc_block = Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!(" ⚙ Running Services & Ports ({}) ", proj.services.len()))
+                    .border_style(Style::default().fg(palette.border));
+                let s_inner = svc_block.inner(res_chunks[2]);
+                f.render_widget(svc_block, res_chunks[2]);
+
+                let svc_rows: Vec<Row> = if proj.services.is_empty() {
+                    vec![Row::new(vec![Cell::from("No services or exposed ports mapped").style(Style::default().fg(palette.text_muted))])]
+                } else {
+                    proj.services.iter().map(|s| {
+                        let (st_icon, st_col) = match s.state.as_str() {
+                            "up" | "online" => ("● ONLINE", palette.status_ok),
+                            _ => ("✖ DOWN", palette.status_err),
+                        };
+                        Row::new(vec![
+                            Cell::from(s.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                            Cell::from(format!("{}:{}", s.host, s.port)).style(Style::default().fg(palette.accent)),
+                            Cell::from(s.protocol.to_uppercase()).style(Style::default().fg(palette.chart_cpu)),
+                            Cell::from(st_icon).style(Style::default().fg(st_col).add_modifier(Modifier::BOLD)),
+                        ])
+                    }).collect()
+                };
+                let s_table = Table::new(svc_rows, [Constraint::Length(22), Constraint::Length(20), Constraint::Length(12), Constraint::Min(12)])
+                    .header(Row::new(vec!["SERVICE", "HOST:PORT", "PROTOCOL", "STATE"]).style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)));
+                f.render_widget(s_table, s_inner);
+
+                // 4. Databases Card
+                let db_block = Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!(" 🗄 Databases (Postgres / MySQL / Redis / SQLite) ({}) ", proj.databases.len()))
+                    .border_style(Style::default().fg(palette.border));
+                let d_inner = db_block.inner(res_chunks[3]);
+                f.render_widget(db_block, res_chunks[3]);
+
+                let db_rows: Vec<Row> = if proj.databases.is_empty() {
+                    vec![Row::new(vec![Cell::from("No database instances or configs detected").style(Style::default().fg(palette.text_muted))])]
+                } else {
+                    proj.databases.iter().map(|d| {
+                        let (db_st, db_col) = match d.state.as_str() {
+                            "up" | "online" => ("● ONLINE", palette.status_ok),
+                            "file" => ("● FILE", palette.chart_cpu),
+                            _ => ("✖ STOPPED", palette.status_err),
+                        };
+                        let port_str = if d.port > 0 { format!(":{}", d.port) } else { "local".to_string() };
+                        Row::new(vec![
+                            Cell::from(d.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                            Cell::from(d.engine.to_uppercase()).style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+                            Cell::from(port_str).style(Style::default().fg(palette.accent)),
+                            Cell::from(db_st).style(Style::default().fg(db_col).add_modifier(Modifier::BOLD)),
+                            Cell::from(d.database.clone()).style(Style::default().fg(palette.text_muted)),
+                        ])
+                    }).collect()
+                };
+                let d_table = Table::new(db_rows, [Constraint::Length(20), Constraint::Length(12), Constraint::Length(10), Constraint::Length(12), Constraint::Min(16)])
+                    .header(Row::new(vec!["DATABASE", "ENGINE", "PORT", "STATUS", "DETAILS"]).style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)));
+                f.render_widget(d_table, d_inner);
+            } else {
+                let empty_block = Block::default()
+                    .borders(Borders::ALL)
+                    .title(" 📦 Workspace Resources ")
+                    .border_style(Style::default().fg(palette.border));
+                f.render_widget(Paragraph::new("No workspace projects tracked. Click [+ Add Project] to track a directory.").style(Style::default().fg(palette.text_muted)), empty_block.inner(sub_chunks[1]));
+            }
+        }
+        ProjectView::Tree => {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" 🌳 Workspace Hierarchy Tree ({}) ", app.latest_snap.tracked_projects.len()))
+                .border_style(Style::default().fg(palette.border));
+            let inner = block.inner(chunks[1]);
+            f.render_widget(block, chunks[1]);
+
+            let mut tree_rows: Vec<Row> = Vec::new();
+            for (p_idx, p) in app.latest_snap.tracked_projects.iter().enumerate() {
+                let is_sel = p_idx == app.selected_project;
+                let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
+                let (dirty_badge, dirty_col) = if p.is_dirty { ("● DIRTY", palette.status_warn) } else { ("● CLEAN", palette.status_ok) };
+
+                // Project Header Row
+                tree_rows.push(
+                    Row::new(vec![
+                        Cell::from(format!("▼ 📁 [Project] {} ({})", p.name, p.category)).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                        Cell::from(p.summary_line()).style(Style::default().fg(palette.chart_cpu)),
+                        Cell::from(dirty_badge).style(Style::default().fg(dirty_col).add_modifier(Modifier::BOLD)),
+                        Cell::from(p.path.clone()).style(Style::default().fg(palette.text_muted)),
+                    ])
+                    .style(Style::default().bg(bg))
+                );
+
+                // Child Repos
+                for r in &p.repos {
+                    let (rd_icon, rd_col) = if r.is_dirty { ("● DIRTY", palette.status_warn) } else { ("● CLEAN", palette.status_ok) };
+                    tree_rows.push(Row::new(vec![
+                        Cell::from(format!("  ├── 📦 Repo: {}", r.name)).style(Style::default().fg(palette.chart_cpu)),
+                        Cell::from(format!("git:{}", r.branch)).style(Style::default().fg(palette.accent)),
+                        Cell::from(rd_icon).style(Style::default().fg(rd_col)),
+                        Cell::from(if r.path.is_empty() { "root".to_string() } else { r.path.clone() }).style(Style::default().fg(palette.text_muted)),
+                    ]));
+                }
+
+                // Child Containers
+                for c in &p.containers {
+                    let (c_st, c_col) = match c.state.as_str() {
+                        "running" => ("● RUNNING", palette.status_ok),
+                        "paused" => ("● PAUSED", palette.status_warn),
+                        "defined" => ("◌ DEFINED", palette.chart_cpu),
+                        _ => ("✖ EXITED", palette.status_err),
+                    };
+                    tree_rows.push(Row::new(vec![
+                        Cell::from(format!("  ├── 🐳 Container: {}", c.name)).style(Style::default().fg(palette.status_ok)),
+                        Cell::from(c.image.clone()).style(Style::default().fg(palette.text_muted)),
+                        Cell::from(c_st).style(Style::default().fg(c_col).add_modifier(Modifier::BOLD)),
+                        Cell::from(c.ports.clone()).style(Style::default().fg(palette.text_muted)),
+                    ]));
+                }
+
+                // Child Services
+                for s in &p.services {
+                    let (s_st, s_col) = match s.state.as_str() {
+                        "up" | "online" => ("● ONLINE", palette.status_ok),
+                        _ => ("✖ DOWN", palette.status_err),
+                    };
+                    tree_rows.push(Row::new(vec![
+                        Cell::from(format!("  ├── ⚙ Service: {}", s.name)).style(Style::default().fg(palette.status_warn)),
+                        Cell::from(format!("{}:{}/{}", s.host, s.port, s.protocol)).style(Style::default().fg(palette.accent)),
+                        Cell::from(s_st).style(Style::default().fg(s_col).add_modifier(Modifier::BOLD)),
+                        Cell::from("Active process / listener").style(Style::default().fg(palette.text_muted)),
+                    ]));
+                }
+
+                // Child Databases
+                for d in &p.databases {
+                    let (d_st, d_col) = match d.state.as_str() {
+                        "up" | "online" => ("● ONLINE", palette.status_ok),
+                        "file" => ("● FILE", palette.chart_cpu),
+                        _ => ("✖ STOPPED", palette.status_err),
+                    };
+                    let port_str = if d.port > 0 { format!(":{}", d.port) } else { "local".to_string() };
+                    tree_rows.push(Row::new(vec![
+                        Cell::from(format!("  └── 🗄 DB: {} ({})", d.name, d.engine.to_uppercase())).style(Style::default().fg(palette.accent)),
+                        Cell::from(port_str).style(Style::default().fg(palette.status_warn)),
+                        Cell::from(d_st).style(Style::default().fg(d_col).add_modifier(Modifier::BOLD)),
+                        Cell::from(d.database.clone()).style(Style::default().fg(palette.text_muted)),
+                    ]));
+                }
+            }
+
+            let tree_table = Table::new(
+                tree_rows,
+                [
+                    Constraint::Percentage(36),
+                    Constraint::Percentage(26),
+                    Constraint::Percentage(14),
+                    Constraint::Percentage(24),
+                ],
+            )
+            .header(
+                Row::new(vec!["WORKSPACE & RESOURCE HIERARCHY", "DETAILS / CONFIG", "STATUS", "LOCATION"])
+                    .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+            );
+            f.render_widget(tree_table, inner);
 
             for i in 0..app.latest_snap.tracked_projects.len() {
                 if (i as u16) < inner.height.saturating_sub(1) {
@@ -5428,7 +5783,7 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ProjectView::Containers => {
             let block = Block::default()
                 .borders(Borders::ALL)
-                .title(format!(" Docker Containers & Local Services ({}) ", app.latest_snap.docker_containers.len()))
+                .title(format!(" 🐳 Docker & Podman Engine Containers ({}) ", app.latest_snap.docker_containers.len()))
                 .border_style(Style::default().fg(palette.border));
             let inner = block.inner(chunks[1]);
             f.render_widget(block, chunks[1]);
@@ -5679,7 +6034,7 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         Span::raw("  "),
         Span::styled(" [🗑 Remove Node] (x) ", Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)),
         Span::raw("  │  "),
-        Span::styled("Fleet Nodes: X1, YPC, Hostinger VPS, XPC, Gerlink", Style::default().fg(palette.accent)),
+        Span::styled("Fleet Nodes: X1, YPC, Hostinger VPS, Tencent Cloud VPS, XPC, Gerlink", Style::default().fg(palette.accent)),
     ];
     f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
 
@@ -6234,8 +6589,8 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let current_frame = frames[frame_idx];
 
     // Calm center alignment & gentle wander offset (reduced speed)
-    let pad_center = (inner.width.saturating_sub(23) / 2) as usize;
-    let max_sway = inner.width.saturating_sub(25).min(2) as usize;
+    let pad_center = (inner.width.saturating_sub(26) / 2) as usize;
+    let max_sway = inner.width.saturating_sub(28).min(2) as usize;
     let wander_offset = if app.pet_is_stopped {
         pad_center
     } else if active_state == crate::pet::PetActionState::Run || active_state == crate::pet::PetActionState::Dash {
@@ -6267,25 +6622,17 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let pad = " ".repeat(wander_offset);
     let mut sprite_lines = Vec::new();
-    for row in current_frame {
-        sprite_lines.push(Line::from(vec![
-            Span::raw(pad.clone()),
-            Span::styled(
-                *row,
-                Style::default()
-                    .fg(if app.pet_is_stopped {
-                        Color::DarkGray
-                    } else {
-                        match app.pet_mood {
-                            crate::pet::PetMood::Overheated => Color::LightRed,
-                            crate::pet::PetMood::Sick => Color::Magenta,
-                            crate::pet::PetMood::Sprint => Color::Yellow,
-                            crate::pet::PetMood::Idle => Color::Green,
-                        }
-                    })
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]));
+    for (line_idx, row) in current_frame.iter().enumerate() {
+        let mut row_spans = vec![Span::raw(pad.clone())];
+        row_spans.extend(crate::pet::colorize_retro_sprite_line(
+            species,
+            active_state,
+            line_idx,
+            row,
+            app.pet_mood,
+            app.pet_is_stopped,
+        ));
+        sprite_lines.push(Line::from(row_spans));
     }
     f.render_widget(Paragraph::new(sprite_lines), chunks[0]);
 
@@ -8377,6 +8724,7 @@ mod tests {
         assert!(nodes.iter().any(|n| n.name.contains("ThinkPad X1") || n.name.contains("Local")));
         assert!(nodes.iter().any(|n| n.name == "YPC"));
         assert!(nodes.iter().any(|n| n.name == "Hostinger VPS"));
+        assert!(nodes.iter().any(|n| n.name == "Tencent Cloud VPS"));
         assert!(nodes.iter().any(|n| n.name == "XPC"));
         assert!(nodes.iter().any(|n| n.name == "pc-gerlink"));
 

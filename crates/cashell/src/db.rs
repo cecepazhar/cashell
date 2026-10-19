@@ -902,6 +902,76 @@ impl Database {
             daily_traffic.push((row.get(0)?, row.get(1)?));
         }
 
+        // Per-product / per-website breakdown
+        let canonical_products: [(&str, &str, &str); 4] = [
+            ("caterm", "CAProduct Landing", "caterm.fathforce.com"),
+            ("fathstore", "FathStore Engine", "fathstore.com"),
+            ("caui", "CAUI Design System", "caui.fathforce.com"),
+            ("default", "Default / Untracked", "--"),
+        ];
+
+        let mut product_analytics: Vec<crate::systat::ProductAnalyticsSummary> = Vec::new();
+        for (pid, pname, pdomain) in canonical_products {
+            let pid_filter: Option<&str> = if ref_val.is_none() { Some(pid) } else { ref_val };
+            let site_val = pid_filter.unwrap_or("default");
+
+            let p_pvs = self
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM analytics_events WHERE website_id = ?1",
+                    params![site_val],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+
+            let p_viss = self
+                .conn
+                .query_row(
+                    "SELECT COUNT(DISTINCT visitor_hash) FROM analytics_events WHERE website_id = ?1",
+                    params![site_val],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+
+            let p_actives = self
+                .conn
+                .query_row(
+                    "SELECT COUNT(DISTINCT visitor_hash) FROM analytics_events WHERE website_id = ?1 AND created_at >= datetime('now', '-5 minutes')",
+                    params![site_val],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+
+            let p_bounce = self
+                .conn
+                .query_row(
+                    "SELECT COALESCE(SUM(CASE WHEN pv = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 0.0)
+                     FROM (SELECT session_id, COUNT(*) as pv FROM analytics_events WHERE website_id = ?1 GROUP BY session_id)",
+                    params![site_val],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0.0);
+
+            let status = if p_actives > 0 {
+                "ACTIVE".to_string()
+            } else if p_pvs > 0 {
+                "IDLE".to_string()
+            } else {
+                "EMPTY".to_string()
+            };
+
+            product_analytics.push(crate::systat::ProductAnalyticsSummary {
+                product_id: pid.to_string(),
+                name: pname.to_string(),
+                domain: pdomain.to_string(),
+                pageviews: p_pvs,
+                visitors: p_viss,
+                active_now: p_actives,
+                bounce_rate: p_bounce,
+                status,
+            });
+        }
+
         Ok(crate::systat::AnalyticsSummary {
             pageviews,
             unique_visitors,
@@ -911,6 +981,7 @@ impl Database {
             top_referrers,
             device_breakdown,
             daily_traffic,
+            product_analytics,
         })
     }
 }

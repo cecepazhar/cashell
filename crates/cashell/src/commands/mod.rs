@@ -13,6 +13,7 @@ pub mod git;
 pub mod git_status;
 pub mod product;
 pub mod product_new;
+pub mod project;
 pub mod r2;
 pub mod review;
 pub mod server;

@@ -2,7 +2,7 @@
 
 use crate::commands::{
     auth::AuthCommand, chat::ChatCommand, cockpit::CockpitCommand, config::ConfigCommand,
-    daemon::DaemonCommand, product::ProductCommand, server::ServerCommand,
+    daemon::DaemonCommand, product::ProductCommand, project::ProjectCommand, server::ServerCommand,
 };
 use clap::{Parser, Subcommand};
 #[derive(Parser, Debug)]
@@ -32,6 +32,9 @@ pub enum Commands {
 
     /// CA products & marketplace info
     Product(ProductCommand),
+
+    /// Project workspaces: inspect and manage workspaces (repos, containers, services, DBs)
+    Project(ProjectCommand),
 
     /// Print version & build info
     Version(crate::commands::version::VersionCommand),

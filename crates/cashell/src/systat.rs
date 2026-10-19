@@ -87,14 +87,92 @@ pub struct DaemonHealthInfo {
     pub detail: String,
 }
 
-/// A tracked project directory from ~/Product and ~/Project.
-#[derive(Debug, Clone, Default)]
+/// A repository or code source located inside a project workspace.
+///
+/// A project may contain multiple repos (e.g. a Rust Cargo workspace or
+/// a monorepo with `crates/` sub-packages), or just its root `.git` tree.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ProjectRepo {
+    /// Display name, e.g. `crates/common` or the root project name.
+    pub name: String,
+    /// Path relative to the project root, `""` when it is the root repo.
+    pub path: String,
+    /// Current branch, when the repo exposes git metadata.
+    pub branch: String,
+    /// True when the working tree has uncommitted changes.
+    pub is_dirty: bool,
+}
+
+/// A Docker/Podman container that belongs to a project workspace.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ProjectContainer {
+    pub name: String,
+    pub image: String,
+    /// `running`, `exited`, `paused`, `created`, or `defined` for compose-only.
+    pub state: String,
+    pub status_detail: String,
+    pub ports: String,
+}
+
+/// A running service / exposed port that belongs to a project workspace.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ProjectService {
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub protocol: String,
+    /// `up`, `down`, or `defined` when declared but not running.
+    pub state: String,
+}
+
+/// A database engine (postgres/mysql/redis/sqlite/mongo) used by a project.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ProjectDatabase {
+    pub name: String,
+    /// `postgres`, `mysql`, `redis`, `sqlite`, `mongodb`, or `unknown`.
+    pub engine: String,
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    /// `up`, `down`, or `file` when it is a local file-backed store.
+    pub state: String,
+}
+
+/// A tracked project workspace: the parent of repos, containers, services & DBs.
+///
+/// Replaces the old 1:1 repo mapping. A project is a directory that can hold
+/// multiple code repos (monorepo), Docker/Podman containers, running
+/// services, and databases.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TrackedProject {
     pub path: String,
     pub name: String,
     pub category: String, // "Product" or "Project"
+    /// Root repo branch (empty when no git metadata at the root).
     pub branch: String,
+    /// True when the root repo working tree has uncommitted changes.
     pub is_dirty: bool,
+    /// Code sources (repos) inside this project workspace.
+    pub repos: Vec<ProjectRepo>,
+    /// Docker/Podman containers associated with this project.
+    pub containers: Vec<ProjectContainer>,
+    /// Running services / exposed ports owned by this project.
+    pub services: Vec<ProjectService>,
+    /// Databases used by this project.
+    pub databases: Vec<ProjectDatabase>,
+}
+
+impl TrackedProject {
+    /// One-line summary for compact UI rows: resource counts.
+    pub fn summary_line(&self) -> String {
+        format!(
+            "{} repo(s) · {} container(s) · {} service(s) · {} db(s)",
+            self.repos.len(),
+            self.containers.len(),
+            self.services.len(),
+            self.databases.len()
+        )
+    }
 }
 
 /// An Uptime Kuma style endpoint monitor with heartbeat history.
@@ -110,6 +188,19 @@ pub struct UptimeMonitor {
     pub history: Vec<bool>,
 }
 
+/// Breakdown of traffic and landing stats for a specific CA product.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ProductAnalyticsSummary {
+    pub product_id: String,
+    pub name: String,
+    pub domain: String,
+    pub pageviews: u64,
+    pub visitors: u64,
+    pub active_now: u64,
+    pub bounce_rate: f64,
+    pub status: String,
+}
+
 /// Sovereign web analytics summary (Umami-like) from SQLite.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AnalyticsSummary {
@@ -121,6 +212,7 @@ pub struct AnalyticsSummary {
     pub top_referrers: Vec<(String, u64)>,
     pub device_breakdown: Vec<(String, u64)>,
     pub daily_traffic: Vec<(String, u64)>,
+    pub product_analytics: Vec<ProductAnalyticsSummary>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -339,6 +431,7 @@ pub fn probe_fleet_nodes(local_cpu: f32, local_ram_pct: u8, local_disk_pct: u8) 
     let remotes = [
         ("YPC", "100.127.232.32", 3000, 14.2f32, 58u8, 42u8, "Dokploy Armada Host · Linux"),
         ("Hostinger VPS", "100.76.150.46", 8443, 22.5f32, 64u8, 38u8, "Edge Gateway & Proxy · Linux"),
+        ("Tencent Cloud VPS", "43.157.208.83", 22, 11.8f32, 31u8, 27u8, "Sovereign COS Node · Linux"),
         ("XPC", "100.125.125.28", 22, 18.0f32, 45u8, 52u8, "High-Compute Rig · Linux"),
         ("pc-gerlink", "100.102.147.90", 80, 9.5f32, 35u8, 28u8, "Office Terminal · Windows"),
     ];
@@ -542,7 +635,9 @@ pub fn probe_services_health(docker_running: usize, docker_total: usize) -> Vec<
 }
 
 pub fn probe_tracked_projects() -> Vec<TrackedProject> {
+    let known_containers = probe_docker_containers();
     let mut list = Vec::new();
+
     if let Some(home) = dirs::home_dir() {
         for (dir_name, cat) in [("Product", "Product"), ("Project", "Project")] {
             let path = home.join(dir_name);
@@ -554,13 +649,8 @@ pub fn probe_tracked_projects() -> Vec<TrackedProject> {
                         if !name.starts_with('.') && !name.starts_with('_') && name != "target" && name != "node_modules" {
                             let is_git = p.join(".git").exists();
                             if is_git || p.join("Cargo.toml").exists() || p.join("package.json").exists() || p.join("go.mod").exists() {
-                                list.push(TrackedProject {
-                                    path: p.to_string_lossy().to_string(),
-                                    name,
-                                    category: cat.to_string(),
-                                    branch: "main".to_string(),
-                                    is_dirty: false,
-                                });
+                                let proj = build_project_workspace(&name, &p, cat, &known_containers);
+                                list.push(proj);
                             }
                         }
                     }
@@ -585,13 +675,8 @@ pub fn probe_tracked_projects() -> Vec<TrackedProject> {
             if p.is_dir() {
                 let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
                 if !name.is_empty() && !list.iter().any(|item| item.name == name) {
-                    list.push(TrackedProject {
-                        path: expanded.clone(),
-                        name,
-                        category: "Custom".to_string(),
-                        branch: "main".to_string(),
-                        is_dirty: false,
-                    });
+                    let proj = build_project_workspace(&name, &p, "Custom", &known_containers);
+                    list.push(proj);
                 }
             }
         }
@@ -602,13 +687,28 @@ pub fn probe_tracked_projects() -> Vec<TrackedProject> {
         if let Ok(db_projs) = db.get_tracked_projects() {
             for proj in db_projs {
                 if !list.iter().any(|item| item.name == proj.name) {
-                    list.push(TrackedProject {
-                        path: proj.path,
-                        name: proj.name,
-                        category: proj.category,
-                        branch: proj.branch,
-                        is_dirty: proj.is_dirty,
-                    });
+                    let p = std::path::PathBuf::from(&proj.path);
+                    if p.is_dir() {
+                        let ws = build_project_workspace(&proj.name, &p, &proj.category, &known_containers);
+                        list.push(ws);
+                    } else {
+                        list.push(TrackedProject {
+                            path: proj.path,
+                            name: proj.name.clone(),
+                            category: proj.category,
+                            branch: proj.branch.clone(),
+                            is_dirty: proj.is_dirty,
+                            repos: vec![ProjectRepo {
+                                name: proj.name,
+                                path: "".to_string(),
+                                branch: proj.branch,
+                                is_dirty: proj.is_dirty,
+                            }],
+                            containers: Vec::new(),
+                            services: Vec::new(),
+                            databases: Vec::new(),
+                        });
+                    }
                 }
             }
         }
@@ -616,6 +716,479 @@ pub fn probe_tracked_projects() -> Vec<TrackedProject> {
 
     list.sort_by(|a, b| a.name.cmp(&b.name));
     list
+}
+
+/// Discover and assemble a project workspace with its constituent repos, containers, services, and databases.
+pub fn build_project_workspace(
+    name: &str,
+    path: &std::path::Path,
+    category: &str,
+    known_containers: &[DockerContainerInfo],
+) -> TrackedProject {
+    let mut repos = Vec::new();
+    let mut containers = Vec::new();
+    let mut services = Vec::new();
+    let mut databases = Vec::new();
+
+    // 1. Root repo metadata
+    let mut branch = "main".to_string();
+    let mut is_dirty = false;
+    let git_dir = path.join(".git");
+    if git_dir.exists() {
+        if let Ok(r) = git2::Repository::open(path) {
+            if let Ok(head) = r.head() {
+                if let Some(shorthand) = head.shorthand() {
+                    branch = shorthand.to_string();
+                }
+            }
+            let mut opts = git2::StatusOptions::new();
+            opts.include_untracked(true);
+            if let Ok(statuses) = r.statuses(Some(&mut opts)) {
+                is_dirty = !statuses.is_empty();
+            }
+        }
+        repos.push(ProjectRepo {
+            name: name.to_string(),
+            path: "".to_string(),
+            branch: branch.clone(),
+            is_dirty,
+        });
+    }
+
+    // 2. Monorepo sub-packages / crates / apps / services
+    for sub_dir_name in ["crates", "apps", "packages", "services", "modules"] {
+        let sub_base = path.join(sub_dir_name);
+        if sub_base.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&sub_base) {
+                for entry in entries.flatten() {
+                    let sp = entry.path();
+                    if sp.is_dir() {
+                        let sub_name = sp.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+                        if !sub_name.starts_with('.') && sub_name != "target" && sub_name != "node_modules" {
+                            let has_code = sp.join("Cargo.toml").exists()
+                                || sp.join("package.json").exists()
+                                || sp.join("go.mod").exists()
+                                || sp.join(".git").exists();
+                            if has_code {
+                                let mut sub_branch = branch.clone();
+                                let mut sub_dirty = false;
+                                if sp.join(".git").exists() {
+                                    if let Ok(sr) = git2::Repository::open(&sp) {
+                                        if let Ok(sh) = sr.head() {
+                                            if let Some(shorthand) = sh.shorthand() {
+                                                sub_branch = shorthand.to_string();
+                                            }
+                                        }
+                                        let mut sopts = git2::StatusOptions::new();
+                                        sopts.include_untracked(true);
+                                        if let Ok(st) = sr.statuses(Some(&mut sopts)) {
+                                            sub_dirty = !st.is_empty();
+                                        }
+                                    }
+                                }
+                                repos.push(ProjectRepo {
+                                    name: format!("{sub_dir_name}/{sub_name}"),
+                                    path: format!("{sub_dir_name}/{sub_name}"),
+                                    branch: sub_branch,
+                                    is_dirty: sub_dirty,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if repos.is_empty() {
+        repos.push(ProjectRepo {
+            name: name.to_string(),
+            path: "".to_string(),
+            branch: branch.clone(),
+            is_dirty,
+        });
+    }
+
+    // 3. Containers: match against known running/exited containers
+    let name_lower = name.to_lowercase();
+    for c in known_containers {
+        let c_lower = c.name.to_lowercase();
+        let matched = c_lower == name_lower
+            || c_lower.starts_with(&format!("{name_lower}-"))
+            || c_lower.ends_with(&format!("-{name_lower}"))
+            || c_lower.contains(&name_lower)
+            || repos.iter().any(|r| {
+                let sub_only = r.name.rsplit('/').next().unwrap_or(&r.name).to_lowercase();
+                !sub_only.is_empty() && (c_lower.contains(&sub_only) || c_lower.ends_with(&sub_only))
+            });
+
+        if matched && !containers.iter().any(|x: &ProjectContainer| x.name == c.name) {
+            containers.push(ProjectContainer {
+                name: c.name.clone(),
+                image: c.image.clone(),
+                state: c.state.clone(),
+                status_detail: c.status_detail.clone(),
+                ports: c.ports.clone(),
+            });
+        }
+    }
+
+    // 4. Containers / Services / DBs declared in docker-compose*.yml or compose*.yml
+    let mut compose_files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let ep = entry.path();
+            if ep.is_file() {
+                if let Some(fname) = ep.file_name().and_then(|n| n.to_str()) {
+                    if (fname.starts_with("docker-compose") || fname.starts_with("compose"))
+                        && (fname.ends_with(".yml") || fname.ends_with(".yaml"))
+                    {
+                        compose_files.push(ep);
+                    }
+                }
+            }
+        }
+    }
+
+    for cf in &compose_files {
+        if let Ok(content) = std::fs::read_to_string(cf) {
+            parse_compose_resources(&content, name, &mut containers, &mut services, &mut databases);
+        }
+    }
+
+    // 5. Configured ecosystem services & well-known ports
+    let well_known_services: &[(&str, u16, &str)] = &[
+        ("cashell", 8090, "http"),
+        ("caterm", 8081, "http"),
+        ("fathstore", 8082, "http"),
+        ("gcc", 8083, "http"),
+        ("9router", 20128, "http"),
+    ];
+    for &(svc_proj, port, proto) in well_known_services {
+        if name_lower == svc_proj || name_lower.contains(svc_proj) {
+            if !services.iter().any(|s| s.port == port) {
+                let state = if is_port_listening(port) { "up".to_string() } else { "down".to_string() };
+                services.push(ProjectService {
+                    name: format!("{svc_proj}-svc"),
+                    host: "127.0.0.1".to_string(),
+                    port,
+                    protocol: proto.to_string(),
+                    state,
+                });
+            }
+        }
+    }
+
+    // Check .env for PORT / APP_PORT
+    if let Ok(env_str) = std::fs::read_to_string(path.join(".env")) {
+        for line in env_str.lines() {
+            let line = line.trim();
+            if (line.starts_with("PORT=") || line.starts_with("APP_PORT=") || line.starts_with("HTTP_PORT="))
+                && !line.starts_with('#')
+            {
+                if let Some((_, val)) = line.split_once('=') {
+                    if let Ok(p) = val.trim().trim_matches('"').trim_matches('\'').parse::<u16>() {
+                        if !services.iter().any(|s| s.port == p) {
+                            let state = if is_port_listening(p) { "up".to_string() } else { "down".to_string() };
+                            services.push(ProjectService {
+                                name: format!("{name}-app"),
+                                host: "127.0.0.1".to_string(),
+                                port: p,
+                                protocol: "http".to_string(),
+                                state,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 6. Databases: scan containers, env, and local files
+    for c in &containers {
+        let img = c.image.to_lowercase();
+        let cname = c.name.to_lowercase();
+        let mut db_engine = None;
+        let mut default_port = 0u16;
+
+        if img.contains("postgres") || cname.contains("postgres") || cname.contains("pgsql") {
+            db_engine = Some("postgres");
+            default_port = 5432;
+        } else if img.contains("mysql") || cname.contains("mysql") || img.contains("mariadb") {
+            db_engine = Some("mysql");
+            default_port = 3306;
+        } else if img.contains("redis") || cname.contains("redis") {
+            db_engine = Some("redis");
+            default_port = 6379;
+        } else if img.contains("mongo") || cname.contains("mongo") {
+            db_engine = Some("mongodb");
+            default_port = 27017;
+        }
+
+        if let Some(engine) = db_engine {
+            if !databases.iter().any(|d| d.name == c.name) {
+                let db_state = if c.state == "running" { "up".to_string() } else { "down".to_string() };
+                databases.push(ProjectDatabase {
+                    name: c.name.clone(),
+                    engine: engine.to_string(),
+                    host: "127.0.0.1".to_string(),
+                    port: default_port,
+                    database: c.name.clone(),
+                    state: db_state,
+                });
+            }
+        }
+    }
+
+    // Check .env for DATABASE_URL / REDIS_URL
+    if let Ok(env_str) = std::fs::read_to_string(path.join(".env")) {
+        for line in env_str.lines() {
+            let line = line.trim();
+            if line.starts_with("DATABASE_URL=") || line.starts_with("POSTGRES_DB=") || line.starts_with("DB_DATABASE=") {
+                if let Some((_, val)) = line.split_once('=') {
+                    let clean_val = val.trim().trim_matches('"').trim_matches('\'');
+                    let engine = if clean_val.contains("postgres") || clean_val.contains("pgsql") {
+                        "postgres"
+                    } else if clean_val.contains("mysql") {
+                        "mysql"
+                    } else if clean_val.contains("sqlite") {
+                        "sqlite"
+                    } else {
+                        "postgres"
+                    };
+                    if !databases.iter().any(|d| d.engine == engine) {
+                        databases.push(ProjectDatabase {
+                            name: format!("{name}-{engine}"),
+                            engine: engine.to_string(),
+                            host: "localhost".to_string(),
+                            port: if engine == "postgres" { 5432 } else if engine == "mysql" { 3306 } else { 0 },
+                            database: clean_val.split('/').next_back().unwrap_or(name).to_string(),
+                            state: "defined".to_string(),
+                        });
+                    }
+                }
+            } else if line.starts_with("REDIS_URL=") || line.starts_with("REDIS_HOST=") {
+                if !databases.iter().any(|d| d.engine == "redis") {
+                    databases.push(ProjectDatabase {
+                        name: format!("{name}-redis"),
+                        engine: "redis".to_string(),
+                        host: "127.0.0.1".to_string(),
+                        port: 6379,
+                        database: "0".to_string(),
+                        state: if is_port_listening(6379) { "up".to_string() } else { "down".to_string() },
+                    });
+                }
+            }
+        }
+    }
+
+    // Local SQLite database files
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let ep = entry.path();
+            if ep.is_file() {
+                if let Some(fname) = ep.file_name().and_then(|n| n.to_str()) {
+                    if fname.ends_with(".db") || fname.ends_with(".sqlite") || fname.ends_with(".sqlite3") {
+                        if !databases.iter().any(|d| d.name == fname) {
+                            databases.push(ProjectDatabase {
+                                name: fname.to_string(),
+                                engine: "sqlite".to_string(),
+                                host: "localhost".to_string(),
+                                port: 0,
+                                database: ep.display().to_string(),
+                                state: "file".to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // For cashell specifically, include its central cashell.db SQLite database
+    if name_lower == "cashell" {
+        let db_path = crate::db::Database::default_path();
+        if db_path.exists() && !databases.iter().any(|d| d.name == "cashell.db") {
+            databases.push(ProjectDatabase {
+                name: "cashell.db".to_string(),
+                engine: "sqlite".to_string(),
+                host: "localhost".to_string(),
+                port: 0,
+                database: db_path.display().to_string(),
+                state: "file".to_string(),
+            });
+        }
+    }
+
+    TrackedProject {
+        path: path.display().to_string(),
+        name: name.to_string(),
+        category: category.to_string(),
+        branch,
+        is_dirty,
+        repos,
+        containers,
+        services,
+        databases,
+    }
+}
+
+fn is_port_listening(port: u16) -> bool {
+    let addr_str = format!("127.0.0.1:{port}");
+    if let Ok(addr) = addr_str.parse::<std::net::SocketAddr>() {
+        std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(25)).is_ok()
+    } else {
+        false
+    }
+}
+
+fn parse_compose_resources(
+    content: &str,
+    project_name: &str,
+    containers: &mut Vec<ProjectContainer>,
+    services: &mut Vec<ProjectService>,
+    databases: &mut Vec<ProjectDatabase>,
+) {
+    let mut in_services = false;
+    let mut current_service: Option<String> = None;
+    let mut current_image = String::new();
+    let mut current_ports = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim_end();
+        if trimmed == "services:" {
+            in_services = true;
+            continue;
+        }
+        if !in_services {
+            continue;
+        }
+
+        let leading_spaces = line.chars().take_while(|c| *c == ' ').count();
+        if (leading_spaces == 2 || leading_spaces == 4) && trimmed.ends_with(':') && !trimmed.starts_with('#') {
+            let key = trimmed.trim().trim_end_matches(':');
+            if key != "build" && key != "environment" && key != "labels" && key != "networks" && key != "ports" && key != "volumes" {
+                if let Some(sname) = current_service.take() {
+                    commit_compose_service(
+                        &sname,
+                        &current_image,
+                        &current_ports,
+                        project_name,
+                        containers,
+                        services,
+                        databases,
+                    );
+                }
+                current_service = Some(key.to_string());
+                current_image.clear();
+                current_ports.clear();
+            }
+        } else if leading_spaces >= 4 && current_service.is_some() {
+            let t = trimmed.trim();
+            if t.starts_with("image:") {
+                current_image = t.trim_start_matches("image:").trim().trim_matches('"').trim_matches('\'').to_string();
+            } else if t.starts_with("- PORT=") || t.starts_with("PORT=") {
+                if let Some((_, p)) = t.split_once('=') {
+                    if let Ok(port) = p.trim().trim_matches('"').trim_matches('\'').parse::<u16>() {
+                        current_ports.push(port);
+                    }
+                }
+            } else if t.starts_with("- ") && t.contains(':') && !t.contains("context:") {
+                let p_part = t.trim_start_matches("- ").trim().trim_matches('"').trim_matches('\'');
+                if let Some((host_p, _)) = p_part.split_once(':') {
+                    if let Ok(port) = host_p.trim().parse::<u16>() {
+                        current_ports.push(port);
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(sname) = current_service {
+        commit_compose_service(
+            &sname,
+            &current_image,
+            &current_ports,
+            project_name,
+            containers,
+            services,
+            databases,
+        );
+    }
+}
+
+fn commit_compose_service(
+    sname: &str,
+    image: &str,
+    ports: &[u16],
+    project_name: &str,
+    containers: &mut Vec<ProjectContainer>,
+    services: &mut Vec<ProjectService>,
+    databases: &mut Vec<ProjectDatabase>,
+) {
+    let img_lower = image.to_lowercase();
+    let sname_lower = sname.to_lowercase();
+
+    if img_lower.contains("postgres") || sname_lower.contains("postgres") || sname_lower.contains("pgsql") {
+        let port = ports.first().copied().unwrap_or(5432);
+        if !databases.iter().any(|d| d.name == sname) {
+            databases.push(ProjectDatabase {
+                name: sname.to_string(),
+                engine: "postgres".to_string(),
+                host: "127.0.0.1".to_string(),
+                port,
+                database: sname.to_string(),
+                state: if is_port_listening(port) { "up".to_string() } else { "down".to_string() },
+            });
+        }
+    } else if img_lower.contains("mysql") || sname_lower.contains("mysql") || img_lower.contains("mariadb") {
+        let port = ports.first().copied().unwrap_or(3306);
+        if !databases.iter().any(|d| d.name == sname) {
+            databases.push(ProjectDatabase {
+                name: sname.to_string(),
+                engine: "mysql".to_string(),
+                host: "127.0.0.1".to_string(),
+                port,
+                database: sname.to_string(),
+                state: if is_port_listening(port) { "up".to_string() } else { "down".to_string() },
+            });
+        }
+    } else if img_lower.contains("redis") || sname_lower.contains("redis") {
+        let port = ports.first().copied().unwrap_or(6379);
+        if !databases.iter().any(|d| d.name == sname) {
+            databases.push(ProjectDatabase {
+                name: sname.to_string(),
+                engine: "redis".to_string(),
+                host: "127.0.0.1".to_string(),
+                port,
+                database: "0".to_string(),
+                state: if is_port_listening(port) { "up".to_string() } else { "down".to_string() },
+            });
+        }
+    }
+
+    for &p in ports {
+        if !services.iter().any(|s| s.port == p) {
+            services.push(ProjectService {
+                name: sname.to_string(),
+                host: "127.0.0.1".to_string(),
+                port: p,
+                protocol: "http".to_string(),
+                state: if is_port_listening(p) { "up".to_string() } else { "down".to_string() },
+            });
+        }
+    }
+
+    if !containers.iter().any(|c| c.name == sname || c.name.contains(sname)) {
+        let ports_str = ports.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(",");
+        containers.push(ProjectContainer {
+            name: format!("{project_name}-{sname}"),
+            image: if image.is_empty() { format!("{project_name}-{sname}:latest") } else { image.to_string() },
+            state: "defined".to_string(),
+            status_detail: "Declared in compose".to_string(),
+            ports: ports_str,
+        });
+    }
 }
 
 // ── Uptime Kuma Style Endpoint Monitors ──────────────────────────────────────
@@ -634,6 +1207,7 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
         ("9router AI Gateway", "http://127.0.0.1:20128/health"),
         ("Dokploy YPC Host", "http://100.127.232.32:3000"),
         ("Hostinger Gateway", "https://100.76.150.46:8443"),
+        ("Tencent Cloud Node", "http://43.157.208.83/"),
         ("CAShell Daemon", "http://127.0.0.1:8090/api/health"),
         ("CAOrch VPS Agent", "http://127.0.0.1:8091/api/health"),
     ];
@@ -881,8 +1455,9 @@ fn probe_peer(name: &str, targets: &[&str], display_endpoint: &str) -> MeshPeer 
 
 pub fn probe_mesh() -> Vec<MeshPeer> {
     use rayon::prelude::*;
-    let peers: [(&str, &[&str], &str); 3] = [
+    let peers: [(&str, &[&str], &str); 4] = [
         ("Hostinger VPS", &["100.76.150.46:22", "100.76.150.46:80"], "100.76.150.46"),
+        ("Tencent Cloud VPS", &["43.157.208.83:22", "43.157.208.83:80"], "43.157.208.83"),
         ("9router Gateway", &["127.0.0.1:20128"], "localhost:20128"),
         ("YPC Dokploy", &["100.127.232.32:22", "100.127.232.32:80"], "100.127.232.32"),
     ];
@@ -1136,6 +1711,8 @@ mod tests {
         assert_eq!(local.ram_pct, Some(55));
         assert_eq!(local.disk_pct, Some(24));
         assert!(node.iter().any(|n| n.name == "YPC"));
+        assert!(node.iter().any(|n| n.name == "Hostinger VPS"));
+        assert!(node.iter().any(|n| n.name == "Tencent Cloud VPS"));
     }
 
     #[test]
