@@ -196,7 +196,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "caorch"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "anyhow",
  "axum",
@@ -218,7 +218,7 @@ dependencies = [
 
 [[package]]
 name = "cashell"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "anyhow",
  "axum",
@@ -245,7 +245,7 @@ dependencies = [
 
 [[package]]
 name = "cashell-common"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "chrono",
  "serde",

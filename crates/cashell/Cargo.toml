@@ -1,6 +1,6 @@
 [package]
 name = "cashell"
-version = "0.3.6"
+version = "0.3.7"
 edition = "2021"
 description = "CA ecosystem CLI — universal shell for Cecep Azhar tools"
 authors = ["Cecep Saeful Azhar Hidayat, ST"]

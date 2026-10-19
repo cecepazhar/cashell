@@ -3912,7 +3912,7 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         return;
     }
 
-    let title = " CAShell v0.3.6 · Isometric Cockpit ";
+    let title = " CAShell v0.3.7 · Isometric Cockpit ";
     let time_str = chrono::Local::now().format("%H:%M:%S").to_string();
 
     let router_badge = if app.is_9router_online {
@@ -7009,7 +7009,7 @@ fn draw_compact_fallback(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let snap = &app.latest_snap;
     let lines = vec![
         Line::from(Span::styled(
-            "CAShell v0.3.6 · Isometric Cockpit (Compact Mode)",
+            "CAShell v0.3.7 · Isometric Cockpit (Compact Mode)",
             Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
         )),
         Line::from(format!(
