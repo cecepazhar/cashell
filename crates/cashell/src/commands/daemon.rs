@@ -291,16 +291,36 @@ pub fn build_router(token: String) -> Router {
         .route("/api/action", post(action_handler))
         .route("/api/node/heartbeat", post(node_heartbeat_handler))
         .route("/tracker.js", get(tracker_js_handler))
-        .route("/api/collect", post(collect_analytics_handler))
+        .route(
+            "/api/collect",
+            post(collect_analytics_handler).options(collect_cors_preflight),
+        )
         .route("/api/analytics/summary", get(analytics_summary_handler))
         .with_state(state)
+}
+
+/// Handle CORS preflight requests for /api/collect so browser-based trackers can send cross-origin telemetry.
+async fn collect_cors_preflight() -> impl IntoResponse {
+    (
+        StatusCode::NO_CONTENT,
+        [
+            ("access-control-allow-origin", "*"),
+            ("access-control-allow-methods", "POST, GET, OPTIONS"),
+            ("access-control-allow-headers", "content-type, user-agent, authorization"),
+        ],
+    )
 }
 
 // ── Sovereign Web Analytics / Umami-like Endpoints ──────────────────────────
 
 /// Serve the 2KB lightweight JavaScript tracking script for sovereign web analytics.
-async fn tracker_js_handler() -> &'static str {
-    r#"
+async fn tracker_js_handler() -> impl axum::response::IntoResponse {
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "text/javascript"),
+            (axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+        ],
+        r#"
 (function(){
   var host = document.currentScript && document.currentScript.src ? document.currentScript.src.split('/').slice(0, 3).join('/') : (location.protocol + '//' + location.hostname + ':8090');
   var siteId = (document.currentScript && document.currentScript.getAttribute('data-site')) || 'default';
@@ -331,7 +351,8 @@ async fn tracker_js_handler() -> &'static str {
   if(document.readyState === 'complete') send();
   else window.addEventListener('load', send);
 })();
-"#
+"#,
+    )
 }
 
 /// Receive and persist a web pageview event to the sovereign SQLite analytics database.
@@ -375,8 +396,30 @@ async fn collect_analytics_handler(
     });
 
     match result {
-        Ok(Ok(())) => (StatusCode::OK, Json(serde_json::json!({"status": "ok"}))).into_response(),
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "db_write_failure"}))).into_response(),
+        Ok(Ok(())) => {
+            (
+                StatusCode::OK,
+                [
+                    ("access-control-allow-origin", "*"),
+                    ("access-control-allow-methods", "POST, GET, OPTIONS"),
+                    ("access-control-allow-headers", "content-type"),
+                ],
+                Json(serde_json::json!({"status": "ok"})),
+            )
+                .into_response()
+        }
+        _ => {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                [
+                    ("access-control-allow-origin", "*"),
+                    ("access-control-allow-methods", "POST, GET, OPTIONS"),
+                    ("access-control-allow-headers", "content-type"),
+                ],
+                Json(serde_json::json!({"error": "db_write_failure"})),
+            )
+                .into_response()
+        }
     }
 }
 

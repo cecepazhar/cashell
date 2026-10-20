@@ -239,6 +239,12 @@ impl Database {
                  country TEXT,
                  visitor_hash TEXT NOT NULL,
                  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+             );
+             CREATE TABLE IF NOT EXISTS analytics_websites (
+                 id TEXT PRIMARY KEY,
+                 name TEXT NOT NULL,
+                 domain TEXT NOT NULL,
+                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
              );",
         )?;
         Ok(())
@@ -782,6 +788,120 @@ impl Database {
 
     // ── Sovereign Web Analytics (Umami-like) ─────────────────────────────────
 
+    /// Register a new target website for analytics tracking.
+    pub fn add_analytic_site(&self, id: &str, name: &str, domain: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO analytics_websites (id, name, domain) VALUES (?1, ?2, ?3)",
+            params![id, name, domain],
+        )?;
+        Ok(())
+    }
+
+    /// Fetch all registered websites from `analytics_websites`.
+    pub fn get_analytic_sites(&self) -> Result<Vec<crate::systat::AnalyticSiteItem>> {
+        let mut stmt = self.conn.prepare("SELECT id, name, domain FROM analytics_websites ORDER BY name")?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(crate::systat::AnalyticSiteItem {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    domain: row.get(2)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Delete a website from the `analytics_websites` tracking table.
+    pub fn delete_analytic_site(&self, id: &str) -> Result<usize> {
+        let n = self.conn.execute("DELETE FROM analytics_websites WHERE id = ?1", params![id])?;
+        Ok(n)
+    }
+
+    /// Seed the `analytics_websites` table with the default CA product list.
+    pub fn import_default_ca_websites(&self) -> Result<()> {
+        let defaults: [(&str, &str, &str); 14] = [
+            ("caterm", "CAProduct Landing", "caterm.fathforce.com"),
+            ("fathstore", "FathStore Solo", "fathstore.com"),
+            ("caui", "CAUI Design System", "caui.fathforce.com"),
+            ("cagames", "CAGames", "cagames.fathforce.com"),
+            ("camark", "CAMark Studio", "camark.fathforce.com"),
+            ("catable", "CATAble Dashboard", "catable.fathforce.com"),
+            ("cabook", "CABook Library", "cabook.fathforce.com"),
+            ("capost", "CAPost CMS", "capost.fathforce.com"),
+            ("cacalm", "CACalm Meditation", "cacalm.fathforce.com"),
+            ("cacash", "CACash Finance", "cacash.fathforce.com"),
+            ("caentech", "CAEntech Medical", "caentech.fathforce.com"),
+            ("castudio", "CAStudio", "castudio.fathforce.com"),
+            ("caprompt", "CAPrompt Studio", "caprompt.fathforce.com"),
+            ("cecepazhar.com", "Prof. Cecep Blog", "cecepazhar.com"),
+        ];
+        for (id, name, domain) in defaults {
+            self.add_analytic_site(id, name, domain)?;
+        }
+        Ok(())
+    }
+
+    /// Export all analytics events to a JSON file.
+    pub fn export_analytics_json(&self, path: &str) -> Result<u64> {
+        let events: Vec<serde_json::Value> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT website_id, session_id, url, referrer, page_title, browser, os, device, country, visitor_hash, created_at
+                 FROM analytics_events"
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok(serde_json::json!({
+                        "website_id": row.get::<_, String>(0)?,
+                        "session_id": row.get::<_, String>(1)?,
+                        "url": row.get::<_, String>(2)?,
+                        "referrer": row.get::<_, String>(3)?,
+                        "page_title": row.get::<_, String>(4)?,
+                        "browser": row.get::<_, String>(5)?,
+                        "os": row.get::<_, String>(6)?,
+                        "device": row.get::<_, String>(7)?,
+                        "country": row.get::<_, String>(8)?,
+                        "visitor_hash": row.get::<_, String>(9)?,
+                        "created_at": row.get::<_, String>(10)?,
+                    }))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            rows
+        };
+        let mut json_str =
+            serde_json::to_string_pretty(&events).context("Failed to serialize analytics events to JSON")?;
+        json_str.push('\n');
+        std::fs::write(path, json_str)?;
+        Ok(events.len() as u64)
+    }
+
+    /// Export all analytics events to a CSV file.
+    pub fn export_analytics_csv(&self, path: &str) -> Result<u64> {
+        let mut csv_lines = vec![
+            "website_id,session_id,url,referrer,page_title,browser,os,device,country,created_at".to_string(),
+        ];
+        let mut stmt = self.conn.prepare(
+            "SELECT website_id, session_id, url, referrer, page_title, browser, os, device, country, created_at
+             FROM analytics_events"
+        )?;
+        let mut count = 0u64;
+        let rows = stmt.query_map([], |row| {
+            let mut cols = Vec::with_capacity(10);
+            for i in 0..10 {
+                let s: String = row.get(i).unwrap_or_default();
+                cols.push(format!("\"{}\"", s.replace('"', "\"\"")));
+            }
+            Ok(cols.join(","))
+        })?;
+        for row in rows {
+            let line = row?;
+            csv_lines.push(line);
+            count += 1;
+        }
+        std::fs::write(path, csv_lines.join("\n"))?;
+        Ok(count)
+    }
+
     /// Clear all recorded analytics events from the database.
     pub fn clear_analytics_events(&self) -> Result<usize> {
         let n = self.conn.execute("DELETE FROM analytics_events", [])?;
@@ -957,16 +1077,17 @@ impl Database {
         };
 
         // Per-product / per-website breakdown
-        let canonical_products: [(&str, &str, &str); 4] = [
-            ("caterm", "CAProduct Landing", "caterm.fathforce.com"),
-            ("fathstore", "FathStore Engine", "fathstore.com"),
-            ("caui", "CAUI Design System", "caui.fathforce.com"),
-            ("default", "Default / Untracked", "--"),
-        ];
+        let mut canonical_products: Vec<crate::systat::AnalyticSiteItem> =
+            self.get_analytic_sites().unwrap_or_default();
+        if canonical_products.is_empty() {
+            self.import_default_ca_websites()?;
+            canonical_products = self.get_analytic_sites().unwrap_or_default();
+        }
 
         let mut product_analytics: Vec<crate::systat::ProductAnalyticsSummary> = Vec::new();
-        for (pid, pname, pdomain) in canonical_products {
-            let pid_filter: Option<&str> = if ref_val.is_none() { Some(pid) } else { ref_val };
+        for site in &canonical_products {
+            let pid = site.id.clone();
+            let pid_filter: Option<&str> = if ref_val.is_none() { Some(pid.as_str()) } else { ref_val };
             let site_val = pid_filter.unwrap_or("default");
 
             let p_pvs = self
@@ -1016,8 +1137,8 @@ impl Database {
 
             product_analytics.push(crate::systat::ProductAnalyticsSummary {
                 product_id: pid.to_string(),
-                name: pname.to_string(),
-                domain: pdomain.to_string(),
+                name: site.name.clone(),
+                domain: site.domain.clone(),
                 pageviews: p_pvs,
                 visitors: p_viss,
                 active_now: p_actives,

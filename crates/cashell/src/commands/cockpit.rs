@@ -13,7 +13,7 @@
 //! - Robust RAII terminal guard with panic recovery + compact fallback for < 80x24 terminals.
 
 use crate::config::Config;
-use crate::systat::{snapshot, CpuCoreInfo, SysSnapshot};
+use crate::systat::{snapshot, AnalyticSiteItem, CpuCoreInfo, SysSnapshot};
 use anyhow::Result;
 use clap::Parser;
 use crossterm::{
@@ -238,6 +238,14 @@ pub enum HitboxAction {
     SelectAnalyticsSite(usize),
     ShowAnalyticsScript,
     ClearAnalyticsData,
+    ImportAnalyticsSites,
+    ExportAnalyticsJson,
+    ExportAnalyticsCsv,
+    ShowSiteWizard,
+    FocusSiteImportName,
+    FocusSiteImportDomain,
+    SubmitSiteImport,
+    CancelSiteImport,
     // Server tab actions
     SelectServer(usize),
     ProbeServers,
@@ -261,13 +269,6 @@ pub enum HitboxAction {
 pub struct Hitbox {
     pub rect: Rect,
     pub action: HitboxAction,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AnalyticSiteItem {
-    pub id: String,
-    pub name: String,
-    pub domain: String,
 }
 
 // ── Tab Navigation ──────────────────────────────────────────────────────────
@@ -585,6 +586,10 @@ pub struct CockpitApp {
     pub analytics_site_filter: Option<String>,
     pub analytics_scroll: usize,
     pub show_analytics_script_modal: bool,
+    pub show_site_import_modal: bool,
+    pub site_import_selected: usize,
+    pub site_import_name: String,
+    pub site_import_domain: String,
 
     // Security & Master Password Lock Screen
     pub is_locked: bool,
@@ -770,6 +775,10 @@ impl CockpitApp {
             analytics_site_filter: None,
             analytics_scroll: 0,
             show_analytics_script_modal: false,
+            show_site_import_modal: false,
+            site_import_selected: 0,
+            site_import_name: String::new(),
+            site_import_domain: String::new(),
 
             is_locked: cfg.security.require_password && !cfg.security.master_password_hash.is_empty(),
             lock_password_buf: String::new(),
@@ -1453,39 +1462,23 @@ impl CockpitApp {
     }
 
     pub fn analytic_sites(&self) -> Vec<AnalyticSiteItem> {
-        let mut list = vec![
-            AnalyticSiteItem {
-                id: String::new(),
-                name: "All Sovereign Apps".to_string(),
-                domain: "* (Aggregated)".to_string(),
-            },
-            AnalyticSiteItem {
-                id: "caterm".to_string(),
-                name: "CATerm".to_string(),
-                domain: "caterm.fathforce.com".to_string(),
-            },
-            AnalyticSiteItem {
-                id: "fathstore".to_string(),
-                name: "FathStore Solo".to_string(),
-                domain: "fathstore.com".to_string(),
-            },
-            AnalyticSiteItem {
-                id: "caui".to_string(),
-                name: "CAUI Design System".to_string(),
-                domain: "caui.fathforce.com".to_string(),
-            },
-            AnalyticSiteItem {
-                id: "cecepazhar.com".to_string(),
-                name: "Prof. Cecep Blog".to_string(),
-                domain: "cecepazhar.com".to_string(),
-            },
-            AnalyticSiteItem {
-                id: "camark".to_string(),
-                name: "CAMark Studio".to_string(),
-                domain: "camark.fathforce.com".to_string(),
-            },
-        ];
+        let mut list = vec![AnalyticSiteItem {
+            id: String::new(),
+            name: "All Sovereign Apps".to_string(),
+            domain: "* (Aggregated)".to_string(),
+        }];
 
+        if let Some(ref d) = self.db {
+            if let Ok(db_sites) = d.get_analytic_sites() {
+                for s in db_sites {
+                    if !list.iter().any(|item| item.id == s.id) {
+                        list.push(s);
+                    }
+                }
+            }
+        }
+
+        // Also merge any tracked projects from local filesystem
         for p in &self.latest_snap.tracked_projects {
             let id = p.name.to_lowercase().replace(' ', "-");
             if !list.iter().any(|s| s.id == id) {
@@ -1497,6 +1490,81 @@ impl CockpitApp {
             }
         }
         list
+    }
+
+    pub fn import_all_landing_sites(&mut self) {
+        if let Some(ref d) = self.db {
+            let _ = d.import_default_ca_websites();
+            self.sample_system();
+            self.set_notification("✓ Imported 14 CA Ecosystem landing sites into Analytics");
+        }
+    }
+
+    pub fn export_analytics_data_json(&mut self) {
+        if let Some(ref d) = self.db {
+            let path = dirs::config_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("/home/cecepazhar/.config"))
+                .join("cashell/analytics_export.json");
+            match d.export_analytics_json(&path.to_string_lossy()) {
+                Ok(count) => {
+                    self.set_notification(format!("✓ Exported {count} events to {}", path.display()));
+                }
+                Err(e) => {
+                    self.set_notification(format!("✗ Export JSON failed: {e}"));
+                }
+            }
+        }
+    }
+
+    pub fn export_analytics_data_csv(&mut self) {
+        if let Some(ref d) = self.db {
+            let path = dirs::config_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("/home/cecepazhar/.config"))
+                .join("cashell/analytics_export.csv");
+            match d.export_analytics_csv(&path.to_string_lossy()) {
+                Ok(count) => {
+                    self.set_notification(format!("✓ Exported {count} events to {}", path.display()));
+                }
+                Err(e) => {
+                    self.set_notification(format!("✗ Export CSV failed: {e}"));
+                }
+            }
+        }
+    }
+
+    pub fn remove_selected_analytics_site(&mut self) {
+        let sites = self.analytic_sites();
+        if self.analytics_selected_site == 0 || self.analytics_selected_site >= sites.len() {
+            self.set_notification("⚠ Select a specific website to remove (cannot remove All Sites filter)");
+            return;
+        }
+        let site = &sites[self.analytics_selected_site];
+        let site_id = site.id.clone();
+        if let Some(ref d) = self.db {
+            let _ = d.delete_analytic_site(&site_id);
+            self.analytics_selected_site = 0;
+            self.analytics_site_filter = None;
+            self.sample_system();
+            self.set_notification(format!("🗑 Website '{site_id}' removed from tracking"));
+        }
+    }
+
+    pub fn submit_site_import_wizard(&mut self) {
+        let name = self.site_import_name.trim().to_string();
+        let domain = self.site_import_domain.trim().to_string();
+        if name.is_empty() || domain.is_empty() {
+            self.set_notification("✗ Site Name and Domain cannot be empty");
+            return;
+        }
+        let id = name.to_lowercase().replace(' ', "-");
+        if let Some(ref d) = self.db {
+            let _ = d.add_analytic_site(&id, &name, &domain);
+            self.site_import_name.clear();
+            self.site_import_domain.clear();
+            self.show_site_import_modal = false;
+            self.sample_system();
+            self.set_notification(format!("✓ Registered website '{name}' ({domain})"));
+        }
     }
 
     pub fn simulate_analytics_pageview(&mut self) {
@@ -2580,6 +2648,11 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         return Ok(false);
     }
 
+    if app.show_site_import_modal {
+        handle_site_import_modal_key(key, app);
+        return Ok(false);
+    }
+
     // 3. If user is editing a field in Settings GUI
     if let Some(field_idx) = app.editing_field {
         match key.code {
@@ -3104,7 +3177,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             app.remove_selected_server();
         }
 
-        // Analytics Tab shortcuts: 'w': Cycle site, 's': Script snippet, 'r': Refresh, 't': Test hit, 'x': Clear
+        // Analytics Tab shortcuts: 'w': Cycle site, 's'/'t': Script/Template, 'r': Refresh, 'p': Test hit, 'i': Import, 'e': Export, 'a': Add Site, 'x': Clear/Delete
         KeyCode::Char('w') if app.current_tab == CockpitTab::Analytics => {
             let sites = app.analytic_sites();
             if !sites.is_empty() {
@@ -3120,7 +3193,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 app.set_notification(format!("Analytics filter: {label}"));
             }
         }
-        KeyCode::Char('s') if app.current_tab == CockpitTab::Analytics => {
+        KeyCode::Char('s') | KeyCode::Char('t') if app.current_tab == CockpitTab::Analytics => {
             app.show_analytics_script_modal = !app.show_analytics_script_modal;
         }
         KeyCode::Char('r') if app.current_tab == CockpitTab::Analytics => {
@@ -3128,11 +3201,26 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             app.ingest_snapshot(app.latest_snap.clone());
             app.set_notification("📊 Analytics reloaded");
         }
-        KeyCode::Char('t') if app.current_tab == CockpitTab::Analytics => {
+        KeyCode::Char('p') if app.current_tab == CockpitTab::Analytics => {
             app.simulate_analytics_pageview();
         }
+        KeyCode::Char('i') if app.current_tab == CockpitTab::Analytics => {
+            app.import_all_landing_sites();
+        }
+        KeyCode::Char('e') if app.current_tab == CockpitTab::Analytics => {
+            app.export_analytics_data_json();
+            app.export_analytics_data_csv();
+        }
+        KeyCode::Char('a') if app.current_tab == CockpitTab::Analytics => {
+            app.show_site_import_modal = true;
+            app.site_import_name.clear();
+            app.site_import_domain.clear();
+            app.site_import_selected = 0;
+        }
         KeyCode::Char('x') | KeyCode::Delete if app.current_tab == CockpitTab::Analytics => {
-            if let Some(ref d) = app.db {
+            if app.analytics_selected_site > 0 {
+                app.remove_selected_analytics_site();
+            } else if let Some(ref d) = app.db {
                 let _ = d.clear_analytics_events();
                 app.sample_system();
                 app.ingest_snapshot(app.latest_snap.clone());
@@ -3345,6 +3433,38 @@ fn handle_monitor_wizard_key(key: event::KeyEvent, app: &mut CockpitApp) {
     }
 }
 
+fn handle_site_import_modal_key(key: event::KeyEvent, app: &mut CockpitApp) {
+    match key.code {
+        KeyCode::Esc => {
+            app.show_site_import_modal = false;
+        }
+        KeyCode::Enter => {
+            app.submit_site_import_wizard();
+        }
+        KeyCode::Tab | KeyCode::Down => {
+            app.site_import_selected = (app.site_import_selected + 1) % 2;
+        }
+        KeyCode::BackTab | KeyCode::Up => {
+            app.site_import_selected = (app.site_import_selected + 1) % 2;
+        }
+        KeyCode::Backspace => {
+            match app.site_import_selected {
+                0 => { app.site_import_name.pop(); }
+                1 => { app.site_import_domain.pop(); }
+                _ => {}
+            }
+        }
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            match app.site_import_selected {
+                0 => app.site_import_name.push(c),
+                1 => app.site_import_domain.push(c),
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+}
+
 // ── Mouse Event Handling ─────────────────────────────────────────────────────
 
 fn handle_mouse_event<B: ratatui::backend::Backend>(
@@ -3527,6 +3647,33 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                             app.ingest_snapshot(app.latest_snap.clone());
                             app.set_notification("Analytics data wiped clean");
                         }
+                    }
+                    HitboxAction::ImportAnalyticsSites => {
+                        app.import_all_landing_sites();
+                    }
+                    HitboxAction::ExportAnalyticsJson => {
+                        app.export_analytics_data_json();
+                    }
+                    HitboxAction::ExportAnalyticsCsv => {
+                        app.export_analytics_data_csv();
+                    }
+                    HitboxAction::ShowSiteWizard => {
+                        app.show_site_import_modal = true;
+                        app.site_import_name.clear();
+                        app.site_import_domain.clear();
+                        app.site_import_selected = 0;
+                    }
+                    HitboxAction::FocusSiteImportName => {
+                        app.site_import_selected = 0;
+                    }
+                    HitboxAction::FocusSiteImportDomain => {
+                        app.site_import_selected = 1;
+                    }
+                    HitboxAction::SubmitSiteImport => {
+                        app.submit_site_import_wizard();
+                    }
+                    HitboxAction::CancelSiteImport => {
+                        app.show_site_import_modal = false;
                     }
                     HitboxAction::SelectServer(idx) => {
                         app.selected_server = idx;
@@ -4115,6 +4262,10 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     if app.show_analytics_script_modal {
         draw_analytics_script_modal(f, app, area);
+    }
+
+    if app.show_site_import_modal {
+        draw_site_import_modal(f, app, area);
     }
 }
 
@@ -7128,24 +7279,38 @@ fn draw_analytics_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let btn_refresh_w = 16u16;
     let btn_script_w = 16u16;
+    let btn_import_w = 14u16;
+    let btn_export_w = 14u16;
+    let btn_add_w = 14u16;
+    let btn_del_w = 14u16;
 
-    app.register_hitbox(
-        Rect { x: bar_inner.x + 1, y: bar_inner.y, width: btn_refresh_w, height: 1 },
-        HitboxAction::RefreshAnalytics,
-    );
-    app.register_hitbox(
-        Rect { x: bar_inner.x + btn_refresh_w + 3, y: bar_inner.y, width: btn_script_w, height: 1 },
-        HitboxAction::ShowAnalyticsScript,
-    );
+    let x0 = bar_inner.x;
+    let y0 = bar_inner.y;
+    let h = bar_inner.height.min(1);
+    app.register_hitbox(Rect { x: x0 + 1, y: y0, width: btn_refresh_w, height: h }, HitboxAction::RefreshAnalytics);
+    let x1 = x0 + btn_refresh_w + 3;
+    app.register_hitbox(Rect { x: x1, y: y0, width: btn_script_w, height: h }, HitboxAction::ShowAnalyticsScript);
+    let x2 = x1 + btn_script_w + 1;
+    app.register_hitbox(Rect { x: x2, y: y0, width: btn_import_w, height: h }, HitboxAction::ImportAnalyticsSites);
+    let x3 = x2 + btn_import_w + 1;
+    app.register_hitbox(Rect { x: x3, y: y0, width: btn_export_w, height: h }, HitboxAction::ExportAnalyticsJson);
+    let x4 = x3 + btn_export_w + 1;
+    app.register_hitbox(Rect { x: x4, y: y0, width: btn_add_w, height: h }, HitboxAction::ShowSiteWizard);
+    let x5 = x4 + btn_add_w + 1;
+    app.register_hitbox(Rect { x: x5, y: y0, width: btn_del_w, height: h }, HitboxAction::ClearAnalyticsData);
 
     let bar_spans = vec![
         Span::styled(" [ Refresh (r) ] ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
         Span::styled(" [ Script (s) ] ", Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [ Wipe (x) ] ", Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
-        Span::raw("  "),
-        Span::styled("📊 Sovereign Web Analytics (Umami-like)", Style::default().fg(palette.text_muted)),
+        Span::styled(" [ Import (i) ] ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [ Export (e) ] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [ Add Site (a) ] ", Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [ Wipe/Del (x) ] ", Style::default().fg(Color::Black).bg(Color::LightRed).add_modifier(Modifier::BOLD)),
     ];
     f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
 
@@ -7422,21 +7587,122 @@ fn draw_analytics_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if app.show_analytics_script_modal {
         draw_analytics_script_modal(f, app, area);
     }
+
+    if app.show_site_import_modal {
+        draw_site_import_modal(f, app, area);
+    }
 }
 
-fn draw_analytics_script_modal(f: &mut Frame, _app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get("solar");
-    let modal_width = 90.min(area.width.saturating_sub(2));
-    let modal_height = 18.min(area.height.saturating_sub(2));
+fn draw_site_import_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let popup_area = centered_rect(65, 42, area);
+    f.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(" 🌐 Add Website / Landing Page to Sovereign Analytics ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    if inner.width < 20 || inner.height < 4 {
+        return;
+    }
+
+    let fields = [
+        ("Site Name:", app.site_import_name.clone(), "e.g. CATerm Terminal"),
+        ("Domain:", app.site_import_domain.clone(), "e.g. caterm.fathforce.com"),
+    ];
+
+    let mut lines = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "Register a website or landing page for live visitor tracking.",
+        Style::default().fg(palette.text_muted),
+    )));
+    lines.push(Line::from(""));
+
+    let field_start_y = inner.y + 2;
+    for (i, (label, val, placeholder)) in fields.iter().enumerate() {
+        let is_focused = app.site_import_selected == i;
+        let prefix = if is_focused { "▶ " } else { "  " };
+        let val_span = if is_focused {
+            Span::styled(
+                format!(" [ {}█ ] ", val),
+                Style::default()
+                    .fg(Color::Rgb(0, 0, 0))
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            let display_val = if val.is_empty() { *placeholder } else { val.as_str() };
+            Span::styled(
+                format!(" [ {} ] ", display_val),
+                Style::default().fg(if val.is_empty() { Color::DarkGray } else { Color::White }),
+            )
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(prefix, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{:<14}", label), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            val_span,
+        ]));
+        lines.push(Line::from(""));
+
+        let hitbox_action = match i {
+            0 => HitboxAction::FocusSiteImportName,
+            _ => HitboxAction::FocusSiteImportDomain,
+        };
+        app.register_hitbox(
+            Rect {
+                x: inner.x + 2,
+                y: field_start_y + (i as u16 * 2),
+                width: inner.width.saturating_sub(4),
+                height: 1,
+            },
+            hitbox_action,
+        );
+    }
+
+    let btn_y = inner.bottom().saturating_sub(2);
+    let submit_span = Span::styled(
+        " [ Submit (Enter) ] ",
+        Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD),
+    );
+    let cancel_span = Span::styled(
+        " [ Cancel (Esc) ] ",
+        Style::default().fg(Color::Black).bg(palette.status_warn).add_modifier(Modifier::BOLD),
+    );
+
+    app.register_hitbox(
+        Rect { x: inner.x + 2, y: btn_y, width: 20, height: 1 },
+        HitboxAction::SubmitSiteImport,
+    );
+    app.register_hitbox(
+        Rect { x: inner.x + 24, y: btn_y, width: 18, height: 1 },
+        HitboxAction::CancelSiteImport,
+    );
+
+    f.render_widget(Paragraph::new(lines), Rect { x: inner.x + 1, y: inner.y + 1, width: inner.width.saturating_sub(2), height: inner.height.saturating_sub(3) });
+    f.render_widget(
+        Paragraph::new(Line::from(vec![submit_span, Span::raw("  "), cancel_span])),
+        Rect { x: inner.x + 2, y: btn_y, width: inner.width.saturating_sub(4), height: 1 },
+    );
+}
+
+fn draw_analytics_script_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let modal_width = 96.min(area.width.saturating_sub(2));
+    let modal_height = 24.min(area.height.saturating_sub(2));
     let x = (area.width.saturating_sub(modal_width)) / 2;
     let y = (area.height.saturating_sub(modal_height)) / 2;
     let modal_area = Rect { x, y, width: modal_width, height: modal_height };
 
     f.render_widget(Clear, modal_area);
 
+    let active_site = app.analytics_site_filter.as_deref().unwrap_or("caterm");
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" 📊 Install Sovereign Web Analytics Tracker Script ")
+        .title(format!(" 📋 Sovereign Web Analytics · Tracker Templates (Site ID: '{active_site}') "))
         .title_alignment(Alignment::Center)
         .border_style(Style::default().fg(palette.status_ok));
 
@@ -7444,23 +7710,40 @@ fn draw_analytics_script_modal(f: &mut Frame, _app: &mut CockpitApp, area: Rect)
     f.render_widget(block, modal_area);
 
     let lines = vec![
-        Line::from(" Paste the following JavaScript snippet into the <head> of your CA app: "),
-        Line::from(Span::raw(" ")),
-        Line::from(Span::raw(" <script defer>")),
-        Line::from(Span::raw("   (function() {")),
-        Line::from(Span::raw("     var cfg = {")),
-        Line::from(Span::raw("       endpoint: 'http://127.0.0.1:8090/api/collect',")),
-        Line::from(Span::raw("       site: 'caterm' // use your own CA app ID: caterm, fathstore, caui")),
-        Line::from(Span::raw("     };")),
-        Line::from(Span::raw("     navigator.sendBeacon(cfg.endpoint, JSON.stringify({")),
-        Line::from(Span::raw("       website_id: cfg.site,")),
-        Line::from(Span::raw("       url: location.pathname,")),
-        Line::from(Span::raw("       referrer: document.referrer,")),
-        Line::from(Span::raw("       title: document.title,")),
-        Line::from(Span::raw("     }));")),
-        Line::from(Span::raw("   })();")),
-        Line::from(Span::raw(" </script>")),
-        Line::from(Span::raw(" ")),
+        Line::from(vec![
+            Span::styled("⚡ 1. Universal HTML / Landing (index.html):", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(Span::styled(
+            format!("   <script defer src=\"http://127.0.0.1:8090/tracker.js\" data-site=\"{active_site}\"></script>"),
+            Style::default().fg(Color::Cyan),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("⚡ 2. Svelte 5 / SvelteKit (src/routes/+layout.svelte):", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(Span::styled(
+            format!("   <svelte:head>\n     <script defer src=\"http://127.0.0.1:8090/tracker.js\" data-site=\"{active_site}\"></script>\n   </svelte:head>"),
+            Style::default().fg(Color::Cyan),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("⚡ 3. Astro / SSR (src/layouts/Layout.astro):", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(Span::styled(
+            format!("   <script defer src=\"http://127.0.0.1:8090/tracker.js\" data-site=\"{active_site}\"></script>"),
+            Style::default().fg(Color::Cyan),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("⚡ 4. WordPress / PHP (functions.php):", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(Span::styled(
+            format!("   add_action('wp_head', fn() => print('<script defer src=\"http://127.0.0.1:8090/tracker.js\" data-site=\"{active_site}\"></script>'));"),
+            Style::default().fg(Color::Cyan),
+        )),
+        Line::from(""),
+        Line::from(Span::styled("📌 Note: For public production, replace 'http://127.0.0.1:8090' with your public domain or CF Tunnel (e.g. 'https://cashell.cecepazhar.com').", Style::default().fg(palette.text_muted))),
+        Line::from(""),
         Line::from(Span::styled(" [ Press Esc to Close ] ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD))),
     ];
 

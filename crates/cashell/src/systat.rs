@@ -201,6 +201,14 @@ pub struct ProductAnalyticsSummary {
     pub status: String,
 }
 
+/// A registered website target for the Sovereign Web Analytics tracker system.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AnalyticSiteItem {
+    pub id: String,
+    pub name: String,
+    pub domain: String,
+}
+
 /// Breakdown statistics for categorical analytics fields (Browsers, OS, Locations).
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AnalyticsBreakdown {
