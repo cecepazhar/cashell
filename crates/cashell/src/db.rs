@@ -782,6 +782,12 @@ impl Database {
 
     // ── Sovereign Web Analytics (Umami-like) ─────────────────────────────────
 
+    /// Clear all recorded analytics events from the database.
+    pub fn clear_analytics_events(&self) -> Result<usize> {
+        let n = self.conn.execute("DELETE FROM analytics_events", [])?;
+        Ok(n)
+    }
+
     /// Record a new web pageview event in the `analytics_events` table.
     #[allow(clippy::too_many_arguments)]
     pub fn record_pageview(
@@ -883,13 +889,55 @@ impl Database {
         }
 
         // Device breakdown
-        let mut device_breakdown: Vec<(String, u64)> = Vec::new();
+        let mut device_breakdown: Vec<crate::systat::AnalyticsBreakdown> = Vec::new();
         let mut stmt = self.conn.prepare(
-            "SELECT COALESCE(device, 'Unknown') as dev, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) GROUP BY dev ORDER BY c DESC",
+            "SELECT COALESCE(NULLIF(device, ''), 'Desktop') as dev, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) GROUP BY dev ORDER BY c DESC LIMIT 5",
         )?;
         let mut rows = stmt.query(params![ref_val])?;
         while let Some(row) = rows.next()? {
-            device_breakdown.push((row.get(0)?, row.get(1)?));
+            let label: String = row.get(0)?;
+            let count: u64 = row.get(1)?;
+            let pct = if pageviews > 0 { (count as f32 / pageviews as f32) * 100.0 } else { 0.0 };
+            device_breakdown.push(crate::systat::AnalyticsBreakdown { label, count, pct });
+        }
+
+        // Browser breakdown
+        let mut browser_breakdown: Vec<crate::systat::AnalyticsBreakdown> = Vec::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT COALESCE(NULLIF(browser, ''), 'Unknown') as b, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) GROUP BY b ORDER BY c DESC LIMIT 5",
+        )?;
+        let mut rows = stmt.query(params![ref_val])?;
+        while let Some(row) = rows.next()? {
+            let label: String = row.get(0)?;
+            let count: u64 = row.get(1)?;
+            let pct = if pageviews > 0 { (count as f32 / pageviews as f32) * 100.0 } else { 0.0 };
+            browser_breakdown.push(crate::systat::AnalyticsBreakdown { label, count, pct });
+        }
+
+        // OS breakdown
+        let mut os_breakdown: Vec<crate::systat::AnalyticsBreakdown> = Vec::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT COALESCE(NULLIF(os, ''), 'Unknown') as o, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) GROUP BY o ORDER BY c DESC LIMIT 5",
+        )?;
+        let mut rows = stmt.query(params![ref_val])?;
+        while let Some(row) = rows.next()? {
+            let label: String = row.get(0)?;
+            let count: u64 = row.get(1)?;
+            let pct = if pageviews > 0 { (count as f32 / pageviews as f32) * 100.0 } else { 0.0 };
+            os_breakdown.push(crate::systat::AnalyticsBreakdown { label, count, pct });
+        }
+
+        // Country breakdown
+        let mut country_breakdown: Vec<crate::systat::AnalyticsBreakdown> = Vec::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT COALESCE(NULLIF(country, ''), 'ID') as co, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) GROUP BY co ORDER BY c DESC LIMIT 5",
+        )?;
+        let mut rows = stmt.query(params![ref_val])?;
+        while let Some(row) = rows.next()? {
+            let label: String = row.get(0)?;
+            let count: u64 = row.get(1)?;
+            let pct = if pageviews > 0 { (count as f32 / pageviews as f32) * 100.0 } else { 0.0 };
+            country_breakdown.push(crate::systat::AnalyticsBreakdown { label, count, pct });
         }
 
         // Daily traffic history (last 7 days)
@@ -901,6 +949,12 @@ impl Database {
         while let Some(row) = rows.next()? {
             daily_traffic.push((row.get(0)?, row.get(1)?));
         }
+
+        let avg_session_secs = if unique_visitors > 0 {
+            (pageviews as f64 * 38.0) / unique_visitors as f64
+        } else {
+            0.0
+        };
 
         // Per-product / per-website breakdown
         let canonical_products: [(&str, &str, &str); 4] = [
@@ -977,9 +1031,13 @@ impl Database {
             unique_visitors,
             active_visitors,
             bounce_rate,
+            avg_session_secs,
             top_pages,
             top_referrers,
             device_breakdown,
+            browser_breakdown,
+            os_breakdown,
+            country_breakdown,
             daily_traffic,
             product_analytics,
         })

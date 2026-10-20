@@ -391,10 +391,15 @@ async fn analytics_summary_handler() -> impl IntoResponse {
                     "unique_visitors": summary.unique_visitors,
                     "active_visitors": summary.active_visitors,
                     "bounce_rate": summary.bounce_rate,
+                    "avg_session_secs": summary.avg_session_secs,
                     "top_pages": summary.top_pages,
                     "top_referrers": summary.top_referrers,
                     "device_breakdown": summary.device_breakdown,
+                    "browser_breakdown": summary.browser_breakdown,
+                    "os_breakdown": summary.os_breakdown,
+                    "country_breakdown": summary.country_breakdown,
                     "daily_traffic": summary.daily_traffic,
+                    "product_analytics": summary.product_analytics,
                 });
                 (StatusCode::OK, Json(json_val)).into_response()
             }

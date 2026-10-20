@@ -233,6 +233,11 @@ pub enum HitboxAction {
     ProbeMonitors,
     RemoveMonitor,
     EditMonitor,
+    // Analytics tab actions
+    RefreshAnalytics,
+    SelectAnalyticsSite(usize),
+    ShowAnalyticsScript,
+    ClearAnalyticsData,
     // Server tab actions
     SelectServer(usize),
     ProbeServers,
@@ -258,6 +263,13 @@ pub struct Hitbox {
     pub action: HitboxAction,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalyticSiteItem {
+    pub id: String,
+    pub name: String,
+    pub domain: String,
+}
+
 // ── Tab Navigation ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,16 +278,17 @@ pub enum CockpitTab {
     Project = 1,
     Uptime = 2,
     Server = 3,
-    Audit = 4,
-    Cron = 5,
-    Log = 6,
-    Terminal = 7,
-    AI = 8,
-    Setting = 9,
+    Analytics = 4,
+    Audit = 5,
+    Cron = 6,
+    Log = 7,
+    Terminal = 8,
+    AI = 9,
+    Setting = 10,
 }
 
 impl CockpitTab {
-    pub const COUNT: usize = 10;
+    pub const COUNT: usize = 11;
 
     pub fn from_index(idx: usize) -> Self {
         match idx {
@@ -283,11 +296,12 @@ impl CockpitTab {
             1 => Self::Project,
             2 => Self::Uptime,
             3 => Self::Server,
-            4 => Self::Audit,
-            5 => Self::Cron,
-            6 => Self::Log,
-            7 => Self::Terminal,
-            8 => Self::AI,
+            4 => Self::Analytics,
+            5 => Self::Audit,
+            6 => Self::Cron,
+            7 => Self::Log,
+            8 => Self::Terminal,
+            9 => Self::AI,
             _ => Self::Setting,
         }
     }
@@ -296,18 +310,19 @@ impl CockpitTab {
         self as usize
     }
 
-    pub fn titles() -> [&'static str; 10] {
+    pub fn titles() -> [&'static str; 11] {
         [
             "[1] Dashboard",
             "[2] Project",
             "[3] Uptime",
             "[4] Server",
-            "[5] Audit",
-            "[6] CRON",
-            "[7] Log",
-            "[8] Terminal",
-            "[9] AI",
-            "[0] Setting",
+            "[5] Analytics",
+            "[6] Audit",
+            "[7] CRON",
+            "[8] Log",
+            "[9] Terminal",
+            "[0] AI",
+            "[-] Setting",
         ]
     }
 }
@@ -565,6 +580,12 @@ pub struct CockpitApp {
     pub monitor_name_buf: String,
     pub monitor_url_buf: String,
 
+    // Sovereign Web Analytics (Umami-like) tab state
+    pub analytics_selected_site: usize,
+    pub analytics_site_filter: Option<String>,
+    pub analytics_scroll: usize,
+    pub show_analytics_script_modal: bool,
+
     // Security & Master Password Lock Screen
     pub is_locked: bool,
     pub lock_password_buf: String,
@@ -744,6 +765,11 @@ impl CockpitApp {
             monitor_wizard_field: 0,
             monitor_name_buf: String::new(),
             monitor_url_buf: String::new(),
+
+            analytics_selected_site: 0,
+            analytics_site_filter: None,
+            analytics_scroll: 0,
+            show_analytics_script_modal: false,
 
             is_locked: cfg.security.require_password && !cfg.security.master_password_hash.is_empty(),
             lock_password_buf: String::new(),
@@ -1419,6 +1445,100 @@ impl CockpitApp {
             None => 0,
         };
         self.chat_state.select(Some(i));
+    }
+
+    pub fn sample_system(&mut self) {
+        let snap = crate::systat::snapshot();
+        self.ingest_snapshot(snap);
+    }
+
+    pub fn analytic_sites(&self) -> Vec<AnalyticSiteItem> {
+        let mut list = vec![
+            AnalyticSiteItem {
+                id: String::new(),
+                name: "All Sovereign Apps".to_string(),
+                domain: "* (Aggregated)".to_string(),
+            },
+            AnalyticSiteItem {
+                id: "caterm".to_string(),
+                name: "CATerm".to_string(),
+                domain: "caterm.fathforce.com".to_string(),
+            },
+            AnalyticSiteItem {
+                id: "fathstore".to_string(),
+                name: "FathStore Solo".to_string(),
+                domain: "fathstore.com".to_string(),
+            },
+            AnalyticSiteItem {
+                id: "caui".to_string(),
+                name: "CAUI Design System".to_string(),
+                domain: "caui.fathforce.com".to_string(),
+            },
+            AnalyticSiteItem {
+                id: "cecepazhar.com".to_string(),
+                name: "Prof. Cecep Blog".to_string(),
+                domain: "cecepazhar.com".to_string(),
+            },
+            AnalyticSiteItem {
+                id: "camark".to_string(),
+                name: "CAMark Studio".to_string(),
+                domain: "camark.fathforce.com".to_string(),
+            },
+        ];
+
+        for p in &self.latest_snap.tracked_projects {
+            let id = p.name.to_lowercase().replace(' ', "-");
+            if !list.iter().any(|s| s.id == id) {
+                list.push(AnalyticSiteItem {
+                    id: id.clone(),
+                    name: p.name.clone(),
+                    domain: format!("{id}.local"),
+                });
+            }
+        }
+        list
+    }
+
+    pub fn simulate_analytics_pageview(&mut self) {
+        if let Some(ref d) = self.db {
+            let sites = ["caterm", "fathstore", "caui", "cecepazhar.com", "camark"];
+            let site = self.analytics_site_filter.clone().unwrap_or_else(|| {
+                let now_s = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                sites[(now_s % sites.len() as u64) as usize].to_string()
+            });
+
+            let pages = ["/", "/docs", "/pricing", "/features", "/download", "/blog"];
+            let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+            let page = pages[(secs % pages.len() as u64) as usize];
+            let browsers = ["Chrome", "Firefox", "Safari", "Edge"];
+            let browser = browsers[(secs % browsers.len() as u64) as usize];
+            let oss = ["Linux", "macOS", "Windows", "Android", "iOS"];
+            let os_name = oss[(secs % oss.len() as u64) as usize];
+            let devs = ["Desktop", "Mobile"];
+            let dev = devs[(secs % 3 == 0) as usize];
+            let countries = ["ID", "SG", "US", "MY", "JP", "GB"];
+            let country = countries[(secs % countries.len() as u64) as usize];
+            let refs = ["https://google.com", "https://x.com", "https://github.com", "Direct"];
+            let referrer = refs[(secs % refs.len() as u64) as usize];
+            let sess = format!("sess_{}", secs / 120);
+            let v_hash = format!("sim_hash_{}", secs % 19);
+
+            let _ = d.record_pageview(
+                &site,
+                &sess,
+                page,
+                referrer,
+                &format!("{site} - {page}"),
+                browser,
+                os_name,
+                dev,
+                country,
+                &v_hash,
+            );
+
+            self.sample_system();
+            self.set_notification(format!("Simulated pageview: {site}{page} from {country} ({browser}/{os_name})"));
+        }
     }
 
     pub fn ingest_snapshot(&mut self, snap: SysSnapshot) {
@@ -2382,7 +2502,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         return Ok(false);
     }
 
-    // 1. Shift + 1..9, 0 MUST switch tabs immediately (even in AI or Terminal tab)
+    // 1. Shift + 1..9, 0, - MUST switch tabs immediately (even in AI or Terminal tab)
     let shift_tab = match key.code {
         KeyCode::Char('!') => Some(0),
         KeyCode::Char('@') => Some(1),
@@ -2394,6 +2514,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Char('*') => Some(7),
         KeyCode::Char('(') => Some(8),
         KeyCode::Char(')') => Some(9),
+        KeyCode::Char('_') => Some(10),
         KeyCode::Char('1') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(0),
         KeyCode::Char('2') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(1),
         KeyCode::Char('3') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(2),
@@ -2404,6 +2525,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Char('8') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(7),
         KeyCode::Char('9') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(8),
         KeyCode::Char('0') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(9),
+        KeyCode::Char('-') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(10),
         _ => None,
     };
     if let Some(tab_idx) = shift_tab {
@@ -2692,7 +2814,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 app.is_locked = true;
                 app.set_notification("🔒 Cockpit locked");
             } else {
-                app.set_notification("⚠ Master password not set. Configure it in Setting GUI [0].");
+                app.set_notification("⚠ Master password not set. Configure it in Setting GUI [-].");
             }
         }
         KeyCode::Esc if app.show_pet_modal => {
@@ -2704,27 +2826,33 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Esc if app.show_pet_history => {
             app.show_pet_history = false;
         }
+        KeyCode::Esc if app.show_analytics_script_modal => {
+            app.show_analytics_script_modal = false;
+        }
         KeyCode::Char('q') | KeyCode::Esc => {
             if app.inspector_open {
                 app.inspector_open = false;
             } else if app.show_help_modal {
                 app.show_help_modal = false;
+            } else if app.show_analytics_script_modal {
+                app.show_analytics_script_modal = false;
             } else {
                 app.show_quit_confirm = true;
             }
         }
 
-        // Direct number key tab switching: '1'..'9' -> Tab 0..8, '0' -> Tab 9 (Setting)
+        // Direct number key tab switching: '1'..'9' -> Tab 0..8, '0' -> AI, '-' -> Setting
         KeyCode::Char('1') => app.current_tab = CockpitTab::Dashboard,
         KeyCode::Char('2') => app.current_tab = CockpitTab::Project,
         KeyCode::Char('3') => app.current_tab = CockpitTab::Uptime,
         KeyCode::Char('4') => app.current_tab = CockpitTab::Server,
-        KeyCode::Char('5') => app.current_tab = CockpitTab::Audit,
-        KeyCode::Char('6') => app.current_tab = CockpitTab::Cron,
-        KeyCode::Char('7') => app.current_tab = CockpitTab::Log,
-        KeyCode::Char('8') => app.current_tab = CockpitTab::Terminal,
-        KeyCode::Char('9') => app.current_tab = CockpitTab::AI,
-        KeyCode::Char('0') => app.current_tab = CockpitTab::Setting,
+        KeyCode::Char('5') => app.current_tab = CockpitTab::Analytics,
+        KeyCode::Char('6') => app.current_tab = CockpitTab::Audit,
+        KeyCode::Char('7') => app.current_tab = CockpitTab::Cron,
+        KeyCode::Char('8') => app.current_tab = CockpitTab::Log,
+        KeyCode::Char('9') => app.current_tab = CockpitTab::Terminal,
+        KeyCode::Char('0') => app.current_tab = CockpitTab::AI,
+        KeyCode::Char('-') => app.current_tab = CockpitTab::Setting,
 
         // ── Pet Play Area Controls (Hardware-Reactive Tamagotchi) ─────────────
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -2782,6 +2910,9 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             CockpitTab::Server => {
                 app.selected_server = app.selected_server.saturating_sub(1);
             }
+            CockpitTab::Analytics => {
+                app.analytics_scroll = app.analytics_scroll.saturating_sub(3);
+            }
             CockpitTab::Audit => {
                 app.selected_report = app.selected_report.saturating_sub(1);
             }
@@ -2828,6 +2959,9 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 if !app.server_probe_results.is_empty() {
                     app.selected_server = (app.selected_server + 1).min(app.server_probe_results.len() - 1);
                 }
+            }
+            CockpitTab::Analytics => {
+                app.analytics_scroll = (app.analytics_scroll + 3).min(30);
             }
             CockpitTab::Audit => {
                 if !app.audit_reports.is_empty() {
@@ -2968,6 +3102,42 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
         KeyCode::Char('x') | KeyCode::Delete if app.current_tab == CockpitTab::Server => {
             app.remove_selected_server();
+        }
+
+        // Analytics Tab shortcuts: 'w': Cycle site, 's': Script snippet, 'r': Refresh, 't': Test hit, 'x': Clear
+        KeyCode::Char('w') if app.current_tab == CockpitTab::Analytics => {
+            let sites = app.analytic_sites();
+            if !sites.is_empty() {
+                app.analytics_selected_site = (app.analytics_selected_site + 1) % sites.len();
+                app.analytics_site_filter = if app.analytics_selected_site == 0 {
+                    None
+                } else {
+                    Some(sites[app.analytics_selected_site].id.clone())
+                };
+                app.sample_system();
+                app.ingest_snapshot(app.latest_snap.clone());
+                let label = app.analytics_site_filter.as_deref().unwrap_or("All Sites");
+                app.set_notification(format!("Analytics filter: {label}"));
+            }
+        }
+        KeyCode::Char('s') if app.current_tab == CockpitTab::Analytics => {
+            app.show_analytics_script_modal = !app.show_analytics_script_modal;
+        }
+        KeyCode::Char('r') if app.current_tab == CockpitTab::Analytics => {
+            app.sample_system();
+            app.ingest_snapshot(app.latest_snap.clone());
+            app.set_notification("📊 Analytics reloaded");
+        }
+        KeyCode::Char('t') if app.current_tab == CockpitTab::Analytics => {
+            app.simulate_analytics_pageview();
+        }
+        KeyCode::Char('x') | KeyCode::Delete if app.current_tab == CockpitTab::Analytics => {
+            if let Some(ref d) = app.db {
+                let _ = d.clear_analytics_events();
+                app.sample_system();
+                app.ingest_snapshot(app.latest_snap.clone());
+                app.set_notification("Analytics events cleared");
+            }
         }
 
         // Audit Tab shortcuts: 'a': Turbo Audit, 'f': Run Fix
@@ -3191,6 +3361,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
             },
             CockpitTab::Uptime => app.selected_monitor = app.selected_monitor.saturating_sub(1),
             CockpitTab::Server => app.selected_server = app.selected_server.saturating_sub(1),
+            CockpitTab::Analytics => app.analytics_scroll = app.analytics_scroll.saturating_sub(3),
             CockpitTab::Audit => app.report_scroll = app.report_scroll.saturating_sub(2),
             CockpitTab::Cron => {},
             CockpitTab::Log => app.log_scroll = app.log_scroll.saturating_sub(1),
@@ -3221,6 +3392,9 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                 if !app.server_probe_results.is_empty() {
                     app.selected_server = (app.selected_server + 1).min(app.server_probe_results.len() - 1);
                 }
+            }
+            CockpitTab::Analytics => {
+                app.analytics_scroll = (app.analytics_scroll + 3).min(30);
             }
             CockpitTab::Audit => app.report_scroll = app.report_scroll.saturating_add(2),
             CockpitTab::Cron => {},
@@ -3324,6 +3498,35 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                     HitboxAction::ProbeMonitors => {
                         app.probe_all_ports();
                         app.set_notification("Probed all Uptime monitors & gateways");
+                    }
+                    HitboxAction::RefreshAnalytics => {
+                        app.sample_system();
+                        app.ingest_snapshot(app.latest_snap.clone());
+                        app.set_notification("📊 Web Analytics refreshed");
+                    }
+                    HitboxAction::SelectAnalyticsSite(idx) => {
+                        app.analytics_selected_site = idx;
+                        let sites = app.analytic_sites();
+                        app.analytics_site_filter = if idx == 0 {
+                            None
+                        } else {
+                            Some(sites.get(idx).map(|s| s.id.clone()).unwrap_or_default())
+                        };
+                        app.sample_system();
+                        app.ingest_snapshot(app.latest_snap.clone());
+                        let label = app.analytics_site_filter.as_deref().unwrap_or("All Sites");
+                        app.set_notification(format!("Analytics filter: {label}"));
+                    }
+                    HitboxAction::ShowAnalyticsScript => {
+                        app.show_analytics_script_modal = !app.show_analytics_script_modal;
+                    }
+                    HitboxAction::ClearAnalyticsData => {
+                        if let Some(db) = app.db.as_ref() {
+                            let _ = db.clear_analytics_events();
+                            app.sample_system();
+                            app.ingest_snapshot(app.latest_snap.clone());
+                            app.set_notification("Analytics data wiped clean");
+                        }
                     }
                     HitboxAction::SelectServer(idx) => {
                         app.selected_server = idx;
@@ -3855,6 +4058,7 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         CockpitTab::Project => draw_project_tab(f, app, chunks[2]),
         CockpitTab::Uptime => draw_uptime_tab(f, app, chunks[2]),
         CockpitTab::Server => draw_server_tab(f, app, chunks[2]),
+        CockpitTab::Analytics => draw_analytics_tab(f, app, chunks[2]),
         CockpitTab::Audit => draw_audit_tab(f, app, chunks[2]),
         CockpitTab::Cron => draw_cron_tab(f, app, chunks[2]),
         CockpitTab::Log => draw_log_tab(f, app, chunks[2]),
@@ -3907,6 +4111,10 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     if app.show_pet_switch_confirm {
         draw_pet_switch_confirm_modal(f, app, area);
+    }
+
+    if app.show_analytics_script_modal {
+        draw_analytics_script_modal(f, app, area);
     }
 }
 
@@ -6900,6 +7108,365 @@ fn draw_app_inspector_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     f.render_widget(Paragraph::new(Line::from(close_span)), content_layout[1]);
 }
 
+// ── Tab 4: Sovereign Web Analytics (Umami-like) ────────────────────────────
+
+fn draw_analytics_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Action Bar
+            Constraint::Min(10),   // Main Area
+        ])
+        .split(area);
+
+    let bar_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(palette.border));
+    let bar_inner = bar_block.inner(chunks[0]);
+    f.render_widget(bar_block, chunks[0]);
+
+    let btn_refresh_w = 16u16;
+    let btn_script_w = 16u16;
+
+    app.register_hitbox(
+        Rect { x: bar_inner.x + 1, y: bar_inner.y, width: btn_refresh_w, height: 1 },
+        HitboxAction::RefreshAnalytics,
+    );
+    app.register_hitbox(
+        Rect { x: bar_inner.x + btn_refresh_w + 3, y: bar_inner.y, width: btn_script_w, height: 1 },
+        HitboxAction::ShowAnalyticsScript,
+    );
+
+    let bar_spans = vec![
+        Span::styled(" [ Refresh (r) ] ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [ Script (s) ] ", Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [ Wipe (x) ] ", Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
+        Span::styled("📊 Sovereign Web Analytics (Umami-like)", Style::default().fg(palette.text_muted)),
+    ];
+    f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
+
+    let snap = app.latest_snap.clone();
+    let analytics = &snap.web_analytics;
+
+    let main_block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" 🌐 Traffic & Visitor Breakdown · Filter: {}", app.analytics_site_filter.as_deref().unwrap_or("All Sites")))
+        .title_alignment(Alignment::Center)
+        .border_style(Style::default().fg(palette.accent));
+
+    let main_inner = main_block.inner(chunks[1]);
+    f.render_widget(main_block, chunks[1]);
+
+    let total_views = if analytics.pageviews == 0 && !analytics.top_pages.is_empty() {
+        1
+    } else {
+        analytics.pageviews.max(1)
+    };
+
+    let avg_secs = analytics.avg_session_secs;
+    let avg_min = (avg_secs / 60.0) as u32;
+    let avg_sec = (avg_secs % 60.0) as u32;
+    let kpi_lines = vec![
+        Line::from(vec![
+            Span::styled("Pageviews:  ", Style::default().fg(palette.text_muted)),
+            Span::styled(format!("{:<10}", analytics.pageviews), Style::default().fg(Color::Rgb(255, 255, 255))),
+        ]),
+        Line::from(vec![
+            Span::styled("Uniq Visit: ", Style::default().fg(palette.text_muted)),
+            Span::styled(format!("{:<10}", analytics.unique_visitors), Style::default().fg(Color::Rgb(255, 255, 255))),
+        ]),
+        Line::from(vec![
+            Span::styled("Live Now:   ", Style::default().fg(palette.text_muted)),
+            Span::styled(format!("{:<10}", analytics.active_visitors), Style::default().fg(Color::LightGreen)),
+        ]),
+        Line::from(vec![
+            Span::styled("Bounce Rate:", Style::default().fg(palette.text_muted)),
+            Span::styled(format!("{:.1}%", analytics.bounce_rate), Style::default().fg(Color::LightYellow)),
+        ]),
+        Line::from(vec![
+            Span::styled("Avg Session:", Style::default().fg(palette.text_muted)),
+            Span::styled(format!(" {}m {}s", avg_min, avg_sec), Style::default().fg(Color::Rgb(255, 255, 255))),
+        ]),
+    ];
+
+    let kpi_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Key Performance Indicators ")
+        .border_style(Style::default().fg(palette.accent));
+
+    let kpi_rect = Rect {
+        x: main_inner.x,
+        y: main_inner.y,
+        width: 32,
+        height: 8,
+    };
+    let kpi_inner = kpi_block.inner(kpi_rect);
+    f.render_widget(kpi_block, kpi_rect);
+    f.render_widget(
+        Paragraph::new(kpi_lines),
+        kpi_inner
+    );
+
+    let chart_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Daily Traffic Pulse (Last 7 Days) ")
+        .border_style(Style::default().fg(palette.accent));
+    let chart_inner = chart_block.inner(
+        Rect {
+            x: main_inner.x + 34,
+            y: main_inner.y,
+            width: main_inner.width.saturating_sub(34).saturating_sub(8),
+            height: 8,
+        }
+    );
+    f.render_widget(chart_block, Rect { x: main_inner.x + 34, y: main_inner.y, width: main_inner.width.saturating_sub(34).saturating_sub(8), height: 8 });
+
+    let mut chart_lines = Vec::new();
+    if analytics.daily_traffic.is_empty() {
+        chart_lines.push(Line::from(" No Traffic Events Recorded ".to_string()));
+    } else {
+        let max_pvs = analytics.daily_traffic.iter().map(|(_, c)| *c).max().unwrap_or(1).max(1);
+        for (day, count) in &analytics.daily_traffic {
+            let ratio = *count as f32 / max_pvs as f32;
+            let bar_len = (ratio * 24.0).min(24.0) as usize;
+            let bar_str = "█".repeat(bar_len.max(1));
+            chart_lines.push(Line::from(vec![
+                Span::styled(format!("{day}: "), Style::default().fg(palette.text_muted)),
+                Span::styled(format!(" {bar_str:<24}"), Style::default().fg(palette.accent)),
+                Span::styled(format!(" {count} views"), Style::default().fg(Color::Rgb(255, 255, 255))),
+            ]));
+        }
+    }
+    f.render_widget(
+        Paragraph::new(chart_lines)
+            .scroll(((app.analytics_scroll as u16).min(10), 0)),
+        chart_inner
+    );
+
+    let content_rows = vec![
+        Row::new(vec![
+            Cell::from("BROWSERS").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+            Cell::from("OS / SYSTEMS").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+            Cell::from("DEVICES").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+            Cell::from("COUNTRIES").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        ]),
+        Row::new(vec![
+            Cell::from(
+                analytics
+                    .browser_breakdown
+                    .iter()
+                    .map(|b| format!("{}: {:.0}%", b.label, b.pct))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+            Cell::from(
+                analytics
+                    .os_breakdown
+                    .iter()
+                    .map(|b| format!("{}: {:.0}%", b.label, b.pct))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+            Cell::from(
+                analytics
+                    .device_breakdown
+                    .iter()
+                    .map(|b| format!("{}: {:.0}%", b.label, b.pct))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+            Cell::from(
+                analytics
+                    .country_breakdown
+                    .iter()
+                    .map(|b| format!("{}: {:.0}%", b.label, b.pct))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+        ]),
+    ];
+
+    let breakdown_table = Table::new(content_rows, [
+        Constraint::Length(30),
+        Constraint::Length(30),
+        Constraint::Length(30),
+        Constraint::Length(30),
+    ])
+    .row_highlight_style(Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.status_ok))
+    .style(Style::default().fg(palette.text_muted))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Traffic & Device Breakdown ")
+            .border_style(Style::default().fg(palette.accent)),
+    );
+    f.render_widget(
+        breakdown_table,
+        Rect {
+            x: main_inner.x,
+            y: main_inner.y + 10,
+            width: main_inner.width,
+            height: 6,
+        }
+    );
+
+    let top_pages_lines: Vec<Line> = if analytics.top_pages.is_empty() {
+        vec![Line::from(" No Pages Visited Yet ".to_string())]
+    } else {
+        analytics.top_pages.iter().map(|(page, count)| {
+            let ratio = *count as f32 / total_views as f32;
+            let bar_len = (ratio * 16.0).min(16.0) as usize;
+            let bar_str = "■".repeat(bar_len.max(1));
+            Line::from(vec![
+                Span::styled(format!("{:<30} ", page), Style::default().fg(Color::Rgb(255, 255, 255))),
+                Span::styled(format!("{bar_str:<16}"), Style::default().fg(palette.accent)),
+                Span::styled(format!(" {count}"), Style::default().fg(palette.text_muted)),
+            ])
+        }).collect()
+    };
+
+    let ref_lines: Vec<Line> = if analytics.top_referrers.is_empty() {
+        vec![Line::from(" No External Traffic ".to_string())]
+    } else {
+        analytics.top_referrers.iter().map(|(refr, count)| {
+            let ratio = *count as f32 / total_views as f32;
+            let bar_len = (ratio * 16.0).min(16.0) as usize;
+            let bar_str = "▸".repeat(bar_len.max(1));
+            let display_ref = if refr.starts_with("http") {
+                let short: String = refr.chars().take(20).collect();
+                format!("{short}...")
+            } else {
+                refr.clone()
+            };
+            Line::from(vec![
+                Span::styled(format!("{:<30} ", display_ref), Style::default().fg(Color::Rgb(255, 255, 255))),
+                Span::styled(format!("{bar_str:<16}"), Style::default().fg(palette.accent)),
+                Span::styled(format!(" {count}"), Style::default().fg(palette.text_muted)),
+            ])
+        }).collect()
+    };
+
+    let pages_area = Rect {
+        x: main_inner.x,
+        y: main_inner.y + 18,
+        width: main_inner.width / 2,
+        height: 10,
+    };
+    let refs_area = Rect {
+        x: main_inner.x + main_inner.width / 2,
+        y: main_inner.y + 18,
+        width: main_inner.width / 2,
+        height: 10,
+    };
+
+    f.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Top Pages ")
+            .border_style(Style::default().fg(palette.accent)),
+        pages_area
+    );
+    let inner_pages = pages_area.inner(Margin::new(1, 1));
+    f.render_widget(Paragraph::new(top_pages_lines), inner_pages);
+
+    f.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Top Referrers ")
+            .border_style(Style::default().fg(palette.accent)),
+        refs_area
+    );
+    let inner_refs = refs_area.inner(Margin::new(1, 1));
+    f.render_widget(Paragraph::new(ref_lines), inner_refs);
+
+    let prod_lines: Vec<Line> = analytics.product_analytics.iter().map(|p| {
+        let status_style = if p.status == "ACTIVE" {
+            Style::default().fg(Color::LightGreen)
+        } else if p.status == "IDLE" {
+            Style::default().fg(Color::LightYellow)
+        } else {
+            Style::default().fg(palette.text_muted)
+        };
+        Line::from(vec![
+            Span::styled(format!("{:<14} ", p.name), Style::default().fg(Color::Rgb(255, 255, 255))),
+            Span::styled(format!("{:<18} ", p.domain), Style::default().fg(palette.text_muted)),
+            Span::styled(format!("{:>4} Views ", p.pageviews), Style::default().fg(palette.text_muted)),
+            Span::styled(format!("{:>4} UV ", p.visitors), Style::default().fg(palette.text_muted)),
+            Span::styled(format!("{:>3} Now  ", p.active_now), Style::default().fg(Color::LightGreen)),
+            Span::styled(format!("{:.0}%B ", p.bounce_rate), Style::default().fg(Color::LightYellow)),
+            Span::styled(p.status.as_str(), status_style),
+        ])
+    }).collect();
+
+    let prod_area = Rect {
+        x: main_inner.x,
+        y: main_inner.y + 30,
+        width: main_inner.width,
+        height: 7,
+    };
+
+    f.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Product App Performance & Status ")
+            .border_style(Style::default().fg(palette.accent)),
+        prod_area
+    );
+    let inner_prod = prod_area.inner(Margin::new(1, 1));
+    f.render_widget(Paragraph::new(prod_lines), inner_prod);
+
+    if app.show_analytics_script_modal {
+        draw_analytics_script_modal(f, app, area);
+    }
+}
+
+fn draw_analytics_script_modal(f: &mut Frame, _app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get("solar");
+    let modal_width = 90.min(area.width.saturating_sub(2));
+    let modal_height = 18.min(area.height.saturating_sub(2));
+    let x = (area.width.saturating_sub(modal_width)) / 2;
+    let y = (area.height.saturating_sub(modal_height)) / 2;
+    let modal_area = Rect { x, y, width: modal_width, height: modal_height };
+
+    f.render_widget(Clear, modal_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 📊 Install Sovereign Web Analytics Tracker Script ")
+        .title_alignment(Alignment::Center)
+        .border_style(Style::default().fg(palette.status_ok));
+
+    let inner = block.inner(modal_area);
+    f.render_widget(block, modal_area);
+
+    let lines = vec![
+        Line::from(" Paste the following JavaScript snippet into the <head> of your CA app: "),
+        Line::from(Span::raw(" ")),
+        Line::from(Span::raw(" <script defer>")),
+        Line::from(Span::raw("   (function() {")),
+        Line::from(Span::raw("     var cfg = {")),
+        Line::from(Span::raw("       endpoint: 'http://127.0.0.1:8090/api/collect',")),
+        Line::from(Span::raw("       site: 'caterm' // use your own CA app ID: caterm, fathstore, caui")),
+        Line::from(Span::raw("     };")),
+        Line::from(Span::raw("     navigator.sendBeacon(cfg.endpoint, JSON.stringify({")),
+        Line::from(Span::raw("       website_id: cfg.site,")),
+        Line::from(Span::raw("       url: location.pathname,")),
+        Line::from(Span::raw("       referrer: document.referrer,")),
+        Line::from(Span::raw("       title: document.title,")),
+        Line::from(Span::raw("     }));")),
+        Line::from(Span::raw("   })();")),
+        Line::from(Span::raw(" </script>")),
+        Line::from(Span::raw(" ")),
+        Line::from(Span::styled(" [ Press Esc to Close ] ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD))),
+    ];
+
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
 // ── Tab 3: Audit & Code ──────────────────────────────────────────────────────
 
 fn draw_audit_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
@@ -7324,7 +7891,7 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
 fn draw_footer(f: &mut Frame, app: &CockpitApp, area: Rect) {
     let palette = ThemePalette::get(&app.cfg.output.theme);
-    let keybinds = " [1-9/0]: Tabs │ Tab: Cycle │ Shift+1-9/0: Jump │ ↑/↓: Nav │ ?: Help │ Esc/q: Quit ";
+    let keybinds = " [1-9/0/-]: Tabs │ Tab: Cycle │ Shift+1-9/0/-: Jump │ ↑/↓: Nav │ ?: Help │ Esc/q: Quit ";
     let content = if let Some((msg, _)) = &app.notification {
         Line::from(vec![
             Span::styled(
@@ -7409,28 +7976,32 @@ fn draw_help_modal(f: &mut Frame, app: &CockpitApp, area: Rect) {
 
     let rows = vec![
         Row::new(vec![
-            Cell::from("1..9, 0 / Shift+1..9, 0"),
-            Cell::from("Switch tabs directly (Dashboard, Project, Uptime, Server, Audit, CRON, Log, Terminal, AI, Setting)"),
+            Cell::from("1..9, 0, - / Shift+1..9, 0, -"),
+            Cell::from("Switch tabs (Dashboard, Project, Uptime, Server, Analytics, Audit, CRON, Log, Terminal, AI, Setting)"),
         ]),
         Row::new(vec![
             Cell::from("Tab / BackTab (Shift+Tab)"),
-            Cell::from("Cycle through 10 tabs forward / backward"),
+            Cell::from("Cycle through 11 tabs forward / backward"),
         ]),
         Row::new(vec![
             Cell::from("↑ / ↓ (k / j)"),
             Cell::from("Navigate items, lists, tables, or scroll content"),
         ]),
         Row::new(vec![
-            Cell::from("Project: o / d / s / x / r"),
-            Cell::from("o: Add Project | d: Add Container | s/x/r: Start/Stop/Restart | Enter/←→: View"),
+            Cell::from("Analytics: w / s / r / t / x"),
+            Cell::from("w: Filter Site | s: Tracker Script Tag | r: Refresh | t: Sim Pageview | x: Clear"),
         ]),
         Row::new(vec![
-            Cell::from("Uptime: m / p"),
-            Cell::from("m: Add Monitor wizard | p: Probe all monitors & gateways"),
+            Cell::from("Project: o / d / e / x / s"),
+            Cell::from("o: Add Proj | d: Add Box | e: Edit Box | x: Delete | s: Start/Stop | Enter: Inspect"),
         ]),
         Row::new(vec![
-            Cell::from("Server: a / p"),
-            Cell::from("a/n: Add Server wizard | p: Probe multi-node latency matrix"),
+            Cell::from("Uptime: m / e / x / p"),
+            Cell::from("m: Add Monitor | e: Edit Monitor | x: Delete Monitor | p: Probe Now"),
+        ]),
+        Row::new(vec![
+            Cell::from("Server: a / x / p"),
+            Cell::from("a/n: Add Server wizard | x: Remove Node | p: Probe multi-node latencies"),
         ]),
         Row::new(vec![
             Cell::from("Audit: a / f"),
@@ -8421,12 +8992,12 @@ mod tests {
 
     #[test]
     fn test_cockpit_tabs_index_roundtrip() {
-        for idx in 0..10 {
+        for idx in 0..CockpitTab::COUNT {
             let tab = CockpitTab::from_index(idx);
             assert_eq!(tab.to_index(), idx);
         }
-        assert_eq!(CockpitTab::titles().len(), 10);
-        assert_eq!(CockpitTab::COUNT, 10);
+        assert_eq!(CockpitTab::titles().len(), 11);
+        assert_eq!(CockpitTab::COUNT, 11);
     }
 
     #[test]
@@ -8504,6 +9075,25 @@ mod tests {
 
         assert_eq!(app.cpu_history.len(), MAX_CPU_SAMPLES);
         assert_eq!(app.cpu_history[MAX_CPU_SAMPLES - 1], 9.0);
+    }
+
+    #[test]
+    fn test_analytics_tab_workflow() {
+        let mut app = CockpitApp::new(&Config::default());
+        app.current_tab = CockpitTab::Analytics;
+        assert_eq!(app.current_tab, CockpitTab::Analytics);
+        assert_eq!(app.current_tab.to_index(), 4);
+
+        let sites = app.analytic_sites();
+        assert!(!sites.is_empty());
+        assert_eq!(sites[0].name, "All Sovereign Apps");
+
+        let prev_views = app.latest_snap.web_analytics.pageviews;
+
+        // Simulate pageview populates analytics in database
+        app.simulate_analytics_pageview();
+        app.sample_system();
+        assert!(app.latest_snap.web_analytics.pageviews > prev_views);
     }
 
     #[test]

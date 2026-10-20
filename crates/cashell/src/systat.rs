@@ -189,7 +189,7 @@ pub struct UptimeMonitor {
 }
 
 /// Breakdown of traffic and landing stats for a specific CA product.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ProductAnalyticsSummary {
     pub product_id: String,
     pub name: String,
@@ -201,16 +201,28 @@ pub struct ProductAnalyticsSummary {
     pub status: String,
 }
 
+/// Breakdown statistics for categorical analytics fields (Browsers, OS, Locations).
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AnalyticsBreakdown {
+    pub label: String,
+    pub count: u64,
+    pub pct: f32,
+}
+
 /// Sovereign web analytics summary (Umami-like) from SQLite.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AnalyticsSummary {
     pub pageviews: u64,
     pub unique_visitors: u64,
     pub active_visitors: u64,
     pub bounce_rate: f64,
+    pub avg_session_secs: f64,
     pub top_pages: Vec<(String, u64)>,
     pub top_referrers: Vec<(String, u64)>,
-    pub device_breakdown: Vec<(String, u64)>,
+    pub device_breakdown: Vec<AnalyticsBreakdown>,
+    pub browser_breakdown: Vec<AnalyticsBreakdown>,
+    pub os_breakdown: Vec<AnalyticsBreakdown>,
+    pub country_breakdown: Vec<AnalyticsBreakdown>,
     pub daily_traffic: Vec<(String, u64)>,
     pub product_analytics: Vec<ProductAnalyticsSummary>,
 }
@@ -865,17 +877,17 @@ pub fn build_project_workspace(
         ("9router", 20128, "http"),
     ];
     for &(svc_proj, port, proto) in well_known_services {
-        if name_lower == svc_proj || name_lower.contains(svc_proj) {
-            if !services.iter().any(|s| s.port == port) {
-                let state = if is_port_listening(port) { "up".to_string() } else { "down".to_string() };
-                services.push(ProjectService {
-                    name: format!("{svc_proj}-svc"),
-                    host: "127.0.0.1".to_string(),
-                    port,
-                    protocol: proto.to_string(),
-                    state,
-                });
-            }
+        if (name_lower == svc_proj || name_lower.contains(svc_proj))
+            && !services.iter().any(|s| s.port == port)
+        {
+            let state = if is_port_listening(port) { "up".to_string() } else { "down".to_string() };
+            services.push(ProjectService {
+                name: format!("{svc_proj}-svc"),
+                host: "127.0.0.1".to_string(),
+                port,
+                protocol: proto.to_string(),
+                state,
+            });
         }
     }
 
@@ -967,17 +979,17 @@ pub fn build_project_workspace(
                         });
                     }
                 }
-            } else if line.starts_with("REDIS_URL=") || line.starts_with("REDIS_HOST=") {
-                if !databases.iter().any(|d| d.engine == "redis") {
-                    databases.push(ProjectDatabase {
-                        name: format!("{name}-redis"),
-                        engine: "redis".to_string(),
-                        host: "127.0.0.1".to_string(),
-                        port: 6379,
-                        database: "0".to_string(),
-                        state: if is_port_listening(6379) { "up".to_string() } else { "down".to_string() },
-                    });
-                }
+            } else if (line.starts_with("REDIS_URL=") || line.starts_with("REDIS_HOST="))
+                && !databases.iter().any(|d| d.engine == "redis")
+            {
+                databases.push(ProjectDatabase {
+                    name: format!("{name}-redis"),
+                    engine: "redis".to_string(),
+                    host: "127.0.0.1".to_string(),
+                    port: 6379,
+                    database: "0".to_string(),
+                    state: if is_port_listening(6379) { "up".to_string() } else { "down".to_string() },
+                });
             }
         }
     }
@@ -988,17 +1000,17 @@ pub fn build_project_workspace(
             let ep = entry.path();
             if ep.is_file() {
                 if let Some(fname) = ep.file_name().and_then(|n| n.to_str()) {
-                    if fname.ends_with(".db") || fname.ends_with(".sqlite") || fname.ends_with(".sqlite3") {
-                        if !databases.iter().any(|d| d.name == fname) {
-                            databases.push(ProjectDatabase {
-                                name: fname.to_string(),
-                                engine: "sqlite".to_string(),
-                                host: "localhost".to_string(),
-                                port: 0,
-                                database: ep.display().to_string(),
-                                state: "file".to_string(),
-                            });
-                        }
+                    if (fname.ends_with(".db") || fname.ends_with(".sqlite") || fname.ends_with(".sqlite3"))
+                        && !databases.iter().any(|d| d.name == fname)
+                    {
+                        databases.push(ProjectDatabase {
+                            name: fname.to_string(),
+                            engine: "sqlite".to_string(),
+                            host: "localhost".to_string(),
+                            port: 0,
+                            database: ep.display().to_string(),
+                            state: "file".to_string(),
+                        });
                     }
                 }
             }
