@@ -199,6 +199,9 @@ pub enum HitboxAction {
     CancelSwitchPet,
     ConfirmQuit,
     CancelQuit,
+    // Delete confirmation actions
+    ConfirmDelete,
+    CancelDelete,
     // Add-wizard openers
     AddServer,
     AddProject,
@@ -226,6 +229,8 @@ pub enum HitboxAction {
     ContainerStop(usize),
     ContainerRestart(usize),
     RemoveProject,
+    EditProject,
+    CloneProject,
     RemoveContainer,
     EditContainer,
     CycleProjectServer,
@@ -235,6 +240,7 @@ pub enum HitboxAction {
     ProbeMonitors,
     RemoveMonitor,
     EditMonitor,
+    CloneMonitor,
     // Analytics tab actions
     RefreshAnalytics,
     SelectAnalyticsSite(usize),
@@ -252,6 +258,12 @@ pub enum HitboxAction {
     SelectServer(usize),
     ProbeServers,
     RemoveServer,
+    EditServer,
+    CloneServer,
+    ToggleServerActive,
+    TestServerSsh,
+    // Dashboard actions
+    FocusDashboardPanel(usize),
     // Log tab actions
     SelectLogSource(LogSource),
     SelectLogLevel(LogLevelFilter),
@@ -271,6 +283,33 @@ pub enum HitboxAction {
 pub struct Hitbox {
     pub rect: Rect,
     pub action: HitboxAction,
+}
+
+// ── Delete Confirmation Target ───────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteTarget {
+    Server,
+    Project,
+    Container,
+    Monitor,
+    AnalyticsSite,
+    AnalyticsWipe,
+    CronJob,
+}
+
+impl DeleteTarget {
+    pub fn label(self) -> &'static str {
+        match self {
+            DeleteTarget::Server => "Fleet Server Node",
+            DeleteTarget::Project => "Tracked Project",
+            DeleteTarget::Container => "Docker Container",
+            DeleteTarget::Monitor => "Uptime Monitor",
+            DeleteTarget::AnalyticsSite => "Analytics Site",
+            DeleteTarget::AnalyticsWipe => "Analytics Events",
+            DeleteTarget::CronJob => "Cron Job",
+        }
+    }
 }
 
 // ── Tab Navigation ──────────────────────────────────────────────────────────
@@ -539,6 +578,14 @@ pub struct CockpitApp {
     pub is_compact: bool,
     pub overview_proc_scroll: usize,
 
+    // Dashboard panel focus (which of the 5 dashboard panels receives scrolling)
+    pub dashboard_focused_panel: usize,
+    pub dashboard_fleet_scroll: usize,
+    pub dashboard_services_scroll: usize,
+    pub dashboard_containers_scroll: usize,
+    pub dashboard_monitors_scroll: usize,
+    pub dashboard_analytics_scroll: usize,
+
     // Virtual Pet (Tamagotchi)
     pub show_pet_modal: bool,
     pub pet_name_buffer: String,
@@ -556,24 +603,34 @@ pub struct CockpitApp {
     pub show_quit_confirm: bool,
     pub quit_requested: bool,
 
+    // Delete confirmation state
+    pub show_delete_confirm: bool,
+    pub pending_delete_target: DeleteTarget,
+    pub pending_delete_label: String,
+
     // Cron Job Wizard
     pub show_cron_wizard: bool,
     pub cron_schedule_buffer: String,
     pub cron_command_buffer: String,
+    pub selected_cron_job: usize,
 
-    // Add Wizard (Server / Project / Docker Container / Uptime Monitor)
+    // Add & Edit Wizard (Server / Project / Docker Container / Uptime Monitor)
     pub show_server_wizard: bool,
     pub server_wizard_field: usize,
     pub server_name_buf: String,
     pub server_ip_buf: String,
     pub server_user_buf: String,
     pub server_services_buf: String,
+    pub server_wizard_is_edit: bool,
+    pub server_wizard_orig_name: String,
 
     pub show_project_wizard: bool,
     pub project_wizard_field: usize,
     pub project_path_buf: String,
     pub project_name_buf: String,
     pub project_category_buf: String,
+    pub project_wizard_is_edit: bool,
+    pub project_wizard_orig_name: String,
 
     pub show_container_wizard: bool,
     pub container_wizard_field: usize,
@@ -734,6 +791,12 @@ impl CockpitApp {
             notification: None,
             is_compact: false,
             overview_proc_scroll: 0,
+            dashboard_focused_panel: 2, // Default focus on Containers
+            dashboard_fleet_scroll: 0,
+            dashboard_services_scroll: 0,
+            dashboard_containers_scroll: 0,
+            dashboard_monitors_scroll: 0,
+            dashboard_analytics_scroll: 0,
 
             show_pet_modal: false,
             pet_name_buffer: "Ciko".to_string(),
@@ -749,10 +812,14 @@ impl CockpitApp {
 
             show_quit_confirm: false,
             quit_requested: false,
+            show_delete_confirm: false,
+            pending_delete_target: DeleteTarget::Server,
+            pending_delete_label: String::new(),
 
             show_cron_wizard: false,
             cron_schedule_buffer: "0 * * * *".to_string(),
             cron_command_buffer: "echo 'hello'".to_string(),
+            selected_cron_job: 0,
 
             show_server_wizard: false,
             server_wizard_field: 0,
@@ -760,12 +827,16 @@ impl CockpitApp {
             server_ip_buf: String::new(),
             server_user_buf: "root".to_string(),
             server_services_buf: "http:80,ssh:22".to_string(),
+            server_wizard_is_edit: false,
+            server_wizard_orig_name: String::new(),
 
             show_project_wizard: false,
             project_wizard_field: 0,
             project_path_buf: String::new(),
             project_name_buf: String::new(),
             project_category_buf: "Product".to_string(),
+            project_wizard_is_edit: false,
+            project_wizard_orig_name: String::new(),
 
             show_container_wizard: false,
             container_wizard_field: 0,
@@ -954,22 +1025,90 @@ impl CockpitApp {
         }
         let idx = self.selected_project.min(self.latest_snap.tracked_projects.len() - 1);
         let project = self.latest_snap.tracked_projects[idx].clone();
+        self.request_project_deletion(project.name, &project.path);
+    }
+
+    pub fn request_project_deletion(&mut self, name: String, path: &str) {
+        self.pending_delete_target = DeleteTarget::Project;
+        self.pending_delete_label = format!("project '{name}' ({path})");
+        self.show_delete_confirm = true;
+    }
+
+    pub fn execute_pending_deletion(&mut self) {
+        let target = self.pending_delete_target;
+        match target {
+            DeleteTarget::Server => {
+                self.execute_server_deletion();
+            }
+            DeleteTarget::Project => {
+                self.execute_project_deletion();
+            }
+            DeleteTarget::Container => {
+                self.execute_container_deletion();
+            }
+            DeleteTarget::Monitor => {
+                self.execute_monitor_deletion();
+            }
+            DeleteTarget::AnalyticsSite => {
+                self.execute_analytics_site_deletion();
+            }
+            DeleteTarget::AnalyticsWipe => {
+                self.execute_analytics_wipe();
+            }
+            DeleteTarget::CronJob => {
+                self.execute_cron_job_deletion();
+            }
+        }
+        self.show_delete_confirm = false;
+    }
+
+    fn execute_server_deletion(&mut self) {
+        if self.server_probe_results.is_empty() {
+            return;
+        }
+        let idx = self.selected_server.min(self.server_probe_results.len() - 1);
+        let server_name = self.server_probe_results[idx].0.clone();
+
+        if self.cfg.daemon.nodes.contains_key(&server_name) {
+            self.cfg.daemon.nodes.remove(&server_name);
+            self.save_config_silent();
+            if let Some(ref d) = self.db {
+                let _ = d.delete_registered_node(&server_name);
+            }
+        } else {
+            self.set_notification(format!("Node '{server_name}' is a hardcoded system fleet node and cannot be removed."));
+            return;
+        }
+
+        self.server_probe_results.remove(idx);
+        self.selected_server = 0;
+        self.set_notification(format!("🗑 Fleet server '{server_name}' removed"));
+    }
+
+    fn execute_project_deletion(&mut self) {
+        let idx = self.selected_project.min(self.latest_snap.tracked_projects.len().saturating_sub(1));
+        let (path, name) = match self.latest_snap.tracked_projects.get(idx) {
+            Some(p) => (p.path.clone(), p.name.clone()),
+            None => {
+                self.set_notification("⚠ No tracked projects to remove");
+                return;
+            }
+        };
 
         if let Some(ref d) = self.db {
-            let _ = d.delete_tracked_project(&project.path);
+            let _ = d.delete_tracked_project(&path);
         }
-        if let Some(pos) = self.cfg.workspace.custom_projects.iter().position(|p| *p == project.path) {
+        if let Some(pos) = self.cfg.workspace.custom_projects.iter().position(|p| *p == path) {
             self.cfg.workspace.custom_projects.remove(pos);
             self.save_config_silent();
         }
         self.latest_snap.tracked_projects.remove(idx);
         self.selected_project = 0;
-        self.set_notification(format!("🗑 Removed project '{}'", project.name));
+        self.set_notification(format!("🗑 Removed project '{name}'"));
     }
 
-    pub fn remove_selected_container(&mut self) {
+    fn execute_container_deletion(&mut self) {
         if self.latest_snap.docker_containers.is_empty() {
-            self.set_notification("⚠ No containers to remove");
             return;
         }
         let idx = self.selected_container.min(self.latest_snap.docker_containers.len() - 1);
@@ -992,6 +1131,115 @@ impl CockpitApp {
         }
         self.latest_snap.docker_containers.remove(idx);
         self.selected_container = 0;
+    }
+
+    fn execute_monitor_deletion(&mut self) {
+        if self.latest_snap.uptime_monitors.is_empty() {
+            return;
+        }
+        let idx = self.selected_monitor.min(self.latest_snap.uptime_monitors.len() - 1);
+        let monitor_name = self.latest_snap.uptime_monitors[idx].name.clone();
+
+        if let Some(pos) = self.cfg.uptime.custom_monitors.iter().position(|m| m.name == monitor_name) {
+            self.cfg.uptime.custom_monitors.remove(pos);
+            self.save_config_silent();
+        }
+        if let Some(ref d) = self.db {
+            let _ = d.delete_uptime_monitor(&monitor_name);
+        }
+        self.latest_snap.uptime_monitors.remove(idx);
+        self.selected_monitor = 0;
+        self.set_notification(format!("🗑 Uptime monitor '{monitor_name}' removed"));
+    }
+
+    fn execute_analytics_site_deletion(&mut self) {
+        let sites = self.analytic_sites();
+        if self.analytics_selected_site == 0 || self.analytics_selected_site >= sites.len() {
+            return;
+        }
+        let site = &sites[self.analytics_selected_site];
+        let site_id = site.id.clone();
+        if let Some(ref d) = self.db {
+            let _ = d.delete_analytic_site(&site_id);
+            self.analytics_selected_site = 0;
+            self.analytics_site_filter = None;
+            self.sample_system();
+            self.set_notification(format!("🗑 Website '{site_id}' removed from tracking"));
+        }
+    }
+
+    fn execute_analytics_wipe(&mut self) {
+        if let Some(ref d) = self.db {
+            let _ = d.clear_analytics_events();
+            self.sample_system();
+            self.ingest_snapshot(self.latest_snap.clone());
+            self.set_notification("Analytics events cleared");
+        }
+    }
+
+    fn execute_cron_job_deletion(&mut self) {
+        if let Some(ref d) = self.db {
+            let jobs = d.get_cron_jobs().unwrap_or_default();
+            let target = self.selected_cron_job.min(jobs.len().saturating_sub(1));
+            if target < jobs.len() {
+                let job_id = jobs[target].id;
+                let _ = d.delete_cron_job(job_id);
+                self.set_notification(format!("🗑 Scheduled cron job {job_id} removed"));
+            } else {
+                self.set_notification("⚠ No managed cron jobs to remove");
+            }
+        } else {
+            self.set_notification("⚠ No database connection available to remove cron jobs");
+        }
+        self.selected_cron_job = 0;
+    }
+
+    pub fn edit_selected_project(&mut self) {
+        if self.latest_snap.tracked_projects.is_empty() {
+            self.set_notification("⚠ No tracked projects to edit");
+            return;
+        }
+        let idx = self.selected_project.min(self.latest_snap.tracked_projects.len() - 1);
+        let project = &self.latest_snap.tracked_projects[idx];
+        self.project_path_buf = project.path.clone();
+        self.project_name_buf = project.name.clone();
+        self.project_category_buf = project.category.clone();
+        self.project_wizard_is_edit = true;
+        self.project_wizard_orig_name = project.path.clone();
+        self.project_wizard_field = 0;
+        self.show_project_wizard = true;
+        self.set_notification(format!("✎ Editing project '{}'", project.name));
+    }
+
+    pub fn clone_selected_project(&mut self) {
+        if self.latest_snap.tracked_projects.is_empty() {
+            self.set_notification("⚠ No tracked projects to clone");
+            return;
+        }
+        let idx = self.selected_project.min(self.latest_snap.tracked_projects.len() - 1);
+        let project = &self.latest_snap.tracked_projects[idx];
+        let new_name = format!("{}-copy", project.name);
+        let new_path = format!("{}-copy", project.path);
+        if let Some(ref d) = self.db {
+            let _ = d.add_tracked_project(&new_path, &new_name, &project.category, "main", false);
+        }
+        self.set_notification(format!("✓ Cloned project as '{}'", new_name));
+    }
+
+    pub fn remove_selected_container(&mut self) {
+        if self.latest_snap.docker_containers.is_empty() {
+            self.set_notification("⚠ No containers to remove");
+            return;
+        }
+        let idx = self.selected_container.min(self.latest_snap.docker_containers.len() - 1);
+        let name = self.latest_snap.docker_containers[idx].name.clone();
+        self.request_container_deletion(name);
+    }
+
+    pub fn request_container_deletion(&mut self, name: String) {
+        self.pending_delete_target = DeleteTarget::Container;
+        self.pending_delete_label = format!("container '{name}'");
+        self.show_delete_confirm = true;
     }
 
     pub fn edit_selected_container(&mut self) {
@@ -1017,17 +1265,13 @@ impl CockpitApp {
         }
         let idx = self.selected_monitor.min(self.latest_snap.uptime_monitors.len() - 1);
         let monitor_name = self.latest_snap.uptime_monitors[idx].name.clone();
+        self.request_monitor_deletion(monitor_name);
+    }
 
-        if let Some(pos) = self.cfg.uptime.custom_monitors.iter().position(|m| m.name == monitor_name) {
-            self.cfg.uptime.custom_monitors.remove(pos);
-            self.save_config_silent();
-        }
-        if let Some(ref d) = self.db {
-            let _ = d.delete_uptime_monitor(&monitor_name);
-        }
-        self.latest_snap.uptime_monitors.remove(idx);
-        self.selected_monitor = 0;
-        self.set_notification(format!("🗑 Uptime monitor '{monitor_name}' removed"));
+    pub fn request_monitor_deletion(&mut self, name: String) {
+        self.pending_delete_target = DeleteTarget::Monitor;
+        self.pending_delete_label = format!("uptime monitor '{name}'");
+        self.show_delete_confirm = true;
     }
 
     pub fn edit_selected_monitor(&mut self) {
@@ -1045,6 +1289,66 @@ impl CockpitApp {
         self.set_notification(format!("✎ Editing uptime monitor '{}'", monitor.name));
     }
 
+    pub fn clone_selected_monitor(&mut self) {
+        if self.latest_snap.uptime_monitors.is_empty() {
+            self.set_notification("⚠ No uptime monitors to clone");
+            return;
+        }
+        let idx = self.selected_monitor.min(self.latest_snap.uptime_monitors.len() - 1);
+        let monitor = &self.latest_snap.uptime_monitors[idx];
+        let new_name = format!("{}-copy", monitor.name);
+        if let Some(ref d) = self.db {
+            let _ = d.add_uptime_monitor(&new_name, &monitor.target);
+        }
+        self.cfg.uptime.custom_monitors.push(crate::config::UptimeMonitorConfig {
+            name: new_name.clone(),
+            target: monitor.target.clone(),
+        });
+        self.save_config_silent();
+        self.set_notification(format!("✓ Cloned uptime monitor as '{new_name}'"));
+    }
+
+    pub fn test_selected_server_ssh(&mut self) {
+        if self.server_probe_results.is_empty() {
+            self.set_notification("⚠ No fleet servers to test");
+            return;
+        }
+        let idx = self.selected_server.min(self.server_probe_results.len() - 1);
+        let server_name = self.server_probe_results[idx].0.clone();
+
+        let (ip, user, port) = if server_name.starts_with("ThinkPad X1") || server_name.starts_with("Local") {
+            ("127.0.0.1".to_string(), "cecepazhar".to_string(), 22u16)
+        } else if let Some(cfg_node) = self.cfg.daemon.nodes.get(&server_name) {
+            (
+                cfg_node.ip.clone(),
+                cfg_node.user.clone(),
+                cfg_node.services.first().map(|s| s.port).unwrap_or(22),
+            )
+        } else {
+            ("unknown".to_string(), "unknown".to_string(), 22u16)
+        };
+
+        let outcome = {
+            let addr_str = format!("{ip}:{port}");
+            if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+                let start = Instant::now();
+                match TcpStream::connect_timeout(&addr, Duration::from_millis(500)) {
+                    Ok(_stream) => {
+                        let elapsed = start.elapsed().as_millis();
+                        format!(
+                            "✓ SSH endpoint {server_name} ({user}@{ip}:{port}) REACHABLE in {elapsed}ms",
+                        )
+                    }
+                    Err(e) => format!("✗ SSH endpoint {server_name} ({user}@{ip}:{port}) unreachable: {e}"),
+                }
+            } else {
+                format!("✗ Invalid SSH endpoint for {server_name} ({ip}:{port})")
+            }
+        };
+
+        self.set_notification(outcome);
+    }
+
     pub fn remove_selected_server(&mut self) {
         if self.server_probe_results.is_empty() {
             self.set_notification("⚠ No fleet servers to remove");
@@ -1052,21 +1356,17 @@ impl CockpitApp {
         }
         let idx = self.selected_server.min(self.server_probe_results.len() - 1);
         let server_name = self.server_probe_results[idx].0.clone();
-
-        if self.cfg.daemon.nodes.contains_key(&server_name) {
-            self.cfg.daemon.nodes.remove(&server_name);
-            self.save_config_silent();
-            if let Some(ref d) = self.db {
-                let _ = d.delete_registered_node(&server_name);
-            }
-        } else {
-            self.set_notification(format!("Node '{server_name}' is a hardcoded system fleet node and cannot be removed."));
+        if server_name.starts_with("ThinkPad X1") || server_name.starts_with("Local") {
+            self.set_notification("Node 'ThinkPad X1 (Local)' is a hardcoded system fleet node and cannot be removed.");
             return;
         }
+        self.request_server_deletion(server_name);
+    }
 
-        self.server_probe_results.remove(idx);
-        self.selected_server = 0;
-        self.set_notification(format!("🗑 Fleet server '{server_name}' removed"));
+    pub fn request_server_deletion(&mut self, name: String) {
+        self.pending_delete_target = DeleteTarget::Server;
+        self.pending_delete_label = format!("fleet server '{name}'");
+        self.show_delete_confirm = true;
     }
 
     pub fn probe_servers(&mut self) {
@@ -1078,16 +1378,21 @@ impl CockpitApp {
         for (name, node) in &self.cfg.daemon.nodes {
             let port = node.services.first().map(|s| s.port).unwrap_or(22);
             let addr_str = format!("{}:{}", node.ip, port);
-            if let Ok(addr) = addr_str.parse::<SocketAddr>() {
-                let start = Instant::now();
-                if TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok() {
-                    results.push((name.clone(), Some(start.elapsed().as_millis())));
+            let probe = if node.active {
+                if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+                    let start = Instant::now();
+                    match TcpStream::connect_timeout(&addr, Duration::from_millis(50)) {
+                        Ok(_) => Some(start.elapsed().as_millis()),
+                        Err(_) => None,
+                    }
                 } else {
-                    results.push((name.clone(), None));
+                    None
                 }
             } else {
-                results.push((name.clone(), None));
-            }
+                // Skip inactive nodes during probing: they are dormant by design.
+                Some(0u128)
+            };
+            results.push((name.clone(), probe));
         }
 
         // 3. Ensure multi-node canonical fleet nodes (X1, YPC, Hostinger VPS, Tencent Cloud, XPC, pc-gerlink)
@@ -1564,14 +1869,19 @@ impl CockpitApp {
             return;
         }
         let site = &sites[self.analytics_selected_site];
-        let site_id = site.id.clone();
-        if let Some(ref d) = self.db {
-            let _ = d.delete_analytic_site(&site_id);
-            self.analytics_selected_site = 0;
-            self.analytics_site_filter = None;
-            self.sample_system();
-            self.set_notification(format!("🗑 Website '{site_id}' removed from tracking"));
-        }
+        self.request_analytics_site_deletion(site.id.clone(), site.name.clone());
+    }
+
+    pub fn request_analytics_site_deletion(&mut self, id: String, name: String) {
+        self.pending_delete_target = DeleteTarget::AnalyticsSite;
+        self.pending_delete_label = format!("analytics site '{name}' ({id})");
+        self.show_delete_confirm = true;
+    }
+
+    pub fn request_analytics_wipe(&mut self) {
+        self.pending_delete_target = DeleteTarget::AnalyticsWipe;
+        self.pending_delete_label = "ALL analytics event records (irreversible)".to_string();
+        self.show_delete_confirm = true;
     }
 
     pub fn submit_site_import_wizard(&mut self) {
@@ -2012,13 +2322,24 @@ impl CockpitApp {
             return;
         }
 
+        let existing_cfg = if self.server_wizard_is_edit {
+            self.cfg.daemon.nodes.get(&self.server_wizard_orig_name).cloned()
+        } else {
+            None
+        };
+        let active = existing_cfg.as_ref().map(|c| c.active).unwrap_or(true);
+
         let node_cfg = crate::config::NodeConfig {
             ip: ip.clone(),
             user,
             services,
+            active,
         };
 
-        let was_new = !self.cfg.daemon.nodes.contains_key(&name);
+        if self.server_wizard_is_edit && self.server_wizard_orig_name != name {
+            // Rename: remove old key
+            self.cfg.daemon.nodes.remove(&self.server_wizard_orig_name);
+        }
         self.cfg.daemon.nodes.insert(name.clone(), node_cfg);
         if self.save_config_silent() {
             if let Some(ref d) = self.db {
@@ -2026,7 +2347,7 @@ impl CockpitApp {
                 let _ = d.log_event(
                     "INFO",
                     "cockpit",
-                    &format!("Fleet node '{}' registered via add-server wizard", name),
+                    &format!("Fleet node '{}' registered via wizard", name),
                 );
             }
         }
@@ -2035,7 +2356,7 @@ impl CockpitApp {
         self.apps = Self::init_apps(&self.cfg);
         self.probe_all_ports();
 
-        let action = if was_new { "added" } else { "updated" };
+        let action = if self.server_wizard_is_edit { "updated" } else { "added" };
         self.set_notification(format!(
             "✓ Fleet node '{}' {} and auto-probed",
             name, action
@@ -2046,6 +2367,136 @@ impl CockpitApp {
         self.server_ip_buf.clear();
         self.server_user_buf = "root".to_string();
         self.server_services_buf = "http:80,ssh:22".to_string();
+        self.server_wizard_is_edit = false;
+        self.server_wizard_orig_name.clear();
+    }
+
+    /// Open the Edit Wizard for the currently selected fleet server.
+    pub fn open_edit_server_wizard(&mut self) {
+        if self.server_probe_results.is_empty() {
+            self.set_notification("⚠ No fleet servers to edit");
+            return;
+        }
+        let idx = self.selected_server.min(self.server_probe_results.len() - 1);
+        let server_name = self.server_probe_results[idx].0.clone();
+
+        if server_name.starts_with("ThinkPad X1") || server_name.starts_with("Local") {
+            self.set_notification("System local node cannot be edited or renamed.");
+            return;
+        }
+
+        if let Some(cfg_node) = self.cfg.daemon.nodes.get(&server_name) {
+            let services_str = cfg_node
+                .services
+                .iter()
+                .map(|s| format!("{}:{}:{}", s.name, s.port, s.protocol))
+                .collect::<Vec<_>>()
+                .join(",");
+            self.server_name_buf = server_name.clone();
+            self.server_ip_buf = cfg_node.ip.clone();
+            self.server_user_buf = cfg_node.user.clone();
+            self.server_services_buf = if services_str.is_empty() {
+                "http:80,ssh:22".to_string()
+            } else {
+                services_str
+            };
+            self.server_wizard_is_edit = true;
+            self.server_wizard_orig_name = server_name.clone();
+            self.server_wizard_field = 0;
+            self.show_server_wizard = true;
+            self.set_notification(format!("✎ Editing fleet server '{}'", server_name));
+        } else {
+            self.set_notification(format!(
+                "Fleet server '{}' is a built-in preset and cannot be edited.",
+                server_name
+            ));
+        }
+    }
+
+    /// Clone (duplicate) the currently selected fleet server with a suffix.
+    pub fn clone_selected_server(&mut self) {
+        if self.server_probe_results.is_empty() {
+            self.set_notification("⚠ No fleet servers to clone");
+            return;
+        }
+        let idx = self.selected_server.min(self.server_probe_results.len() - 1);
+        let server_name = self.server_probe_results[idx].0.clone();
+
+        if server_name.starts_with("ThinkPad X1") || server_name.starts_with("Local") {
+            self.set_notification("System local node cannot be cloned.");
+            return;
+        }
+
+        if let Some(cfg_node) = self.cfg.daemon.nodes.get(&server_name).cloned() {
+            let mut clone_name = format!("{server_name}-clone");
+            let mut suffix = 2;
+            while self.cfg.daemon.nodes.contains_key(&clone_name) {
+                clone_name = format!("{server_name}-clone{suffix}");
+                suffix += 1;
+            }
+
+            let mut new_node = cfg_node;
+            new_node.active = true;
+
+            self.cfg.daemon.nodes.insert(clone_name.clone(), new_node);
+            if self.save_config_silent() {
+                if let Some(ref d) = self.db {
+                    let _ = d.log_event(
+                        "INFO",
+                        "cockpit",
+                        &format!("Fleet node '{server_name}' cloned as '{clone_name}'"),
+                    );
+                }
+            }
+
+            self.set_notification(format!(
+                "✓ Cloned fleet server '{}' as '{clone_name}'",
+                server_name
+            ));
+        } else {
+            self.set_notification(format!(
+                "Fleet server '{}' is a built-in preset and cannot be cloned.",
+                server_name
+            ));
+        }
+    }
+
+    /// Toggle Active / Inactive state of the currently selected fleet server.
+    pub fn toggle_server_active(&mut self) {
+        if self.server_probe_results.is_empty() {
+            self.set_notification("⚠ No fleet servers to toggle");
+            return;
+        }
+        let idx = self.selected_server.min(self.server_probe_results.len() - 1);
+        let server_name = self.server_probe_results[idx].0.clone();
+
+        if server_name.starts_with("ThinkPad X1") || server_name.starts_with("Local") {
+            self.set_notification("System local node cannot be disabled.");
+            return;
+        }
+
+        if let Some(cfg_node) = self.cfg.daemon.nodes.get_mut(&server_name) {
+            cfg_node.active = !cfg_node.active;
+            let state = if cfg_node.active { "Active" } else { "Inactive" };
+            if self.save_config_silent() {
+                if let Some(ref d) = self.db {
+                    let _ = d.log_event(
+                        "INFO",
+                        "cockpit",
+                        &format!("Fleet node '{server_name}' toggled to {state}"),
+                    );
+                }
+            }
+            self.set_notification(format!(
+                "⏯ Fleet server '{}' is now {state}",
+                server_name
+            ));
+        } else {
+            self.set_notification(format!(
+                "Fleet server '{}' is a built-in preset and cannot be toggled.",
+                server_name
+            ));
+        }
     }
 
     /// Submit the "Add Project" wizard.
@@ -2905,6 +3356,22 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
     }
 
+    // 5c. Delete Confirmation Modal Handling (across all pages)
+    if app.show_delete_confirm {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                app.execute_pending_deletion();
+                return Ok(false);
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc | KeyCode::Char('q') => {
+                app.show_delete_confirm = false;
+                app.set_notification("Deletion cancelled. Item preserved.");
+                return Ok(false);
+            }
+            _ => return Ok(false),
+        }
+    }
+
     // 6. Global Navigation Shortcuts
     match key.code {
         KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -2978,8 +3445,12 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
 
         KeyCode::Tab => {
-            let next_idx = (app.current_tab.to_index() + 1) % CockpitTab::COUNT;
-            app.current_tab = CockpitTab::from_index(next_idx);
+            if app.current_tab == CockpitTab::Dashboard {
+                app.dashboard_focused_panel = (app.dashboard_focused_panel + 1) % 5;
+            } else {
+                let next_idx = (app.current_tab.to_index() + 1) % CockpitTab::COUNT;
+                app.current_tab = CockpitTab::from_index(next_idx);
+            }
         }
         KeyCode::BackTab => {
             let prev_idx = (app.current_tab.to_index() + CockpitTab::COUNT - 1) % CockpitTab::COUNT;
@@ -2990,7 +3461,13 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Up | KeyCode::Char('k') => match app.current_tab {
             CockpitTab::Dashboard => {
                 app.pet_selected_action = (app.pet_selected_action + 4) % 5;
-                app.overview_proc_scroll = app.overview_proc_scroll.saturating_sub(1);
+                match app.dashboard_focused_panel {
+                    0 => app.dashboard_fleet_scroll = app.dashboard_fleet_scroll.saturating_sub(1),
+                    1 => app.dashboard_services_scroll = app.dashboard_services_scroll.saturating_sub(1),
+                    2 => app.dashboard_containers_scroll = app.dashboard_containers_scroll.saturating_sub(1),
+                    3 => app.dashboard_monitors_scroll = app.dashboard_monitors_scroll.saturating_sub(1),
+                    _ => app.dashboard_analytics_scroll = app.dashboard_analytics_scroll.saturating_sub(1),
+                }
             }
             CockpitTab::Project => {
                 match app.project_view {
@@ -3031,8 +3508,13 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Down | KeyCode::Char('j') => match app.current_tab {
             CockpitTab::Dashboard => {
                 app.pet_selected_action = (app.pet_selected_action + 1) % 5;
-                // Use PageDown-style jumps (or single-step) to smoothly page through the Executive Command Center rows.
-                app.overview_proc_scroll = (app.overview_proc_scroll + 1).min(30);
+                match app.dashboard_focused_panel {
+                    0 => app.dashboard_fleet_scroll = (app.dashboard_fleet_scroll + 1).min(30),
+                    1 => app.dashboard_services_scroll = (app.dashboard_services_scroll + 1).min(30),
+                    2 => app.dashboard_containers_scroll = (app.dashboard_containers_scroll + 1).min(30),
+                    3 => app.dashboard_monitors_scroll = (app.dashboard_monitors_scroll + 1).min(30),
+                    _ => app.dashboard_analytics_scroll = (app.dashboard_analytics_scroll + 1).min(30),
+                }
             }
             CockpitTab::Project => {
                 match app.project_view {
@@ -3192,10 +3674,12 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             app.edit_selected_monitor();
         }
 
-        // Server Tab shortcuts: 'a'/'n': Add server, 'p': Probe servers, 'x': Remove server
+        // Server Tab shortcuts: 'a'/'n': Add server, 'p': Probe servers, 'x': Remove server, 'e': Edit server, 'c': Clone server, 'v': Toggle Active/Inactive, 't': Test SSH
         KeyCode::Char('a') | KeyCode::Char('n') if app.current_tab == CockpitTab::Server => {
             app.show_server_wizard = true;
             app.server_wizard_field = 0;
+            app.server_wizard_is_edit = false;
+            app.server_wizard_orig_name.clear();
         }
         KeyCode::Char('p') if app.current_tab == CockpitTab::Server => {
             app.probe_servers();
@@ -3203,6 +3687,35 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
         KeyCode::Char('x') | KeyCode::Delete if app.current_tab == CockpitTab::Server => {
             app.remove_selected_server();
+        }
+        KeyCode::Char('e') if app.current_tab == CockpitTab::Server => {
+            app.open_edit_server_wizard();
+        }
+        KeyCode::Char('c') if app.current_tab == CockpitTab::Server => {
+            app.clone_selected_server();
+        }
+        KeyCode::Char('v') if app.current_tab == CockpitTab::Server => {
+            app.toggle_server_active();
+        }
+        KeyCode::Char('t') if app.current_tab == CockpitTab::Server => {
+            app.test_selected_server_ssh();
+        }
+
+        // Project Tab shortcuts: 'e': Edit project, 'c': Clone project
+        KeyCode::Char('e') if app.current_tab == CockpitTab::Project && app.project_view != ProjectView::Containers => {
+            app.edit_selected_project();
+        }
+        KeyCode::Char('c') if app.current_tab == CockpitTab::Project => {
+            if app.project_view == ProjectView::Containers {
+                app.edit_selected_container();
+            } else {
+                app.clone_selected_project();
+            }
+        }
+
+        // Uptime Tab shortcuts: 'c': Clone monitor
+        KeyCode::Char('c') if app.current_tab == CockpitTab::Uptime => {
+            app.clone_selected_monitor();
         }
 
         // Analytics Tab shortcuts: 'w': Cycle site, 's'/'t': Script/Template, 'r': Refresh, 'p': Test hit, 'i': Import, 'e': Export, 'a': Add Site, 'x': Clear/Delete
@@ -3248,12 +3761,16 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Char('x') | KeyCode::Delete if app.current_tab == CockpitTab::Analytics => {
             if app.analytics_selected_site > 0 {
                 app.remove_selected_analytics_site();
-            } else if let Some(ref d) = app.db {
-                let _ = d.clear_analytics_events();
-                app.sample_system();
-                app.ingest_snapshot(app.latest_snap.clone());
-                app.set_notification("Analytics events cleared");
+            } else {
+                app.request_analytics_wipe();
             }
+        }
+
+        // Cron Tab shortcuts: 'n': New Cron Job, 'x': Remove selected managed cron job
+        KeyCode::Char('x') | KeyCode::Delete if app.current_tab == CockpitTab::Cron => {
+            app.pending_delete_target = DeleteTarget::CronJob;
+            app.pending_delete_label = format!("selected scheduled cron job #{}", app.selected_cron_job);
+            app.show_delete_confirm = true;
         }
 
         // Audit Tab shortcuts: 'a': Turbo Audit, 'f': Run Fix
@@ -3502,7 +4019,13 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
 ) -> Result<()> {
     match mouse.kind {
         MouseEventKind::ScrollUp => match app.current_tab {
-            CockpitTab::Dashboard => app.overview_proc_scroll = app.overview_proc_scroll.saturating_sub(1),
+            CockpitTab::Dashboard => match app.dashboard_focused_panel {
+                0 => app.dashboard_fleet_scroll = app.dashboard_fleet_scroll.saturating_sub(1),
+                1 => app.dashboard_services_scroll = app.dashboard_services_scroll.saturating_sub(1),
+                2 => app.dashboard_containers_scroll = app.dashboard_containers_scroll.saturating_sub(1),
+                3 => app.dashboard_monitors_scroll = app.dashboard_monitors_scroll.saturating_sub(1),
+                _ => app.dashboard_analytics_scroll = app.dashboard_analytics_scroll.saturating_sub(1),
+            },
             CockpitTab::Project => match app.project_view {
                 ProjectView::Hierarchy | ProjectView::Tree => app.selected_project = app.selected_project.saturating_sub(1),
                 ProjectView::Containers => app.selected_container = app.selected_container.saturating_sub(1),
@@ -3518,7 +4041,13 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
             CockpitTab::Setting => app.selected_field = app.selected_field.saturating_sub(1),
         },
         MouseEventKind::ScrollDown => match app.current_tab {
-            CockpitTab::Dashboard => app.overview_proc_scroll = (app.overview_proc_scroll + 1).min(30),
+            CockpitTab::Dashboard => match app.dashboard_focused_panel {
+                0 => app.dashboard_fleet_scroll = (app.dashboard_fleet_scroll + 1).min(30),
+                1 => app.dashboard_services_scroll = (app.dashboard_services_scroll + 1).min(30),
+                2 => app.dashboard_containers_scroll = (app.dashboard_containers_scroll + 1).min(30),
+                3 => app.dashboard_monitors_scroll = (app.dashboard_monitors_scroll + 1).min(30),
+                _ => app.dashboard_analytics_scroll = (app.dashboard_analytics_scroll + 1).min(30),
+            },
             CockpitTab::Project => match app.project_view {
                 ProjectView::Hierarchy | ProjectView::Tree => {
                     if !app.latest_snap.tracked_projects.is_empty() {
@@ -3649,6 +4178,30 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                     }
                     HitboxAction::RemoveServer => {
                         app.remove_selected_server();
+                    }
+                    HitboxAction::EditServer => {
+                        app.open_edit_server_wizard();
+                    }
+                    HitboxAction::CloneServer => {
+                        app.clone_selected_server();
+                    }
+                    HitboxAction::ToggleServerActive => {
+                        app.toggle_server_active();
+                    }
+                    HitboxAction::TestServerSsh => {
+                        app.test_selected_server_ssh();
+                    }
+                    HitboxAction::FocusDashboardPanel(idx) => {
+                        app.dashboard_focused_panel = idx;
+                    }
+                    HitboxAction::EditProject => {
+                        app.edit_selected_project();
+                    }
+                    HitboxAction::CloneProject => {
+                        app.clone_selected_project();
+                    }
+                    HitboxAction::CloneMonitor => {
+                        app.clone_selected_monitor();
                     }
                     HitboxAction::SelectMonitor(idx) => {
                         app.selected_monitor = idx;
@@ -3806,6 +4359,13 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                     }
                     HitboxAction::CancelQuit => {
                         app.show_quit_confirm = false;
+                    }
+                    HitboxAction::ConfirmDelete => {
+                        app.execute_pending_deletion();
+                    }
+                    HitboxAction::CancelDelete => {
+                        app.show_delete_confirm = false;
+                        app.set_notification("Deletion cancelled. Item preserved.");
                     }
                     // Add-wizard openers
                     HitboxAction::AddServer => {
@@ -4296,6 +4856,10 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     if app.show_pet_switch_confirm {
         draw_pet_switch_confirm_modal(f, app, area);
+    }
+
+    if app.show_delete_confirm {
+        draw_delete_confirm_modal(f, app, area);
     }
 
     if app.show_analytics_script_modal {
@@ -5082,7 +5646,6 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     // ── Bottom: Four Executive Command Center Panels ─────────────────────────
     let bottom_area = chunks[2];
-    let scroll = app.overview_proc_scroll;
 
     if bottom_area.height >= 20 {
         // Full dual-row dual-column view: All 4 panels visible simultaneously!
@@ -5119,14 +5682,26 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             ])
             .split(row_chunks[2]);
 
-        draw_fleet_nodes_resume_panel(f, app, upper_cols[0], &palette, scroll);
-        draw_services_health_resume_panel(f, app, upper_cols[1], &palette, scroll);
-        draw_docker_containers_resume_panel(f, app, middle_cols[0], &palette, scroll);
-        draw_uptime_monitors_resume_panel(f, app, middle_cols[1], &palette, scroll);
+        let fleet_focused = app.dashboard_focused_panel == 0;
+        let services_focused = app.dashboard_focused_panel == 1;
+        let containers_focused = app.dashboard_focused_panel == 2;
+        let monitors_focused = app.dashboard_focused_panel == 3;
+
+        let fleet_scroll = app.dashboard_fleet_scroll;
+        let services_scroll = app.dashboard_services_scroll;
+        let containers_scroll = app.dashboard_containers_scroll;
+        let monitors_scroll = app.dashboard_monitors_scroll;
+
+        draw_fleet_nodes_resume_panel(f, app, upper_cols[0], &palette, fleet_scroll, fleet_focused);
+        draw_services_health_resume_panel(f, app, upper_cols[1], &palette, services_scroll, services_focused);
+        draw_docker_containers_resume_panel(f, app, middle_cols[0], &palette, containers_scroll, containers_focused);
+        draw_uptime_monitors_resume_panel(f, app, middle_cols[1], &palette, monitors_scroll, monitors_focused);
 
         // Add web traffic analytics & umami-like panel
-        draw_web_analytics_resume_panel(f, app, lower_cols[0], &palette);
-        draw_web_analytics_resume_panel2(f, app, lower_cols[1], &palette);
+        let analytics_focused = app.dashboard_focused_panel == 4;
+        let analytics_scroll = app.dashboard_analytics_scroll;
+        draw_web_analytics_resume_panel(f, app, lower_cols[0], &palette, analytics_scroll, analytics_focused);
+        draw_web_analytics_resume_panel2(f, app, lower_cols[1], &palette, analytics_scroll, analytics_focused);
     } else {
         // Compact view: use 'j'/'k' to smoothly switch between Upper (Fleet + Services) and Lower (Containers + Uptime)
         let cols = Layout::default()
@@ -5137,13 +5712,16 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             ])
             .split(bottom_area);
 
-        if scroll == 0 {
-            draw_fleet_nodes_resume_panel(f, app, cols[0], &palette, 0);
-            draw_services_health_resume_panel(f, app, cols[1], &palette, 0);
+        if app.dashboard_focused_panel <= 1 {
+            let fleet_scroll = app.dashboard_fleet_scroll;
+            let services_scroll = app.dashboard_services_scroll;
+            draw_fleet_nodes_resume_panel(f, app, cols[0], &palette, fleet_scroll, app.dashboard_focused_panel == 0);
+            draw_services_health_resume_panel(f, app, cols[1], &palette, services_scroll, app.dashboard_focused_panel == 1);
         } else {
-            let inner_scroll = scroll.saturating_sub(1);
-            draw_docker_containers_resume_panel(f, app, cols[0], &palette, inner_scroll);
-            draw_uptime_monitors_resume_panel(f, app, cols[1], &palette, inner_scroll);
+            let containers_scroll = app.dashboard_containers_scroll;
+            let monitors_scroll = app.dashboard_monitors_scroll;
+            draw_docker_containers_resume_panel(f, app, cols[0], &palette, containers_scroll, app.dashboard_focused_panel == 2);
+            draw_uptime_monitors_resume_panel(f, app, cols[1], &palette, monitors_scroll, app.dashboard_focused_panel == 3);
         }
     }
 }
@@ -5156,16 +5734,21 @@ fn draw_fleet_nodes_resume_panel(
     area: Rect,
     palette: &ThemePalette,
     scroll: usize,
+    is_focused: bool,
 ) {
     if area.width < 10 || area.height < 4 {
         return;
     }
+    app.register_hitbox(area, HitboxAction::FocusDashboardPanel(0));
     let nodes = app.latest_snap.fleet_nodes.clone();
     let online_count = nodes.iter().filter(|n| n.status == "ONLINE").count();
     let total_count = nodes.len();
+    let focus_hint = if is_focused { " [● FOCUSED - Scroll j/k]" } else { "" };
     let scroll_hint = if area.height < 12 { " [j↓ Docker/Uptime]" } else { "" };
-    let title = format!(" 🖥 Server Fleet Resume · Armada ({online_count}/{total_count} Online){scroll_hint} ");
-    let border_color = if online_count == total_count && total_count > 0 {
+    let title = format!(" 🖥 Server Fleet Resume · Armada ({online_count}/{total_count} Online){focus_hint}{scroll_hint} ");
+    let border_color = if is_focused {
+        palette.accent
+    } else if online_count == total_count && total_count > 0 {
         palette.status_ok
     } else {
         palette.status_warn
@@ -5264,19 +5847,24 @@ fn draw_fleet_nodes_resume_panel(
 
 fn draw_services_health_resume_panel(
     f: &mut Frame,
-    _app: &mut CockpitApp,
+    app: &mut CockpitApp,
     area: Rect,
     palette: &ThemePalette,
     scroll: usize,
+    is_focused: bool,
 ) {
     if area.width < 10 || area.height < 4 {
         return;
     }
-    let services = _app.latest_snap.service_health.clone();
+    app.register_hitbox(area, HitboxAction::FocusDashboardPanel(1));
+    let services = app.latest_snap.service_health.clone();
     let active_count = services.iter().filter(|s| s.state == crate::systat::DaemonState::Active).count();
     let total_count = services.len();
-    let title = format!(" ⚡ Services Health Resume · Daemons ({active_count}/{total_count} Active) ");
-    let border_color = if active_count == total_count && total_count > 0 {
+    let focus_hint = if is_focused { " [● FOCUSED - Scroll j/k]" } else { "" };
+    let title = format!(" ⚡ Services Health Resume · Daemons ({active_count}/{total_count} Active){focus_hint} ");
+    let border_color = if is_focused {
+        palette.accent
+    } else if active_count == total_count && total_count > 0 {
         palette.status_ok
     } else {
         palette.status_warn
@@ -5346,17 +5934,25 @@ fn draw_docker_containers_resume_panel(
     area: Rect,
     palette: &ThemePalette,
     scroll: usize,
+    is_focused: bool,
 ) {
     if area.width < 10 || area.height < 4 {
         return;
     }
+    app.register_hitbox(area, HitboxAction::FocusDashboardPanel(2));
     let containers = app.latest_snap.docker_containers.clone();
     let running_count = containers.iter().filter(|c| c.state == "running").count();
     let total_count = containers.len();
     let down_count = total_count.saturating_sub(running_count);
+    let focus_hint = if is_focused { " [● FOCUSED - Scroll j/k]" } else { "" };
 
     let scroll_hint = if area.height < 12 { " [k↑ Fleet/Services]" } else { "" };
-    let (title, border_color) = if down_count == 0 && total_count > 0 {
+    let (title, border_color) = if is_focused {
+        (
+            format!(" 🐳 Docker Containers Resume · {running_count}/{total_count} Containers Running{focus_hint} "),
+            palette.accent,
+        )
+    } else if down_count == 0 && total_count > 0 {
         (
             format!(" 🐳 Docker Containers Resume · 🟢 {running_count}/{total_count} Containers Running{scroll_hint} "),
             palette.status_ok,
@@ -5502,17 +6098,25 @@ fn draw_uptime_monitors_resume_panel(
     area: Rect,
     palette: &ThemePalette,
     scroll: usize,
+    is_focused: bool,
 ) {
     if area.width < 10 || area.height < 4 {
         return;
     }
+    app.register_hitbox(area, HitboxAction::FocusDashboardPanel(3));
     let monitors = app.latest_snap.uptime_monitors.clone();
     let up_count = monitors.iter().filter(|m| m.is_up).count();
     let total_count = monitors.len();
     let down_count = total_count.saturating_sub(up_count);
+    let focus_hint = if is_focused { " [● FOCUSED - Scroll j/k]" } else { "" };
 
     let scroll_hint = if area.height < 12 { " [k↑ Fleet/Services]" } else { "" };
-    let (title, border_color) = if down_count == 0 && total_count > 0 {
+    let (title, border_color) = if is_focused {
+        (
+            format!(" 🌐 Uptime Monitors Resume · {up_count}/{total_count} UP{focus_hint} "),
+            palette.accent,
+        )
+    } else if down_count == 0 && total_count > 0 {
         (
             format!(" 🌐 Uptime Monitors Resume · 🟢 ALL {up_count} UP ({total_count} Total){scroll_hint} "),
             palette.status_ok,
@@ -5662,15 +6266,19 @@ fn draw_web_analytics_resume_panel(
     app: &mut CockpitApp,
     area: Rect,
     palette: &ThemePalette,
+    _scroll: usize,
+    is_focused: bool,
 ) {
     if area.width < 10 || area.height < 4 {
         return;
     }
+    app.register_hitbox(area, HitboxAction::FocusDashboardPanel(4));
     let a = &app.latest_snap.web_analytics;
+    let focus_hint = if is_focused { " [● FOCUSED]" } else { "" };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" 📊 Product Analytics (Umami / CA-Product Landings) · {} Live ", a.active_visitors))
-        .border_style(Style::default().fg(palette.accent));
+        .title(format!(" 📊 Product Analytics (Umami / CA-Product Landings) · {} Live{focus_hint} ", a.active_visitors))
+        .border_style(Style::default().fg(if is_focused { palette.status_ok } else { palette.accent }));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -5750,15 +6358,18 @@ fn draw_web_analytics_resume_panel2(
     app: &mut CockpitApp,
     area: Rect,
     palette: &ThemePalette,
+    _scroll: usize,
+    is_focused: bool,
 ) {
     if area.width < 10 || area.height < 4 {
         return;
     }
     let a = &app.latest_snap.web_analytics;
+    let focus_hint = if is_focused { " [● FOCUSED]" } else { "" };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" 🌐 Product Landing Pages & Top Referrers ")
-        .border_style(Style::default().fg(palette.border));
+        .title(format!(" 🌐 Product Landing Pages & Top Referrers{focus_hint} "))
+        .border_style(Style::default().fg(if is_focused { palette.status_ok } else { palette.border }));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -6576,31 +7187,45 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let bar_inner = bar_block.inner(chunks[0]);
     f.render_widget(bar_block, chunks[0]);
 
-    let btn_add_w = 18u16;
-    let btn_probe_w = 26u16;
-    let btn_del_w = 18u16;
+    let btn_add_w = 14u16;
+    let btn_edit_w = 14u16;
+    let btn_clone_w = 15u16;
+    let btn_active_w = 16u16;
+    let btn_ssh_w = 15u16;
+    let btn_probe_w = 15u16;
+    let btn_del_w = 14u16;
 
-    app.register_hitbox(
-        Rect { x: bar_inner.x + 1, y: bar_inner.y, width: btn_add_w, height: 1 },
-        HitboxAction::AddServer,
-    );
-    app.register_hitbox(
-        Rect { x: bar_inner.x + btn_add_w + 3, y: bar_inner.y, width: btn_probe_w, height: 1 },
-        HitboxAction::ProbeServers,
-    );
-    app.register_hitbox(
-        Rect { x: bar_inner.x + btn_add_w + btn_probe_w + 6, y: bar_inner.y, width: btn_del_w, height: 1 },
-        HitboxAction::RemoveServer,
-    );
+    let mut cur_x = bar_inner.x + 1;
+    let y = bar_inner.y;
+
+    app.register_hitbox(Rect { x: cur_x, y, width: btn_add_w, height: 1 }, HitboxAction::AddServer);
+    cur_x += btn_add_w + 1;
+    app.register_hitbox(Rect { x: cur_x, y, width: btn_edit_w, height: 1 }, HitboxAction::EditServer);
+    cur_x += btn_edit_w + 1;
+    app.register_hitbox(Rect { x: cur_x, y, width: btn_clone_w, height: 1 }, HitboxAction::CloneServer);
+    cur_x += btn_clone_w + 1;
+    app.register_hitbox(Rect { x: cur_x, y, width: btn_active_w, height: 1 }, HitboxAction::ToggleServerActive);
+    cur_x += btn_active_w + 1;
+    app.register_hitbox(Rect { x: cur_x, y, width: btn_ssh_w, height: 1 }, HitboxAction::TestServerSsh);
+    cur_x += btn_ssh_w + 1;
+    app.register_hitbox(Rect { x: cur_x, y, width: btn_probe_w, height: 1 }, HitboxAction::ProbeServers);
+    cur_x += btn_probe_w + 1;
+    app.register_hitbox(Rect { x: cur_x, y, width: btn_del_w, height: 1 }, HitboxAction::RemoveServer);
 
     let bar_spans = vec![
-        Span::styled(" [+ Add Server] (a) ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
-        Span::raw("  "),
-        Span::styled(" [🔍 Probe Latency Matrix] (p) ", Style::default().fg(Color::Black).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
-        Span::raw("  "),
-        Span::styled(" [🗑 Remove Node] (x) ", Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)),
-        Span::raw("  │  "),
-        Span::styled("Fleet Nodes: X1, YPC, Hostinger VPS, Tencent Cloud VPS, XPC, Gerlink", Style::default().fg(palette.accent)),
+        Span::styled(" [+ Add] (a) ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [✎ Edit] (e) ", Style::default().fg(Color::Black).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [❐ Clone] (c) ", Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [⏸ Active] (v) ", Style::default().fg(Color::Black).bg(palette.status_warn).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [⚡ SSH] (t) ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [🔍 Probe] (p) ", Style::default().fg(Color::Black).bg(palette.chart_cpu).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [🗑 Del] (x) ", Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)),
     ];
     f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
 
@@ -6620,13 +7245,19 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     for (i, (node_name, lat)) in app.server_probe_results.iter().enumerate() {
         let is_sel = i == app.selected_server;
         let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
-        let (lat_str, status_str, status_col) = match lat {
-            Some(ms) => (format!("{ms}ms"), "● REACHABLE", palette.status_ok),
-            None => ("--".to_string(), "✖ UNREACHABLE", palette.status_err),
+        let is_active = app.cfg.daemon.nodes.get(node_name).map(|n| n.active).unwrap_or(true);
+
+        let (lat_str, status_str, status_col) = if !is_active {
+            ("--".to_string(), "◌ INACTIVE", palette.text_muted)
+        } else {
+            match lat {
+                Some(ms) => (format!("{ms}ms"), "● REACHABLE", palette.status_ok),
+                None => ("--".to_string(), "✖ UNREACHABLE", palette.status_err),
+            }
         };
         rows.push(
             Row::new(vec![
-                Cell::from(node_name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Cell::from(node_name.clone()).style(Style::default().fg(if is_active { Color::White } else { palette.text_muted }).add_modifier(Modifier::BOLD)),
                 Cell::from(status_str).style(Style::default().fg(status_col).add_modifier(Modifier::BOLD)),
                 Cell::from(lat_str).style(Style::default().fg(palette.accent)),
             ])
@@ -6708,6 +7339,7 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         let ip = node_cfg.map(|n| n.ip.as_str()).unwrap_or("100.x.y.z (Tailscale Mesh)");
         let user = node_cfg.map(|n| n.user.as_str()).unwrap_or("root");
         let svcs = node_cfg.map(|n| n.services.iter().map(|s| format!("{}:{}", s.name, s.port)).collect::<Vec<_>>().join(", ")).unwrap_or_else(|| "ssh:22, http:80".to_string());
+        let active_state = node_cfg.map(|n| n.active).unwrap_or(true);
 
         details.push(Line::from(vec![
             Span::styled("Node ID:       ", Style::default().fg(palette.text_muted)),
@@ -6725,8 +7357,18 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             Span::styled("Services:      ", Style::default().fg(palette.text_muted)),
             Span::styled(svcs.clone(), Style::default().fg(palette.status_warn)),
         ]));
+        details.push(Line::from(vec![
+            Span::styled("Node State:    ", Style::default().fg(palette.text_muted)),
+            Span::styled(
+                if active_state { "● ACTIVE (Probing & Armada Enabled)" } else { "◌ INACTIVE (Probes Disabled)" },
+                Style::default().fg(if active_state { palette.status_ok } else { palette.text_muted }).add_modifier(Modifier::BOLD),
+            ),
+        ]));
         details.push(Line::from(""));
-        details.push(Line::from(Span::styled("Press 'a' to add a new server node, or 'p' to re-probe network latencies.", Style::default().fg(palette.text_muted))));
+        details.push(Line::from(Span::styled(
+            "Management Controls: [e] Edit Node · [c] Clone Node · [v] Toggle Active · [t] Test SSH · [x] Remove",
+            Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
+        )));
     }
 
     f.render_widget(Paragraph::new(details), detail_inner);
@@ -8757,10 +9399,18 @@ fn draw_server_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let popup_area = centered_rect(65, 52, area);
     f.render_widget(Clear, popup_area);
 
+    let is_edit = app.server_wizard_is_edit;
+    let orig_name = app.server_wizard_orig_name.clone();
+    let wizard_title = if is_edit {
+        format!(" ✎ Edit Fleet Server — Node Manager ({orig_name})")
+    } else {
+        " 🖥 Add Fleet Server — Node Wizard".to_string()
+    };
+
     let block = Block::default()
-        .title(" 🖥 Add Fleet Server — Node Wizard ")
+        .title(wizard_title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+        .border_style(Style::default().fg(if is_edit { palette.status_warn } else { palette.accent }).add_modifier(Modifier::BOLD));
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
@@ -8777,7 +9427,11 @@ fn draw_server_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let mut lines = Vec::new();
     lines.push(Line::from(Span::styled(
-        "Register a fleet node with IP & services. Auto-probes upon saving.",
+        if is_edit {
+            "Edit the fleet node IP, SSH user, and exposed services. Renaming the key is supported."
+        } else {
+            "Register a fleet node with IP & services. Auto-probes upon saving."
+        },
         Style::default().fg(palette.text_muted),
     )));
     lines.push(Line::from(""));
@@ -8829,13 +9483,23 @@ fn draw_server_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     )));
     lines.push(Line::from(""));
 
-    let btn_save = Span::styled(
-        " [✔ Add Server] (Enter) ",
-        Style::default()
-            .fg(Color::Black)
-            .bg(Color::Green)
-            .add_modifier(Modifier::BOLD),
-    );
+    let btn_save = if is_edit {
+        Span::styled(
+            " [✔ Save Changes] (Enter) ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(
+            " [✔ Add Server] (Enter) ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
+    };
     let btn_cancel = Span::styled(
         " [✖ Cancel] (Esc) ",
         Style::default()
@@ -9278,6 +9942,76 @@ fn draw_quit_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     app.register_hitbox(
         Rect { x: start_x + yes_w + gap_w, y: btn_y, width: cancel_w, height: 1 },
         HitboxAction::CancelQuit,
+    );
+}
+
+// ── Delete Confirmation Modal ────────────────────────────────────────────────
+
+fn draw_delete_confirm_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let popup_area = centered_rect(58, 13, area);
+    f.render_widget(Clear, popup_area);
+
+    let target_label = app.pending_delete_target.label();
+    let title = format!(" 🗑 Confirm Deletion — {target_label} ");
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD));
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    let label = if app.pending_delete_label.is_empty() {
+        "this resource".to_string()
+    } else {
+        app.pending_delete_label.clone()
+    };
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(" Are you sure you want to permanently delete: ", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled(format!(" ✖ {label} "), Style::default().fg(Color::Rgb(255, 120, 120)).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(Span::styled(
+            " This action will immediately remove the resource and cannot be undone. ",
+            Style::default().fg(palette.text_muted),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                " [Y] Yes, Delete ",
+                Style::default().fg(Color::Black).bg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("    "),
+            Span::styled(
+                " [N / Esc] Cancel & Keep ",
+                Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+    ];
+    f.render_widget(
+        Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center),
+        inner,
+    );
+
+    // Register mouse hitboxes for [Yes, Delete] and [Cancel & Keep]
+    let btn_y = inner.y + 5;
+    let yes_w = 17u16;
+    let gap_w = 4u16;
+    let cancel_w = 25u16;
+    let total_w = yes_w + gap_w + cancel_w;
+    let start_x = inner.x + (inner.width.saturating_sub(total_w)) / 2;
+
+    app.register_hitbox(
+        Rect { x: start_x, y: btn_y, width: yes_w, height: 1 },
+        HitboxAction::ConfirmDelete,
+    );
+    app.register_hitbox(
+        Rect { x: start_x + yes_w + gap_w, y: btn_y, width: cancel_w, height: 1 },
+        HitboxAction::CancelDelete,
     );
 }
 
@@ -9863,5 +10597,126 @@ mod tests {
         assert!(app.pet_is_stopped);
         app.toggle_pet_pause();
         assert!(!app.pet_is_stopped);
+    }
+
+    #[test]
+    fn test_server_fleet_management_actions() {
+        let mut app = CockpitApp::new(&Config::default());
+
+        // Register a custom server node to be managed
+        let node_cfg = crate::config::NodeConfig {
+            ip: "192.168.1.50".to_string(),
+            user: "root".to_string(),
+            services: vec![],
+            active: true,
+        };
+        app.cfg.daemon.nodes.insert("my-custom-server".to_string(), node_cfg);
+        app.server_probe_results.push(("my-custom-server".to_string(), Some(45u128)));
+        app.selected_server = app.server_probe_results.len() - 1;
+
+        // 1. Test Toggle Active / Inactive
+        let was_active = app.cfg.daemon.nodes.get("my-custom-server").unwrap().active;
+        app.toggle_server_active();
+        let is_active_now = app.cfg.daemon.nodes.get("my-custom-server").unwrap().active;
+        assert_ne!(was_active, is_active_now);
+        app.toggle_server_active();
+        assert_eq!(was_active, app.cfg.daemon.nodes.get("my-custom-server").unwrap().active);
+
+        // 2. Test Clone
+        app.clone_selected_server();
+        assert!(app.cfg.daemon.nodes.contains_key("my-custom-server-clone"));
+
+        // 3. Test Open Edit Wizard
+        app.open_edit_server_wizard();
+        assert!(app.show_server_wizard);
+        assert!(app.server_wizard_is_edit);
+        assert_eq!(app.server_wizard_orig_name, "my-custom-server");
+        assert_eq!(app.server_wizard_field, 0);
+        assert_eq!(app.server_name_buf, "my-custom-server");
+
+        // 4. Test Submit Edit Wizard (Rename)
+        app.server_name_buf = "renamed-server".to_string();
+        app.server_wizard_field = 0;
+        app.show_server_wizard = false;
+        app.show_server_wizard = true; // ensure it's open
+        app.submit_server_wizard();
+        assert!(!app.show_server_wizard);
+        assert!(app.cfg.daemon.nodes.contains_key("renamed-server"));
+        assert!(!app.cfg.daemon.nodes.contains_key("my-custom-server"));
+
+        // 5. Test SSH Endpoint Test Logic
+        app.selected_server = 0;
+        app.server_probe_results = vec![
+            ("my-custom-server-clone".to_string(), Some(45u128)),
+            ("renamed-server".to_string(), Some(45u128)),
+        ];
+        app.selected_server = 1;
+        app.test_selected_server_ssh();
+        assert!(app.notification.is_some());
+    }
+
+    #[test]
+    fn test_delete_confirmation_modal_across_pages() {
+        let mut app = CockpitApp::new(&Config::default());
+        assert!(!app.show_delete_confirm);
+
+        // 1. Server delete confirmation
+        app.server_probe_results = vec![("node-1".to_string(), Some(10u128))];
+        app.selected_server = 0;
+        app.cfg.daemon.nodes.insert("node-1".to_string(), crate::config::NodeConfig {
+            ip: "10.0.0.1".to_string(),
+            user: "root".to_string(),
+            services: vec![],
+            active: true,
+        });
+        app.remove_selected_server();
+        assert!(app.show_delete_confirm);
+        assert_eq!(app.pending_delete_target, DeleteTarget::Server);
+        // Cancel delete -> should preserve
+        app.show_delete_confirm = false;
+        assert!(app.cfg.daemon.nodes.contains_key("node-1"));
+        // Confirm delete -> should remove
+        app.show_delete_confirm = true;
+        app.execute_pending_deletion();
+        assert!(!app.show_delete_confirm);
+        assert!(!app.cfg.daemon.nodes.contains_key("node-1"));
+
+        // 2. Project delete confirmation
+        app.latest_snap.tracked_projects.push(crate::systat::TrackedProject {
+            path: "/tmp/fake-proj".to_string(),
+            name: "FakeProj".to_string(),
+            category: "Product".to_string(),
+            branch: "main".to_string(),
+            repos: vec![],
+            services: vec![],
+            containers: vec![],
+            databases: vec![],
+            is_dirty: false,
+        });
+        app.selected_project = app.latest_snap.tracked_projects.len() - 1;
+        app.remove_selected_project();
+        assert!(app.show_delete_confirm);
+        assert_eq!(app.pending_delete_target, DeleteTarget::Project);
+        app.execute_pending_deletion();
+        assert!(!app.show_delete_confirm);
+        assert!(!app.latest_snap.tracked_projects.iter().any(|p| p.path == "/tmp/fake-proj"));
+
+        // 3. Monitor delete confirmation
+        app.latest_snap.uptime_monitors.push(crate::systat::UptimeMonitor {
+            name: "fake-mon".to_string(),
+            target: "http://fake".to_string(),
+            is_up: true,
+            latency_ms: Some(10),
+            status_code: Some(200),
+            uptime_pct: 100.0,
+            history: vec![],
+        });
+        app.selected_monitor = app.latest_snap.uptime_monitors.len() - 1;
+        app.remove_selected_monitor();
+        assert!(app.show_delete_confirm);
+        assert_eq!(app.pending_delete_target, DeleteTarget::Monitor);
+        app.execute_pending_deletion();
+        assert!(!app.show_delete_confirm);
+        assert!(!app.latest_snap.uptime_monitors.iter().any(|m| m.name == "fake-mon"));
     }
 }

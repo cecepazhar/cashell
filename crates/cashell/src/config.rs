@@ -105,6 +105,14 @@ pub struct NodeConfig {
     pub user: String,
     #[serde(default)]
     pub services: Vec<ServiceConfig>,
+    /// If false, this node is marked as disabled/non-active and is skipped
+    /// during probes, latencies, and fleet management.
+    #[serde(default = "default_node_active")]
+    pub active: bool,
+}
+
+fn default_node_active() -> bool {
+    true
 }
 
 /// Service configuration on a node.
@@ -164,6 +172,7 @@ fn default_nodes() -> std::collections::HashMap<String, NodeConfig> {
                     protocol: "tcp".to_string(),
                 },
             ],
+            active: true,
         },
     );
     m.insert(
@@ -176,6 +185,7 @@ fn default_nodes() -> std::collections::HashMap<String, NodeConfig> {
                 port: 8443,
                 protocol: "https".to_string(),
             }],
+            active: true,
         },
     );
     m.insert(
@@ -188,6 +198,7 @@ fn default_nodes() -> std::collections::HashMap<String, NodeConfig> {
                 port: 20128,
                 protocol: "http".to_string(),
             }],
+            active: true,
         },
     );
     m.insert(
@@ -207,6 +218,7 @@ fn default_nodes() -> std::collections::HashMap<String, NodeConfig> {
                     protocol: "tcp".to_string(),
                 },
             ],
+            active: true,
         },
     );
     m
