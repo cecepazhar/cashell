@@ -1,71 +1,33 @@
-//! Virtual Pet (Tamagotchi) Engine for cashell cockpit.
+//! Virtual Pet (Tamagotchi) Engine for CAShell Cockpit.
 //!
 //! Provides pet lifecycle progression (Egg -> Hatch -> Juvenile -> Adult -> Mating -> Egg),
-//! XP gain tracking, and an 8-state Sleek Isometric 3D-styled animation engine
-//! (IDLE, WALK, RUN, JUMP, ATTACK, DASH, HIT, DEATH)
-//! for 5 sovereign shadow companions: Ayam (Shadow Hunter), Singa (Shadow Beast),
-//! Burung (Shadow Falcon), Ular (Shadow Serpent), Beruang (Shadow Golem).
+//! XP gain tracking, and a highly-reactive **Single-Core Emoji Animation Engine**.
+//!
+//! Instead of complex multi-line ASCII pixel art that risks terminal width fragmentation,
+//! this engine renders a single, vibrant Core Emoji (`🐉`) equipped with 8 dynamic
+//! movement offsets and reactive particle trails.
 
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Span;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PetSpecies {
-    Ayam,
-    Singa,
-    Burung,
-    Ular,
-    Beruang,
+    Nagini,
 }
 
 impl PetSpecies {
     pub fn parse(s: &str) -> Self {
         match s.to_lowercase().as_str() {
-            "singa" | "lion" => Self::Singa,
-            "burung" | "bird" => Self::Burung,
-            "ular" | "snake" => Self::Ular,
-            "beruang" | "bear" => Self::Beruang,
-            _ => Self::Ayam,
+            "nagini" | "dragon" | "ular" | "snake" => Self::Nagini,
+            _ => Self::Nagini, // Default to Nagini
         }
     }
 
     pub fn display_name(&self) -> &'static str {
-        match self {
-            Self::Ayam => "Ayam (Hunter)",
-            Self::Singa => "Singa (Beast)",
-            Self::Burung => "Burung (Falcon)",
-            Self::Ular => "Ular (Serpent)",
-            Self::Beruang => "Beruang (Golem)",
-        }
+        "Nagini"
     }
 
-    pub fn emoji(&self, stage: &PetStage) -> &'static str {
-        match stage {
-            PetStage::Egg => "🥚",
-            PetStage::Hatch => match self {
-                Self::Ayam => "🐣",
-                Self::Singa => "🦁",
-                Self::Burung => "🐦",
-                Self::Ular => "🐍",
-                Self::Beruang => "🐻",
-            },
-            PetStage::Juvenile => match self {
-                Self::Ayam => "🐥",
-                Self::Singa => "🦁",
-                Self::Burung => "🐦",
-                Self::Ular => "🐍",
-                Self::Beruang => "🐻",
-            },
-            PetStage::Adult => match self {
-                Self::Ayam => "🗡",
-                Self::Singa => "🦁",
-                Self::Burung => "🦅",
-                Self::Ular => "🐍",
-                Self::Beruang => "🐻",
-            },
-            PetStage::Mating => "💑",
-        }
+    pub fn core_emoji(&self) -> &'static str {
+        "🐉"
     }
 }
 
@@ -112,6 +74,17 @@ impl PetStage {
             Self::Mating => 1200,
         }
     }
+
+    /// The emoji used to represent the current lifecycle stage
+    pub fn stage_emoji(&self) -> &'static str {
+        match self {
+            Self::Egg => "🥚",
+            Self::Hatch => "🐣",
+            Self::Juvenile => "🐲",
+            Self::Adult => "🐉",
+            Self::Mating => "💑",
+        }
+    }
 }
 
 /// The current physical/mental state of the pet, derived from hardware telemetry.
@@ -123,28 +96,40 @@ pub enum PetMood {
     Sprint,     // High CPU load
 }
 
-/// 8-state sprite animation system modeled after 2D action/fighter sprite sheets.
+/// 8-state dynamic reaction state system of the single-core emoji mascot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PetActionState {
-    Idle,   // 0: Standing relaxed, breathing, isometric shadow base
-    Walk,   // 1: Pacing across with stepping feet
-    Run,    // 2: Sprinting at high speed, dust particles
-    Jump,   // 3: Airborne leap, shadow separates
-    Attack, // 4: Dual dagger / claw strike with shadow aura
-    Dash,   // 5: High-speed isometric dash with afterimages
-    Hit,    // 6: Recoiling from damage / thermal shock
-    Death,  // 7: Knocked down resting / sleeping on floor
+    Idle,     // Calm resting, gentle sway
+    Walk,     // Slight horizontal pacing
+    Run,      // High-speed sprint
+    Jump,     // Vertical jumping
+    Attack,   // Forward lunge strike
+    Dash,     // Speed-blur teleport
+    Hit,      // Vibration / flinch impact
+    Death,    // Dimmed sleeping / exhausted
 }
 
-/// A pet action event for the action history log.
-#[derive(Debug, Clone)]
+impl PetActionState {
+    pub fn from_mood(mood: PetMood) -> Self {
+        match mood {
+            PetMood::Idle => Self::Idle,
+            PetMood::Overheated => Self::Hit,
+            PetMood::Sick => Self::Death,
+            PetMood::Sprint => Self::Run,
+        }
+    }
+}
+
+/// A pet action log entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PetActionLog {
-    pub timestamp: String,
     pub action_type: String,
     pub detail: String,
+    pub timestamp: String,
 }
 
-/// Tamagotchi-style animated pet model.
+/// Tamagotchi-style single-emoji animated pet model.
+#[derive(Debug, Clone)]
 pub struct PetStatus {
     pub species: PetSpecies,
     pub name: String,
@@ -154,6 +139,136 @@ pub struct PetStatus {
 }
 
 impl PetStatus {
+    /// The single reactive frame to render for a given action state.
+    /// Returns a struct containing the Core Emoji, the Particle Trail string,
+    /// and the X/Y offsets for dynamic positioning.
+    pub fn build_frame(&self, state: PetActionState, tick: usize, _is_stopped: bool) -> EmojiFrame {
+        let tick = tick % 120;
+        let core = self.species.core_emoji();
+
+        match state {
+            PetActionState::Idle => {
+                // Gentle breathing: 1px up/down shift, blinking every 4th cycle
+                let y_offset = if tick % 8 < 4 { 0 } else { 1 };
+                let particles = if tick % 64 >= 60 { "·" } else { "" };
+                EmojiFrame {
+                    core: core.to_string(),
+                    particles: particles.to_string(),
+                    x_offset: 0,
+                    y_offset,
+                    state_label: "IDLE".to_string(),
+                }
+            }
+            PetActionState::Walk => {
+                // Pacing side-to-side within a 4-slot arena
+                let step = tick % 32;
+                let x_offset = match step {
+                    0..=7 => -2,
+                    8..=15 => 0,
+                    16..=23 => 2,
+                    _ => 0,
+                };
+                let particles = " . ";
+                EmojiFrame {
+                    core: core.to_string(),
+                    particles: particles.to_string(),
+                    x_offset,
+                    y_offset: 0,
+                    state_label: "WALK".to_string(),
+                }
+            }
+            PetActionState::Run => {
+                // High-speed horizontal sprint with speed-line wind trails
+                let step = tick % 16;
+                let x_offset = match step {
+                    0..=3 => -4,
+                    4..=7 => 0,
+                    8..=11 => 4,
+                    _ => 0,
+                };
+                EmojiFrame {
+                    core: core.to_string(),
+                    particles: "彡彡彡".to_string(),
+                    x_offset,
+                    y_offset: 0,
+                    state_label: "RUN >>".to_string(),
+                }
+            }
+            PetActionState::Jump => {
+                // Vertical jumping with motion blur
+                let step = tick % 12;
+                let y_offset = match step {
+                    0..=2 => 0,
+                    3..=5 => -1,
+                    6..=8 => 0,
+                    _ => 1,
+                };
+                let particles = if y_offset == -1 { "✨" } else { "" };
+                EmojiFrame {
+                    core: core.to_string(),
+                    particles: particles.to_string(),
+                    x_offset: 0,
+                    y_offset,
+                    state_label: "JUMP ▲".to_string(),
+                }
+            }
+            PetActionState::Attack => {
+                // Forward lunge with lightning energy strikes
+                let step = tick % 8;
+                let x_offset = if step < 4 { 1 } else { 0 };
+                EmojiFrame {
+                    core: core.to_string(),
+                    particles: "⚡".to_string(),
+                    x_offset,
+                    y_offset: 0,
+                    state_label: "ATTACK".to_string(),
+                }
+            }
+            PetActionState::Dash => {
+                // Teleport-style extreme blur movement
+                let step = tick % 10;
+                let x_offset = match step {
+                    0..=2 => -5,
+                    3..=4 => 0,
+                    5..=7 => 5,
+                    _ => 0,
+                };
+                EmojiFrame {
+                    core: core.to_string(),
+                    particles: "〰〰〰".to_string(),
+                    x_offset,
+                    y_offset: 0,
+                    state_label: "DASH".to_string(),
+                }
+            }
+            PetActionState::Hit => {
+                // Vibration / flinch impact + red pulsing alerts
+                let step = tick % 4;
+                let x_offset = if step == 0 { -1 } else if step == 2 { 1 } else { 0 };
+                EmojiFrame {
+                    core: core.to_string(),
+                    particles: "!!".to_string(),
+                    x_offset,
+                    y_offset: 0,
+                    state_label: "ALERT".to_string(),
+                }
+            }
+            PetActionState::Death => {
+                // Dimmed sleep state with floating dreams
+                let step = tick % 16;
+                let y_offset = if step < 8 { 0 } else { 1 };
+                let particles = "💤".to_string();
+                EmojiFrame {
+                    core: self.stage.stage_emoji().to_string(),
+                    particles,
+                    x_offset: 0,
+                    y_offset,
+                    state_label: "REST / ZZZ".to_string(),
+                }
+            }
+        }
+    }
+
     pub fn format_badge(&self) -> String {
         let level = match self.stage {
             PetStage::Egg => 0,
@@ -170,1666 +285,40 @@ impl PetStatus {
         };
         format!(
             "{} {} Lv.{} [{}]",
-            self.species.emoji(&self.stage),
+            self.stage.stage_emoji(),
             self.name,
             level,
             mood_emoji
         )
     }
-
-    /// Returns a reference to the frame array for the current mood.
-    pub fn frames(&self) -> &'static [&'static [&'static str]] {
-        match self.mood {
-            PetMood::Idle => self.frames_for_state(PetActionState::Idle),
-            PetMood::Sprint | PetMood::Overheated => self.frames_for_state(PetActionState::Run),
-            PetMood::Sick => self.frames_for_state(PetActionState::Death),
-        }
-    }
-
-    /// Returns the 4-frame animation array for any of the 8 action states.
-    pub fn frames_for_state(&self, state: PetActionState) -> &'static [&'static [&'static str]] {
-        match (self.species, state) {
-            // === AYAM (SHADOW HUNTER) 8 ISOMETRIC STATES ===
-            (PetSpecies::Ayam, PetActionState::Idle) => &HUNTER_ISO_IDLE,
-            (PetSpecies::Ayam, PetActionState::Walk) => &HUNTER_ISO_WALK,
-            (PetSpecies::Ayam, PetActionState::Run) => &HUNTER_ISO_RUN,
-            (PetSpecies::Ayam, PetActionState::Jump) => &HUNTER_ISO_JUMP,
-            (PetSpecies::Ayam, PetActionState::Attack) => &HUNTER_ISO_ATTACK,
-            (PetSpecies::Ayam, PetActionState::Dash) => &HUNTER_ISO_DASH,
-            (PetSpecies::Ayam, PetActionState::Hit) => &HUNTER_ISO_HIT,
-            (PetSpecies::Ayam, PetActionState::Death) => &HUNTER_ISO_DEATH,
-
-            // === SINGA (SHADOW BEAST) 8 ISOMETRIC STATES ===
-            (PetSpecies::Singa, PetActionState::Idle) => &BEAST_ISO_IDLE,
-            (PetSpecies::Singa, PetActionState::Walk) => &BEAST_ISO_WALK,
-            (PetSpecies::Singa, PetActionState::Run) => &BEAST_ISO_RUN,
-            (PetSpecies::Singa, PetActionState::Jump) => &BEAST_ISO_JUMP,
-            (PetSpecies::Singa, PetActionState::Attack) => &BEAST_ISO_ATTACK,
-            (PetSpecies::Singa, PetActionState::Dash) => &BEAST_ISO_DASH,
-            (PetSpecies::Singa, PetActionState::Hit) => &BEAST_ISO_HIT,
-            (PetSpecies::Singa, PetActionState::Death) => &BEAST_ISO_DEATH,
-
-            // === BURUNG (SHADOW FALCON) 8 ISOMETRIC STATES ===
-            (PetSpecies::Burung, PetActionState::Idle) => &FALCON_ISO_IDLE,
-            (PetSpecies::Burung, PetActionState::Walk) => &FALCON_ISO_WALK,
-            (PetSpecies::Burung, PetActionState::Run) => &FALCON_ISO_RUN,
-            (PetSpecies::Burung, PetActionState::Jump) => &FALCON_ISO_JUMP,
-            (PetSpecies::Burung, PetActionState::Attack) => &FALCON_ISO_ATTACK,
-            (PetSpecies::Burung, PetActionState::Dash) => &FALCON_ISO_DASH,
-            (PetSpecies::Burung, PetActionState::Hit) => &FALCON_ISO_HIT,
-            (PetSpecies::Burung, PetActionState::Death) => &FALCON_ISO_DEATH,
-
-            // === ULAR (SHADOW SERPENT) 8 ISOMETRIC STATES ===
-            (PetSpecies::Ular, PetActionState::Idle) => &SERPENT_ISO_IDLE,
-            (PetSpecies::Ular, PetActionState::Walk) => &SERPENT_ISO_WALK,
-            (PetSpecies::Ular, PetActionState::Run) => &SERPENT_ISO_RUN,
-            (PetSpecies::Ular, PetActionState::Jump) => &SERPENT_ISO_JUMP,
-            (PetSpecies::Ular, PetActionState::Attack) => &SERPENT_ISO_ATTACK,
-            (PetSpecies::Ular, PetActionState::Dash) => &SERPENT_ISO_DASH,
-            (PetSpecies::Ular, PetActionState::Hit) => &SERPENT_ISO_HIT,
-            (PetSpecies::Ular, PetActionState::Death) => &SERPENT_ISO_DEATH,
-
-            // === BERUANG (SHADOW GOLEM) 8 ISOMETRIC STATES ===
-            (PetSpecies::Beruang, PetActionState::Idle) => &GOLEM_ISO_IDLE,
-            (PetSpecies::Beruang, PetActionState::Walk) => &GOLEM_ISO_WALK,
-            (PetSpecies::Beruang, PetActionState::Run) => &GOLEM_ISO_RUN,
-            (PetSpecies::Beruang, PetActionState::Jump) => &GOLEM_ISO_JUMP,
-            (PetSpecies::Beruang, PetActionState::Attack) => &GOLEM_ISO_ATTACK,
-            (PetSpecies::Beruang, PetActionState::Dash) => &GOLEM_ISO_DASH,
-            (PetSpecies::Beruang, PetActionState::Hit) => &GOLEM_ISO_HIT,
-            (PetSpecies::Beruang, PetActionState::Death) => &GOLEM_ISO_DEATH,
-        }
-    }
 }
 
-const HUNTER_ISO_IDLE: [&[&str]; 4] = [
-    &[
-        "         ▄▄████▄▄         ",
-        "        ◢██▌▐████▐◣        ",
-        "       ██▌◢▐[◉ ◉]▐▌██      ",
-        "      ⚡ ▀▀▀█▼▼█▀▀ ⚡       ",
-        "       ██▐▀▄▀██▄▀██        ",
-        "      ░▒▓████████▓▒░       ",
-    ],
-    &[
-        "         ▄▄████▄▄         ",
-        "        ◢██▌▐████▐◣        ",
-        "       ██▌◢▐[─ ─]▐▌██      ",
-        "         ▀▀▀█▼▼█▀▀  ⚡      ",
-        "       ██▐▀▄▀██▄▀██        ",
-        "      ░▒▓████████▓▒░       ",
-    ],
-    &[
-        "         ▄▄████▄▄   ⚡     ",
-        "        ◢██▌▐████▐◣        ",
-        "       ██▌◢▐[◉ ◉]▐▌██      ",
-        "      ⚡ ▀▀▀█▼▼█▀▀          ",
-        "       ██▐▀▄▀██▄▀██        ",
-        "      ░▒▓████████▓▒░       ",
-    ],
-    &[
-        "         ▄▄████▄▄         ",
-        "        ◢██▌▐████▐◣        ",
-        "       ██▌◢▐[✦ ✦]▐▌██      ",
-        "      ⚡ ▀▀▀█▼▼█▀▀ ⚡       ",
-        "       ██▐▀▄▀██▄▀██        ",
-        "      ░▒▓████████▓▒░       ",
-    ],
-];
+/// Output struct for the dynamic single-emoji frame.
+#[derive(Debug, Clone, Default)]
+pub struct EmojiFrame {
+    pub core: String,
+    pub particles: String,
+    pub x_offset: i32,
+    pub y_offset: i32,
+    pub state_label: String,
+}
 
-const HUNTER_ISO_WALK: [&[&str]; 4] = [
-    &[
-        "         ▄▄████▄▄         ",
-        "        ◢██▌▐████▐◣        ",
-        "       ██▌◢▐[◉ ◉]▐▌██      ",
-        "         ▀▀▀█▼▼█▀▀         ",
-        "      ▄▀▀      ▀▄▄          ",
-        "      ░▒▓████████▓▒░       ",
-    ],
-    &[
-        "         ▄▄████▄▄         ",
-        "        ◢██▌▐████▐◣        ",
-        "       ██▌◢▐[◉ ◉]▐▌██      ",
-        "         ▀▀▀█▼▼█▀▀         ",
-        "        ▄▀▀    ▀▄▄         ",
-        "      ░▒▓████████▓▒░       ",
-    ],
-    &[
-        "         ▄▄████▄▄         ",
-        "        ◢██▌▐████▐◣        ",
-        "       ██▌◢▐[◉ ◉]▐▌██      ",
-        "         ▀▀▀█▼▼█▀▀         ",
-        "       ▀▄▄      ▄▀▀        ",
-        "      ░▒▓████████▓▒░       ",
-    ],
-    &[
-        "         ▄▄████▄▄         ",
-        "        ◢██▌▐████▐◣        ",
-        "       ██▌◢▐[◉ ◉]▐▌██      ",
-        "         ▀▀▀█▼▼█▀▀         ",
-        "        ▄▀▀    ▀▄▄         ",
-        "      ░▒▓████████▓▒░       ",
-    ],
-];
-
-const HUNTER_ISO_RUN: [&[&str]; 4] = [
-    &[
-        "  彡    ▄▄████▄▄ >>     ",
-        " 彡    ◢████████◣ >>    ",
-        "      ███▌[◉ ◉]▐███     ",
-        "     ⚡  ▀████▀  ⚡      ",
-        "        ▄▀    ▀▄        ",
-        "    ░▒▓████████▓▒░      ",
-    ],
-    &[
-        " 彡彡   ▄▄████▄▄ >>>>   ",
-        " 彡    ◢████████◣ >>>>  ",
-        "      ███▌[✦ ✦]▐███     ",
-        "     ⚡  ▀████▀  ⚡⚡     ",
-        "        ▀▄    ▄▀        ",
-        "   ░▒▓████████▓▒░       ",
-    ],
-    &[
-        "  彡    ▄▄████▄▄ >>     ",
-        " 彡    ◢████████◣ >>    ",
-        "      ███▌[◉ ◉]▐███     ",
-        "     ⚡  ▀████▀  ⚡      ",
-        "        ▄▀    ▀▄        ",
-        "    ░▒▓████████▓▒░      ",
-    ],
-    &[
-        " 彡彡   ▄▄████▄▄ >>>>   ",
-        " 彡    ◢████████◣ >>>>  ",
-        "      ███▌[✦ ✦]▐███     ",
-        "     ⚡  ▀████▀  ⚡⚡     ",
-        "        ▀▄    ▄▀        ",
-        "   ░▒▓████████▓▒░       ",
-    ],
-];
-
-const HUNTER_ISO_JUMP: [&[&str]; 4] = [
-    &[
-        "                        ",
-        "        ▄▄████▄▄        ",
-        "       ◢████████◣       ",
-        "      ███▌[◉ ◉]▐███     ",
-        "       ▀████████▀       ",
-        "    ░▒▓██████████▓▒░    ",
-    ],
-    &[
-        "      ▲ ▄▄████▄▄ ▲      ",
-        "     ⚡◢████████◣⚡     ",
-        "      ███▌[✦ ✦]▐███     ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "      ░▒▓██████▓▒░      ",
-    ],
-    &[
-        "     ⚡ ▄▄████▄▄ ⚡      ",
-        "    ⚡⚡◢████████◣⚡⚡    ",
-        "      ███▌[✦ ✦]▐███     ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "        ░▒▓██▓▒░        ",
-    ],
-    &[
-        "                        ",
-        "        ▄▄████▄▄        ",
-        "       ◢████████◣       ",
-        "      ███▌[◉ ◉]▐███     ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const HUNTER_ISO_ATTACK: [&[&str]; 4] = [
-    &[
-        "     ⚡  ▄▄████▄▄  ⚡     ",
-        "    ══>◢████████◣       ",
-        "      ███▌[✦ ✦]▐███     ",
-        "     ⚡  ▀████▀  ⚡      ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "    ⚡⚡  ▄▄████▄▄  ⚡⚡   ",
-        "   ═══>◢████████◣<═══   ",
-        "   ══>███▌[◣ ◢]▐███<══  ",
-        "    ⚡⚡  ▀████▀  ⚡⚡    ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "    ⚡⚡  ▄▄████▄▄  ⚡⚡   ",
-        "   ═══>◢████████◣<═══   ",
-        "   ══>███▌[◣ ◢]▐███<══  ",
-        "    ⚡⚡  ▀████▀  ⚡⚡    ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "        ▄▄████▄▄   彡   ",
-        "       ◢████████◣  彡   ",
-        "      ███▌[✦ ✦]▐███     ",
-        "     ⚡  ▀████▀  ⚡      ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const HUNTER_ISO_DASH: [&[&str]; 4] = [
-    &[
-        "  彡    ▄▄████▄▄ >>     ",
-        " 彡   ◢████████◣ >>     ",
-        " ░▒▓ ███▌[⚡ ⚡]▐███     ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "    ░▒▓████████▓▒░      ",
-    ],
-    &[
-        " 彡彡  ▄▄████▄▄ >>>>    ",
-        " 彡   ◢████████◣ >>>>   ",
-        " ░▒▓ ███▌[⚡ ⚡]▐███     ",
-        " ░▒▓   ▀████▀           ",
-        "        ▀▄    ▄▀        ",
-        "   ░▒▓████████▓▒░       ",
-    ],
-    &[
-        "  彡    ▄▄████▄▄ >>     ",
-        " 彡   ◢████████◣ >>     ",
-        " ░▒▓ ███▌[⚡ ⚡]▐███     ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "    ░▒▓████████▓▒░      ",
-    ],
-    &[
-        "        ▄▄████▄▄        ",
-        "       ◢████████◣       ",
-        "      ███▌[◉ ◉]▐███     ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const HUNTER_ISO_HIT: [&[&str]; 4] = [
-    &[
-        "        ▄▄████▄▄  💥    ",
-        "       ◢████████◣ 💦    ",
-        "      ███▌[• ﹏ •]▐███  ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "        ▄▄████▄▄  💦💦  ",
-        "       ◢████████◣       ",
-        "      ███▌[• ﹏ •]▐███  ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "        ▄▄████▄▄  💥    ",
-        "       ◢████████◣ 💦    ",
-        "      ███▌[• ﹏ •]▐███  ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "        ▄▄████▄▄  💦💦  ",
-        "       ◢████████◣       ",
-        "      ███▌[• ﹏ •]▐███  ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const HUNTER_ISO_DEATH: [&[&str]; 4] = [
-    &[
-        "        ▄▄████▄▄   ✦    ",
-        "       ◢████████◣       ",
-        "      ███▌[─ ─]▐███     ",
-        "        ▀████▀          ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "        ▄▄████▄▄   ✦✦   ",
-        "       ◢████████◣       ",
-        "      ███▌[─ ─]▐███     ",
-        "        ▀████▀          ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "        ▄▄████▄▄   ✦✦✦  ",
-        "       ◢████████◣       ",
-        "      ███▌[─ ─]▐███     ",
-        "        ▀████▀          ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "        ▄▄████▄▄   ✦✦   ",
-        "       ◢████████◣       ",
-        "      ███▌[─ ─]▐███     ",
-        "        ▀████▀          ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const BEAST_ISO_IDLE: [&[&str]; 4] = [
-    &[
-        "      ╭▓▓██████▓▓╮      ",
-        "     ▓◢██[◉ ◉]██◣▓      ",
-        "      ▀██( ▼▼ )██▀      ",
-        "     ⚡  ▀████▀  ⚡      ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭▓▓██████▓▓╮      ",
-        "     ▓◢██[─ ─]██◣▓      ",
-        "      ▀██( ▼▼ )██▀      ",
-        "        ▀████▀   ⚡     ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭▓▓██████▓▓╮  ⚡   ",
-        "     ▓◢██[◉ ◉]██◣▓      ",
-        "      ▀██( ▼▼ )██▀      ",
-        "     ⚡  ▀████▀         ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭▓▓██████▓▓╮      ",
-        "     ▓◢██[✦ ✦]██◣▓      ",
-        "      ▀██( ▼▼ )██▀      ",
-        "     ⚡  ▀████▀  ⚡      ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const BEAST_ISO_WALK: [&[&str]; 4] = [
-    &[
-        "      ╭▓▓██████▓▓╮      ",
-        "     ▓◢██[◉ ◉]██◣▓      ",
-        "      ▀██( ▼▼ )██▀      ",
-        "        ▀████▀          ",
-        "      ▄▀        ▀▄      ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭▓▓██████▓▓╮      ",
-        "     ▓◢██[◉ ◉]██◣▓      ",
-        "      ▀██( ▼▼ )██▀      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭▓▓██████▓▓╮      ",
-        "     ▓◢██[◉ ◉]██◣▓      ",
-        "      ▀██( ▼▼ )██▀      ",
-        "        ▀████▀          ",
-        "       ▀▄      ▄▀       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭▓▓██████▓▓╮      ",
-        "     ▓◢██[◉ ◉]██◣▓      ",
-        "      ▀██( ▼▼ )██▀      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const BEAST_ISO_RUN: [&[&str]; 4] = [
-    &[
-        "  彡  ╭▓▓██████▓▓╮ >>   ",
-        " 彡  ▓◢██[◉ ◉]██◣▓ >>   ",
-        "      ▀██( ▼▼ )██▀      ",
-        "     ⚡  ▀████▀  ⚡      ",
-        "        ▄▀    ▀▄        ",
-        "    ░▒▓████████▓▒░      ",
-    ],
-    &[
-        " 彡彡 ╭▓▓██████▓▓╮ >>>> ",
-        " 彡  ▓◢██[✦ ✦]██◣▓ >>>> ",
-        "      ▀██( ▼▼ )██▀      ",
-        "     ⚡  ▀████▀  ⚡⚡     ",
-        "        ▀▄    ▄▀        ",
-        "   ░▒▓████████▓▒░       ",
-    ],
-    &[
-        "  彡  ╭▓▓██████▓▓╮ >>   ",
-        " 彡  ▓◢██[◉ ◉]██◣▓ >>   ",
-        "      ▀██( ▼▼ )██▀      ",
-        "     ⚡  ▀████▀  ⚡      ",
-        "        ▄▀    ▀▄        ",
-        "    ░▒▓████████▓▒░      ",
-    ],
-    &[
-        " 彡彡 ╭▓▓██████▓▓╮ >>>> ",
-        " 彡  ▓◢██[✦ ✦]██◣▓ >>>> ",
-        "      ▀██( ▼▼ )██▀      ",
-        "     ⚡  ▀████▀  ⚡⚡     ",
-        "        ▀▄    ▄▀        ",
-        "   ░▒▓████████▓▒░       ",
-    ],
-];
-
-const BEAST_ISO_JUMP: [&[&str]; 4] = [
-    &[
-        "                        ",
-        "      ╭▓▓██████▓▓╮      ",
-        "     ▓◢██[◉ ◉]██◣▓      ",
-        "      ▀██( ▼▼ )██▀      ",
-        "       ▀████████▀       ",
-        "    ░▒▓██████████▓▒░    ",
-    ],
-    &[
-        "      ▲╭▓▓██████▓▓╮▲    ",
-        "     ⚡▓◢██[✦ ✦]██◣▓⚡    ",
-        "      ▀██( ▼▼ )██▀      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "      ░▒▓██████▓▒░      ",
-    ],
-    &[
-        "     ⚡ ╭▓▓██████▓▓╮ ⚡   ",
-        "    ⚡⚡▓◢██[✦ ✦]██◣▓⚡⚡   ",
-        "      ▀██( ▼▼ )██▀      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "        ░▒▓██▓▒░        ",
-    ],
-    &[
-        "                        ",
-        "      ╭▓▓██████▓▓╮      ",
-        "     ▓◢██[◉ ◉]██◣▓      ",
-        "      ▀██( ▼▼ )██▀      ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const BEAST_ISO_ATTACK: [&[&str]; 4] = [
-    &[
-        "    爪╭▓▓██████▓▓╮爪    ",
-        "    ══>▓◢██[✦ ✦]██◣▓    ",
-        "      ▀██( ▼▼ )██▀      ",
-        "     ⚡  ▀████▀  ⚡      ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "   ⚡爪╭▓▓██████▓▓╮爪⚡   ",
-        "  ═══>▓◢██[◣ ◢]██◣▓<═══ ",
-        "  ═══>▀██( ▼▼ )██▀<═══  ",
-        "    ⚡⚡  ▀████▀  ⚡⚡    ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "   ⚡爪╭▓▓██████▓▓╮爪⚡   ",
-        "  ═══>▓◢██[◣ ◢]██◣▓<═══ ",
-        "  ═══>▀██( ▼▼ )██▀<═══  ",
-        "    ⚡⚡  ▀████▀  ⚡⚡    ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭▓▓██████▓▓╮  彡  ",
-        "     ▓◢██[✦ ✦]██◣▓  彡  ",
-        "      ▀██( ▼▼ )██▀      ",
-        "     ⚡  ▀████▀  ⚡      ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const BEAST_ISO_DASH: [&[&str]; 4] = [
-    &[
-        "  彡  ╭▓▓██████▓▓╮ >>   ",
-        " 彡  ▓◢██[⚡ ⚡]██◣▓ >>   ",
-        " ░▒▓  ▀██( ►► )██▀      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "    ░▒▓████████▓▒░      ",
-    ],
-    &[
-        " 彡彡 ╭▓▓██████▓▓╮ >>>> ",
-        " 彡  ▓◢██[⚡ ⚡]██◣▓ >>>> ",
-        " ░▒▓  ▀██( ►► )██▀      ",
-        " ░▒▓   ▀████▀           ",
-        "        ▀▄    ▄▀        ",
-        "   ░▒▓████████▓▒░       ",
-    ],
-    &[
-        "  彡  ╭▓▓██████▓▓╮ >>   ",
-        " 彡  ▓◢██[⚡ ⚡]██◣▓ >>   ",
-        " ░▒▓  ▀██( ►► )██▀      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "    ░▒▓████████▓▒░      ",
-    ],
-    &[
-        "      ╭▓▓██████▓▓╮      ",
-        "     ▓◢██[◉ ◉]██◣▓      ",
-        "      ▀██( ▼▼ )██▀      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const BEAST_ISO_HIT: [&[&str]; 4] = [
-    &[
-        "      ╭▓▓██████▓▓╮ 💥   ",
-        "     ▓◢██[• ﹏ •]██◣▓ 💦",
-        "      ▀██( ▼▼ )██▀      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭▓▓██████▓▓╮ 💦💦 ",
-        "     ▓◢██[• ﹏ •]██◣▓   ",
-        "      ▀██( ▼▼ )██▀      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭▓▓██████▓▓╮ 💥   ",
-        "     ▓◢██[• ﹏ •]██◣▓ 💦",
-        "      ▀██( ▼▼ )██▀      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭▓▓██████▓▓╮ 💦💦 ",
-        "     ▓◢██[• ﹏ •]██◣▓   ",
-        "      ▀██( ▼▼ )██▀      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const BEAST_ISO_DEATH: [&[&str]; 4] = [
-    &[
-        "      ╭▓▓██████▓▓╮  ✦   ",
-        "     ▓◢██[─ ─]██◣▓      ",
-        "      ▀██( ▼▼ )██▀      ",
-        "        ▀████▀          ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭▓▓██████▓▓╮  ✦✦  ",
-        "     ▓◢██[─ ─]██◣▓      ",
-        "      ▀██( ▼▼ )██▀      ",
-        "        ▀████▀          ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭▓▓██████▓▓╮  ✦✦✦ ",
-        "     ▓◢██[─ ─]██◣▓      ",
-        "      ▀██( ▼▼ )██▀      ",
-        "        ▀████▀          ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭▓▓██████▓▓╮  ✦✦  ",
-        "     ▓◢██[─ ─]██◣▓      ",
-        "      ▀██( ▼▼ )██▀      ",
-        "        ▀████▀          ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const FALCON_ISO_IDLE: [&[&str]; 4] = [
-    &[
-        "      ▲  ▄▄██▄▄  ▲      ",
-        "    ╭━━━[◉ ◉]━━━╮       ",
-        "     ╰━━██(▲)██━━╯      ",
-        "     ⚡  ◥████◤  ⚡      ",
-        "        ◢████◣          ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ▲  ▄▄██▄▄  ▲      ",
-        "    ╭━━━[─ ─]━━━╮       ",
-        "     ╰━━██(▲)██━━╯      ",
-        "        ◥████◤   ⚡     ",
-        "        ◢████◣          ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ▲  ▄▄██▄▄  ▲  ⚡   ",
-        "    ╭━━━[◉ ◉]━━━╮       ",
-        "     ╰━━██(▲)██━━╯      ",
-        "     ⚡  ◥████◤          ",
-        "        ◢████◣          ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ▲  ▄▄██▄▄  ▲      ",
-        "    ╭━━━[✦ ✦]━━━╮       ",
-        "     ╰━━██(▲)██━━╯      ",
-        "     ⚡  ◥████◤  ⚡      ",
-        "        ◢████◣          ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const FALCON_ISO_WALK: [&[&str]; 4] = [
-    &[
-        "      ▲  ▄▄██▄▄  ▲      ",
-        "    ╭━━━[◉ ◉]━━━╮       ",
-        "     ╰━━██(▲)██━━╯      ",
-        "        ◥████◤          ",
-        "      ▄▀        ▀▄      ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ▲  ▄▄██▄▄  ▲      ",
-        "    ╭━━━[◉ ◉]━━━╮       ",
-        "     ╰━━██(▲)██━━╯      ",
-        "        ◥████◤          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ▲  ▄▄██▄▄  ▲      ",
-        "    ╭━━━[◉ ◉]━━━╮       ",
-        "     ╰━━██(▲)██━━╯      ",
-        "        ◥████◤          ",
-        "       ▀▄      ▄▀       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ▲  ▄▄██▄▄  ▲      ",
-        "    ╭━━━[◉ ◉]━━━╮       ",
-        "     ╰━━██(▲)██━━╯      ",
-        "        ◥████◤          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const FALCON_ISO_RUN: [&[&str]; 4] = [
-    &[
-        "  彡  ▲  ▄▄██▄▄  ▲ >>   ",
-        " 彡 ╭━━━[◉ ◉]━━━╮ >>    ",
-        "     ╰━━██(▲)██━━╯      ",
-        "     ⚡  ◥████◤  ⚡      ",
-        "        ▄▀    ▀▄        ",
-        "    ░▒▓████████▓▒░      ",
-    ],
-    &[
-        " 彡彡 ▲  ▄▄██▄▄  ▲ >>>> ",
-        " 彡 ╭━━━[✦ ✦]━━━╮ >>>>  ",
-        "     ╰━━██(▲)██━━╯      ",
-        "     ⚡  ◥████◤  ⚡⚡     ",
-        "        ▀▄    ▄▀        ",
-        "   ░▒▓████████▓▒░       ",
-    ],
-    &[
-        "  彡  ▲  ▄▄██▄▄  ▲ >>   ",
-        " 彡 ╭━━━[◉ ◉]━━━╮ >>    ",
-        "     ╰━━██(▲)██━━╯      ",
-        "     ⚡  ◥████◤  ⚡      ",
-        "        ▄▀    ▀▄        ",
-        "    ░▒▓████████▓▒░      ",
-    ],
-    &[
-        " 彡彡 ▲  ▄▄██▄▄  ▲ >>>> ",
-        " 彡 ╭━━━[✦ ✦]━━━╮ >>>>  ",
-        "     ╰━━██(▲)██━━╯      ",
-        "     ⚡  ◥████◤  ⚡⚡     ",
-        "        ▀▄    ▄▀        ",
-        "   ░▒▓████████▓▒░       ",
-    ],
-];
-
-const FALCON_ISO_JUMP: [&[&str]; 4] = [
-    &[
-        "                        ",
-        "      ▲  ▄▄██▄▄  ▲      ",
-        "    ╭━━━[◉ ◉]━━━╮       ",
-        "     ╰━━██(▲)██━━╯      ",
-        "       ▀████████▀       ",
-        "    ░▒▓██████████▓▒░    ",
-    ],
-    &[
-        "      ▲ ▲▄▄██▄▄▲ ▲      ",
-        "     ⚡╭━━[✦ ✦]━━╮⚡      ",
-        "     ╰━━██(▲)██━━╯      ",
-        "        ◥████◤          ",
-        "        ▄▀    ▀▄        ",
-        "      ░▒▓██████▓▒░      ",
-    ],
-    &[
-        "     ⚡ ▲▄▄██▄▄▲ ⚡      ",
-        "    ⚡⚡╭━━[✦ ✦]━━╮⚡⚡     ",
-        "     ╰━━██(▲)██━━╯      ",
-        "        ◥████◤          ",
-        "        ▄▀    ▀▄        ",
-        "        ░▒▓██▓▒░        ",
-    ],
-    &[
-        "                        ",
-        "      ▲  ▄▄██▄▄  ▲      ",
-        "    ╭━━━[◉ ◉]━━━╮       ",
-        "     ╰━━██(▲)██━━╯      ",
-        "        ◢████◣          ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const FALCON_ISO_ATTACK: [&[&str]; 4] = [
-    &[
-        "     ⚡ ▲ ▄▄██▄▄ ▲ ⚡     ",
-        "    ══>╭━━[✦ ✦]━━╮      ",
-        "     ╰━━██(▲)██━━╯      ",
-        "     ⚡  ◥████◤  ⚡      ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "    ⚡⚡ ▲ ▄▄██▄▄ ▲ ⚡⚡   ",
-        "   ═══>╭━━[◣ ◢]━━╮<═══  ",
-        "   ══>╰━━██(▲)██━━╯<══  ",
-        "    ⚡⚡  ◥████◤  ⚡⚡    ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "    ⚡⚡ ▲ ▄▄██▄▄ ▲ ⚡⚡   ",
-        "   ═══>╭━━[◣ ◢]━━╮<═══  ",
-        "   ══>╰━━██(▲)██━━╯<══  ",
-        "    ⚡⚡  ◥████◤  ⚡⚡    ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ▲  ▄▄██▄▄  ▲  彡  ",
-        "    ╭━━━[✦ ✦]━━━╮  彡   ",
-        "     ╰━━██(▲)██━━╯      ",
-        "     ⚡  ◥████◤  ⚡      ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const FALCON_ISO_DASH: [&[&str]; 4] = [
-    &[
-        "  彡  ▲  ▄▄██▄▄  ▲ >>   ",
-        " 彡 ╭━━━[⚡ ⚡]━━━╮ >>    ",
-        " ░▒▓ ╰━━██(►)██━━╯      ",
-        "        ◥████◤          ",
-        "        ▄▀    ▀▄        ",
-        "    ░▒▓████████▓▒░      ",
-    ],
-    &[
-        " 彡彡 ▲  ▄▄██▄▄  ▲ >>>> ",
-        " 彡 ╭━━━[⚡ ⚡]━━━╮ >>>>  ",
-        " ░▒▓ ╰━━██(►)██━━╯      ",
-        " ░▒▓    ◥████◤          ",
-        "        ▀▄    ▄▀        ",
-        "   ░▒▓████████▓▒░       ",
-    ],
-    &[
-        "  彡  ▲  ▄▄██▄▄  ▲ >>   ",
-        " 彡 ╭━━━[⚡ ⚡]━━━╮ >>    ",
-        " ░▒▓ ╰━━██(►)██━━╯      ",
-        "        ◥████◤          ",
-        "        ▄▀    ▀▄        ",
-        "    ░▒▓████████▓▒░      ",
-    ],
-    &[
-        "      ▲  ▄▄██▄▄  ▲      ",
-        "    ╭━━━[◉ ◉]━━━╮       ",
-        "     ╰━━██(▲)██━━╯      ",
-        "        ◥████◤          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const FALCON_ISO_HIT: [&[&str]; 4] = [
-    &[
-        "      ▲  ▄▄██▄▄  ▲  💥  ",
-        "    ╭━━━[• ﹏ •]━━━╮ 💦 ",
-        "     ╰━━██(▲)██━━╯      ",
-        "        ◥████◤          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ▲  ▄▄██▄▄  ▲ 💦💦 ",
-        "    ╭━━━[• ﹏ •]━━━╮    ",
-        "     ╰━━██(▲)██━━╯      ",
-        "        ◥████◤          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ▲  ▄▄██▄▄  ▲  💥  ",
-        "    ╭━━━[• ﹏ •]━━━╮ 💦 ",
-        "     ╰━━██(▲)██━━╯      ",
-        "        ◥████◤          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ▲  ▄▄██▄▄  ▲ 💦💦 ",
-        "    ╭━━━[• ﹏ •]━━━╮    ",
-        "     ╰━━██(▲)██━━╯      ",
-        "        ◥████◤          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const FALCON_ISO_DEATH: [&[&str]; 4] = [
-    &[
-        "      ▲  ▄▄██▄▄  ▲   ✦  ",
-        "    ╭━━━[─ ─]━━━╮       ",
-        "     ╰━━██(▲)██━━╯      ",
-        "        ◥████◤          ",
-        "        ◢████◣          ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ▲  ▄▄██▄▄  ▲   ✦✦ ",
-        "    ╭━━━[─ ─]━━━╮       ",
-        "     ╰━━██(▲)██━━╯      ",
-        "        ◥████◤          ",
-        "        ◢████◣          ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ▲  ▄▄██▄▄  ▲  ✦✦✦ ",
-        "    ╭━━━[─ ─]━━━╮       ",
-        "     ╰━━██(▲)██━━╯      ",
-        "        ◥████◤          ",
-        "        ◢████◣          ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ▲  ▄▄██▄▄  ▲   ✦✦ ",
-        "    ╭━━━[─ ─]━━━╮       ",
-        "     ╰━━██(▲)██━━╯      ",
-        "        ◥████◤          ",
-        "        ◢████◣          ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const SERPENT_ISO_IDLE: [&[&str]; 4] = [
-    &[
-        "         .-'-'          ",
-        "    .-=-'._   -'=-._   ",
-        "   / .-=-'(o) (o).' \\  ",
-        "   |  '=-'---'---'=-   ",
-        "   '=-.  |  |  |  .=-  ",
-        "    '=-'---'---'=-'-'  ",
-    ],
-    &[
-        "         .-'-'          ",
-        "    .-=-'._   -'=-._   ",
-        "   / .-=-'(- - -)\\' \\  ",
-        "   |  '=-'---'---'=-   ",
-        "   '=-.  |  |  |  .=-  ",
-        "    '=-'---'---'=-'-'  ",
-    ],
-    &[
-        "         .-'-'          ",
-        "    .-=-'._   -'=-._   ",
-        "   / .-=-'(o) (o).' \\  ",
-        "   |  '=-'---'---'=-   ",
-        "   '=-.  |  |  |  .=-  ",
-        "    '=-'---'---'=-'-'  ",
-    ],
-    &[
-        "         .-'-'          ",
-        "    .-=-'._   -'=-._   ",
-        "   / .-=-'(* *)(')\\' \\  ",
-        "   |  '=-'---'---'=-   ",
-        "   '=-.  |  |  |  .=-  ",
-        "    '=-'---'---'=-'-'  ",
-    ],
-];
-
-const SERPENT_ISO_WALK: [&[&str]; 4] = [
-    &[
-        "  \\              /   ",
-        "  / .-=-'(o) (o).\\  ",
-        "  |  '=-'---'---'=| ",
-        "   '=-.'         .=- ",
-        "   /_/-'        '-\\_ ",
-        "    '-'          '-'  ",
-    ],
-    &[
-        "   \\             /   ",
-        "   / .-=-'(o) (o).\\  ",
-        "   |  '=-'---'---'=| ",
-        "    '=-.'       .=-  ",
-        "   /_/-'     '-\\_   ",
-        "    '-'        '-'   ",
-    ],
-    &[
-        "    \\            /   ",
-        "    / .-=-'(o) (o).\\ ",
-        "    |  '=-'---'---'=|",
-        "     '=-.'     .=-   ",
-        "    /_/-'    '-\\_    ",
-        "     '-'       '-'    ",
-    ],
-    &[
-        "  \\              /   ",
-        "  / .-=-'(o) (o).\\  ",
-        "  |  '=-'---'---'=| ",
-        "   '=-.'         .=- ",
-        "   /_/-'        '-\\_ ",
-        "    '-'          '-'  ",
-    ],
-];
-
-const SERPENT_ISO_RUN: [&[&str]; 4] = [
-    &[
-        "   >>    .-'-'      >>   ",
-        "  >>.-=-'._   -'=-._ >>  ",
-        "   / .-=-'(o) (o).' \\    ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-    ",
-        "    '=-'---'---'=-'-'    ",
-    ],
-    &[
-        "  >>>>   .-'-'     >>>>  ",
-        " >>>.-=-'._   -'=-._ >>> ",
-        "   / .-=-'(^)(^).' \\     ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-    ",
-        "    '=-'---'---'=-'-'    ",
-    ],
-    &[
-        "   >>    .-'-'      >>   ",
-        "  >>.-=-'._   -'=-._ >>  ",
-        "   / .-=-'(o) (o).' \\    ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-    ",
-        "    '=-'---'---'=-'-'    ",
-    ],
-    &[
-        "  >>>>   .-'-'     >>>>  ",
-        " >>>.-=-'._   -'=-._ >>> ",
-        "   / .-=-'(^)(^).' \\     ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-    ",
-        "    '=-'---'---'=-'-'    ",
-    ],
-];
-
-const SERPENT_ISO_JUMP: [&[&str]; 4] = [
-    &[
-        "                         ",
-        "         .-'-'           ",
-        "    .-=-'._   -'=-._     ",
-        "   / .-=-'(*) (*).' \\    ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-    ],
-    &[
-        "        ^.-'-.^          ",
-        "    .-=-'._   -'=-._     ",
-        "   / .-=-'(*) (*).' \\    ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-        "    '=-'---'---'=-'-'     ",
-    ],
-    &[
-        "       ^^.-'-.^^         ",
-        "    .-=-'._   -'=-._     ",
-        "   / .-=-'(*) (*).' \\    ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-        "    '=-'---'---'=-'-'     ",
-    ],
-    &[
-        "         .-'-'           ",
-        "    .-=-'._   -'=-._     ",
-        "   / .-=-'(o) (o).' \\    ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-        "    '=-'---'---'=-'-'     ",
-    ],
-];
-
-const SERPENT_ISO_ATTACK: [&[&str]; 4] = [
-    &[
-        "        /| .-'-. |\\      ",
-        "    .-=-'._   -'=-._     ",
-        "   / .-=-'(=) (=).' \\    ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-        "    '=-'---'---'=-'-'     ",
-    ],
-    &[
-        "       //| .-'-. |\\\\     ",
-        "   .-=-'._ (O) (O) -=-.  ",
-        "   / .-=-'(=) (=).' \\    ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-        "    '=-'---'---'=-'-'     ",
-    ],
-    &[
-        "       //| .-'-. |\\\\     ",
-        "   .-=-'._ (O) (O) -=-.  ",
-        "   / .-=-'(=) (=).' \\    ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-        "    '=-'---'---'=-'-'     ",
-    ],
-    &[
-        "        /| .-'-. |\\      ",
-        "    .-=-'._   -'=-._     ",
-        "   / .-=-'(=) (=).' \\    ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-        "    '=-'---'---'=-'-'     ",
-    ],
-];
-
-const SERPENT_ISO_DASH: [&[&str]; 4] = [
-    &[
-        "   ~>    .-'-'      ~>   ",
-        "  ~~>.-=-'._  -'=-._ ~~> ",
-        "   / .-=-'(>) (>).' \\    ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-        "    '=-'---'---'=-'-'     ",
-    ],
-    &[
-        "  ~~>>   .-'-'     ~~>>  ",
-        " ~~~>.-=-'._  -'=-._~~~> ",
-        "   / .-=-'(>) (>).' \\    ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-        "    '=-'---'---'=-'-'     ",
-    ],
-    &[
-        "   ~>    .-'-'      ~>   ",
-        "  ~~>.-=-'._  -'=-._ ~~> ",
-        "   / .-=-'(>) (>).' \\    ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-        "    '=-'---'---'=-'-'     ",
-    ],
-    &[
-        "         .-'-'           ",
-        "    .-=-'._   -'=-._     ",
-        "   / .-=-'(o) (o).' \\    ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-        "    '=-'---'---'=-'-'     ",
-    ],
-];
-
-const SERPENT_ISO_HIT: [&[&str]; 4] = [
-    &[
-        "         .-'-'           ",
-        "    .-=-'._   -'=-._     ",
-        "   / .-=-'(x) (x).' \\    ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-        "    '=-'---'---'=-'-'     ",
-    ],
-    &[
-        "         .-'-'           ",
-        "    .-=-'._   -'=-._     ",
-        "   / .-=-'(>) (<).' \\    ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-        "    '=-'---'---'=-'-'     ",
-    ],
-    &[
-        "         .-'-'           ",
-        "    .-=-'._   -'=-._     ",
-        "   / .-=-'(x) (x).' \\    ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-        "    '=-'---'---'=-'-'     ",
-    ],
-    &[
-        "         .-'-'           ",
-        "    .-=-'._   -'=-._     ",
-        "   / .-=-'(>) (<).' \\    ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-        "    '=-'---'---'=-'-'     ",
-    ],
-];
-
-const SERPENT_ISO_DEATH: [&[&str]; 4] = [
-    &[
-        "         .-'-'    z      ",
-        "    .-=-'._   -'=-._ z   ",
-        "   / .-=-'(-) (-).' \\ Z  ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-        "    '=-'---'---'=-'-'     ",
-    ],
-    &[
-        "         .-'-'     z     ",
-        "    .-=-'._   -'=-._ Z   ",
-        "   / .-=-'(-) (-).' \\Z   ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-        "    '=-'---'---'=-'-'     ",
-    ],
-    &[
-        "         .-'-'    z      ",
-        "    .-=-'._   -'=-._ z   ",
-        "   / .-=-'(-) (-).' \\ Z  ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-        "    '=-'---'---'=-'-'     ",
-    ],
-    &[
-        "         .-'-'           ",
-        "    .-=-'._   -'=-._     ",
-        "   / .-=-'(-) (-).' \\    ",
-        "   |  '=-'---'---'=-     ",
-        "   '=-.  |  |  |  .=-     ",
-        "    '=-'---'---'=-'-'     ",
-    ],
-];
-
-const GOLEM_ISO_IDLE: [&[&str]; 4] = [
-    &[
-        "      ╭(o)━━━━(o)╮      ",
-        "     ◢███[◉ ◉]███◣      ",
-        "     ████( ● )████      ",
-        "     ⚡  ▀████▀  ⚡      ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭(o)━━━━(o)╮      ",
-        "     ◢███[─ ─]███◣      ",
-        "     ████( ● )████      ",
-        "        ▀████▀   ⚡     ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭(o)━━━━(o)╮  ⚡   ",
-        "     ◢███[◉ ◉]███◣      ",
-        "     ████( ● )████      ",
-        "     ⚡  ▀████▀         ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭(o)━━━━(o)╮      ",
-        "     ◢███[✦ ✦]███◣      ",
-        "     ████( ● )████      ",
-        "     ⚡  ▀████▀  ⚡      ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const GOLEM_ISO_WALK: [&[&str]; 4] = [
-    &[
-        "      ╭(o)━━━━(o)╮      ",
-        "     ◢███[◉ ◉]███◣      ",
-        "     ████( ● )████      ",
-        "        ▀████▀          ",
-        "      ▄▀        ▀▄      ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭(o)━━━━(o)╮      ",
-        "     ◢███[◉ ◉]███◣      ",
-        "     ████( ● )████      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭(o)━━━━(o)╮      ",
-        "     ◢███[◉ ◉]███◣      ",
-        "     ████( ● )████      ",
-        "        ▀████▀          ",
-        "       ▀▄      ▄▀       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭(o)━━━━(o)╮      ",
-        "     ◢███[◉ ◉]███◣      ",
-        "     ████( ● )████      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const GOLEM_ISO_RUN: [&[&str]; 4] = [
-    &[
-        "  彡  ╭(o)━━━━(o)╮ >>   ",
-        " 彡  ◢███[◉ ◉]███◣ >>   ",
-        "     ████( ● )████      ",
-        "     ⚡  ▀████▀  ⚡      ",
-        "        ▄▀    ▀▄        ",
-        "    ░▒▓████████▓▒░      ",
-    ],
-    &[
-        " 彡彡 ╭(o)━━━━(o)╮ >>>> ",
-        " 彡  ◢███[✦ ✦]███◣ >>>> ",
-        "     ████( ● )████      ",
-        "     ⚡  ▀████▀  ⚡⚡     ",
-        "        ▀▄    ▄▀        ",
-        "   ░▒▓████████▓▒░       ",
-    ],
-    &[
-        "  彡  ╭(o)━━━━(o)╮ >>   ",
-        " 彡  ◢███[◉ ◉]███◣ >>   ",
-        "     ████( ● )████      ",
-        "     ⚡  ▀████▀  ⚡      ",
-        "        ▄▀    ▀▄        ",
-        "    ░▒▓████████▓▒░      ",
-    ],
-    &[
-        " 彡彡 ╭(o)━━━━(o)╮ >>>> ",
-        " 彡  ◢███[✦ ✦]███◣ >>>> ",
-        "     ████( ● )████      ",
-        "     ⚡  ▀████▀  ⚡⚡     ",
-        "        ▀▄    ▄▀        ",
-        "   ░▒▓████████▓▒░       ",
-    ],
-];
-
-const GOLEM_ISO_JUMP: [&[&str]; 4] = [
-    &[
-        "                        ",
-        "      ╭(o)━━━━(o)╮      ",
-        "     ◢███[◉ ◉]███◣      ",
-        "     ████( ● )████      ",
-        "       ▀████████▀       ",
-        "    ░▒▓██████████▓▒░    ",
-    ],
-    &[
-        "      ▲╭(o)━━━━(o)╮▲    ",
-        "     ⚡◢███[✦ ✦]███◣⚡    ",
-        "     ████( ● )████      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "      ░▒▓██████▓▒░      ",
-    ],
-    &[
-        "     ⚡ ╭(o)━━━━(o)╮ ⚡   ",
-        "    ⚡⚡◢███[✦ ✦]███◣⚡⚡   ",
-        "     ████( ● )████      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "        ░▒▓██▓▒░        ",
-    ],
-    &[
-        "                        ",
-        "      ╭(o)━━━━(o)╮      ",
-        "     ◢███[◉ ◉]███◣      ",
-        "     ████( ● )████      ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const GOLEM_ISO_ATTACK: [&[&str]; 4] = [
-    &[
-        "     ⚡╭(o)━━━━(o)╮⚡    ",
-        "    ══>◢███[✦ ✦]███◣    ",
-        "     ████( ● )████      ",
-        "     ⚡  ▀████▀  ⚡      ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "    ⚡⚡╭(o)━━━━(o)╮⚡⚡  ",
-        "   ═══>◢███[◣ ◢]███◣<═══ ",
-        "   ══>████( ● )████<══  ",
-        "    ⚡⚡  ▀████▀  ⚡⚡    ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "    ⚡⚡╭(o)━━━━(o)╮⚡⚡  ",
-        "   ═══>◢███[◣ ◢]███◣<═══ ",
-        "   ══>████( ● )████<══  ",
-        "    ⚡⚡  ▀████▀  ⚡⚡    ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭(o)━━━━(o)╮  彡  ",
-        "     ◢███[✦ ✦]███◣  彡  ",
-        "     ████( ● )████      ",
-        "     ⚡  ▀████▀  ⚡      ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const GOLEM_ISO_DASH: [&[&str]; 4] = [
-    &[
-        "  彡  ╭(o)━━━━(o)╮ >>   ",
-        " 彡  ◢███[⚡ ⚡]███◣ >>   ",
-        " ░▒▓ ████( ►► )████     ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "    ░▒▓████████▓▒░      ",
-    ],
-    &[
-        " 彡彡 ╭(o)━━━━(o)╮ >>>> ",
-        " 彡  ◢███[⚡ ⚡]███◣ >>>> ",
-        " ░▒▓ ████( ►► )████     ",
-        " ░▒▓   ▀████▀           ",
-        "        ▀▄    ▄▀        ",
-        "   ░▒▓████████▓▒░       ",
-    ],
-    &[
-        "  彡  ╭(o)━━━━(o)╮ >>   ",
-        " 彡  ◢███[⚡ ⚡]███◣ >>   ",
-        " ░▒▓ ████( ►► )████     ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "    ░▒▓████████▓▒░      ",
-    ],
-    &[
-        "      ╭(o)━━━━(o)╮      ",
-        "     ◢███[◉ ◉]███◣      ",
-        "     ████( ● )████      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const GOLEM_ISO_HIT: [&[&str]; 4] = [
-    &[
-        "      ╭(o)━━━━(o)╮ 💥   ",
-        "     ◢███[• ﹏ •]███◣ 💦",
-        "     ████( ● )████      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭(o)━━━━(o)╮ 💦💦 ",
-        "     ◢███[• ﹏ •]███◣   ",
-        "     ████( ● )████      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭(o)━━━━(o)╮ 💥   ",
-        "     ◢███[• ﹏ •]███◣ 💦",
-        "     ████( ● )████      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭(o)━━━━(o)╮ 💦💦 ",
-        "     ◢███[• ﹏ •]███◣   ",
-        "     ████( ● )████      ",
-        "        ▀████▀          ",
-        "        ▄▀    ▀▄        ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-const GOLEM_ISO_DEATH: [&[&str]; 4] = [
-    &[
-        "      ╭(o)━━━━(o)╮   ✦  ",
-        "     ◢███[─ ─]███◣      ",
-        "     ████( ● )████      ",
-        "        ▀████▀          ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭(o)━━━━(o)╮  ✦✦  ",
-        "     ◢███[─ ─]███◣      ",
-        "     ████( ● )████      ",
-        "        ▀████▀          ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭(o)━━━━(o)╮ ✦✦✦  ",
-        "     ◢███[─ ─]███◣      ",
-        "     ████( ● )████      ",
-        "        ▀████▀          ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-    &[
-        "      ╭(o)━━━━(o)╮  ✦✦  ",
-        "     ◢███[─ ─]███◣      ",
-        "     ████( ● )████      ",
-        "        ▀████▀          ",
-        "       ◢████████◣       ",
-        "     ░▒▓████████▓▒░     ",
-    ],
-];
-
-/// Determines the pet's mood based on hardware telemetry.
+/// Determines the PetMood based on hardware telemetry.
 pub fn determine_mood(cpu_pct: f32, cpu_temp_c: f32, ram_pct: u8, swap_pct: u8) -> PetMood {
-    if ram_pct > 85 || swap_pct > 90 {
-        return PetMood::Sick;
-    }
     if cpu_temp_c > 80.0 || cpu_pct > 85.0 {
-        return PetMood::Overheated;
+        PetMood::Overheated
+    } else if ram_pct >= 85 || swap_pct >= 90 {
+        PetMood::Sick
+    } else if cpu_pct > 65.0 {
+        PetMood::Sprint
+    } else {
+        PetMood::Idle
     }
-    if cpu_pct > 70.0 {
-        return PetMood::Sprint;
-    }
-    PetMood::Idle
-}
-
-/// Colorizes a single row of an 8-bit isometric sprite into rich retro multi-hued spans.
-pub fn colorize_retro_sprite_line(
-    species: PetSpecies,
-    state: PetActionState,
-    line_idx: usize,
-    text: &str,
-    _mood: PetMood,
-    is_stopped: bool,
-) -> Vec<Span<'static>> {
-    let mut spans = Vec::new();
-    let mut current_buf = String::new();
-    let mut current_color: Option<Color> = None;
-
-    for ch in text.chars() {
-        let ch_color = if ch == ' ' {
-            current_color.unwrap_or(Color::Reset)
-        } else if is_stopped {
-            Color::Rgb(115, 135, 120)
-        } else {
-            match ch {
-                '⚡' => Color::Rgb(255, 235, 60),
-                '💥' => Color::Rgb(255, 135, 45),
-                '💦' => Color::Rgb(100, 210, 255),
-                '彡' => Color::Rgb(185, 195, 215),
-                '═' | '<' => Color::Rgb(255, 85, 155),
-                '>' => {
-                    if species == PetSpecies::Ular {
-                        Color::Rgb(255, 235, 60)
-                    } else if state == PetActionState::Run || state == PetActionState::Dash {
-                        Color::Rgb(255, 210, 75)
-                    } else {
-                        Color::Rgb(255, 85, 155)
-                    }
-                }
-                '✦' => {
-                    if state == PetActionState::Death {
-                        Color::Rgb(190, 160, 230)
-                    } else {
-                        Color::Rgb(255, 245, 140)
-                    }
-                }
-                '[' | ']' => Color::Rgb(140, 145, 160),
-                '◉' => Color::Rgb(255, 255, 255),
-                '•' => Color::Rgb(255, 115, 115),
-                '─' => Color::Rgb(185, 195, 215),
-                '►' => Color::Rgb(80, 230, 255),
-                '(' | ')' => Color::Rgb(150, 155, 170),
-                '▲' => {
-                    if species == PetSpecies::Burung && line_idx == 2 {
-                        Color::Rgb(255, 185, 30)
-                    } else if species == PetSpecies::Burung && line_idx == 0 {
-                        Color::Rgb(50, 225, 255)
-                    } else {
-                        Color::Rgb(250, 195, 60)
-                    }
-                }
-                '▼' => {
-                    if species == PetSpecies::Ayam || species == PetSpecies::Burung {
-                        Color::Rgb(255, 145, 30)
-                    } else if species == PetSpecies::Singa {
-                        Color::Rgb(255, 245, 225)
-                    } else {
-                        Color::Rgb(255, 120, 120)
-                    }
-                }
-                '∿' => Color::Rgb(185, 245, 125),
-                '●' => Color::Rgb(0, 240, 255),
-                '爪' => Color::Rgb(255, 215, 90),
-                '░' => Color::Rgb(50, 58, 75),
-                '▒' => Color::Rgb(65, 75, 95),
-                '▓' => {
-                    if species == PetSpecies::Singa && line_idx < 3 {
-                        Color::Rgb(215, 105, 45) // Auburn mane
-                    } else {
-                        Color::Rgb(75, 88, 112)
-                    }
-                }
-                // New pure ASCII serpent characters
-                'z' | 'Z' => Color::Rgb(230, 215, 245),
-                '^' => Color::Rgb(185, 195, 215),
-                'x' => Color::Rgb(255, 115, 115),
-                '=' => Color::Rgb(255, 155, 100),
-                'O' => Color::Rgb(255, 135, 125),
-                '~' => Color::Rgb(185, 245, 125),
-                _ => {
-                    if line_idx == 5 {
-                        Color::Rgb(45, 52, 70)
-                    } else {
-                        match species {
-                            PetSpecies::Ayam => match line_idx {
-                                0 => Color::Rgb(235, 65, 65),  // Crest comb
-                                1 => Color::Rgb(255, 205, 65), // Head
-                                2 => Color::Rgb(255, 180, 50), // Upper torso
-                                3 => Color::Rgb(240, 175, 45), // Body
-                                _ => Color::Rgb(220, 140, 40), // Feet
-                            },
-                            PetSpecies::Singa => match line_idx {
-                                0 => Color::Rgb(215, 105, 45), // Mane
-                                1 => Color::Rgb(250, 195, 70), // Face
-                                2 => Color::Rgb(245, 185, 60), // Muzzle
-                                3 => Color::Rgb(230, 165, 50), // Torso
-                                _ => Color::Rgb(220, 150, 50), // Paws
-                            },
-                            PetSpecies::Burung => match line_idx {
-                                0 => Color::Rgb(50, 225, 255),  // Cyan crown
-                                1 => Color::Rgb(245, 250, 255), // White face
-                                2 => Color::Rgb(75, 150, 245),  // Azure wings
-                                3 => Color::Rgb(235, 245, 255), // Chest
-                                _ => Color::Rgb(250, 195, 50),  // Talons
-                            },
-                            PetSpecies::Ular => match line_idx {
-                                0 => Color::Rgb(200, 130, 240), // Violet crown
-                                1 => Color::Rgb(50, 215, 120),  // Emerald hood
-                                2 => Color::Rgb(185, 245, 125), // Lime body
-                                3 => Color::Rgb(40, 185, 105),  // Jade coils
-                                _ => Color::Rgb(30, 155, 85),   // Forest tail
-                            },
-                            PetSpecies::Beruang => match line_idx {
-                                0 => Color::Rgb(220, 175, 75),  // Bronze horns
-                                1 => Color::Rgb(115, 145, 185), // Steel helm
-                                2 => Color::Rgb(100, 125, 165), // Shoulders
-                                3 => Color::Rgb(95, 120, 160),  // Golem plate
-                                _ => Color::Rgb(80, 100, 135),  // Heavy treads
-                            },
-                        }
-                    }
-                }
-            }
-        };
-
-        if let Some(cur) = current_color {
-            if ch != ' ' && cur != ch_color {
-                spans.push(Span::styled(
-                    std::mem::take(&mut current_buf),
-                    Style::default().fg(cur).add_modifier(Modifier::BOLD),
-                ));
-                current_color = Some(ch_color);
-            }
-        } else {
-            current_color = Some(ch_color);
-        }
-
-        current_buf.push(ch);
-    }
-
-    if !current_buf.is_empty() {
-        let col = current_color.unwrap_or(Color::Reset);
-        spans.push(Span::styled(
-            current_buf,
-            Style::default().fg(col).add_modifier(Modifier::BOLD),
-        ));
-    }
-
-    spans
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_colorize_retro_sprite_line() {
-        let spans = colorize_retro_sprite_line(
-            PetSpecies::Ayam,
-            PetActionState::Idle,
-            2,
-            "      ███▌[◉ ◉]▐███     ",
-            PetMood::Idle,
-            false,
-        );
-        assert!(!spans.is_empty());
-        // Should have colored spans for eye brackets/pupils and feathers
-        assert!(spans.iter().any(|s| s.content.contains("◉")));
-    }
 
     #[test]
     fn test_stage_from_xp() {
@@ -1843,29 +332,20 @@ mod tests {
     }
 
     #[test]
-    fn test_species_parsing() {
-        assert_eq!(PetSpecies::parse("ayam"), PetSpecies::Ayam);
-        assert_eq!(PetSpecies::parse("singa"), PetSpecies::Singa);
-        assert_eq!(PetSpecies::parse("burung"), PetSpecies::Burung);
-        assert_eq!(PetSpecies::parse("ular"), PetSpecies::Ular);
-        assert_eq!(PetSpecies::parse("beruang"), PetSpecies::Beruang);
-    }
-
-    #[test]
     fn test_determine_mood() {
         assert_eq!(determine_mood(10.0, 50.0, 20, 10), PetMood::Idle);
         assert_eq!(determine_mood(90.0, 50.0, 20, 10), PetMood::Overheated);
-        assert_eq!(determine_mood(20.0, 90.0, 20, 10), PetMood::Overheated);
+        assert_eq!(determine_mood(20.0, 85.0, 20, 10), PetMood::Overheated);
         assert_eq!(determine_mood(10.0, 50.0, 90, 10), PetMood::Sick);
         assert_eq!(determine_mood(10.0, 50.0, 20, 95), PetMood::Sick);
         assert_eq!(determine_mood(75.0, 60.0, 20, 10), PetMood::Sprint);
     }
 
     #[test]
-    fn test_isometric_8_states_frames() {
+    fn test_single_emoji_frame_generation() {
         let pet = PetStatus {
-            species: PetSpecies::Ayam,
-            name: "Ciko".to_string(),
+            species: PetSpecies::Nagini,
+            name: "Nagini".to_string(),
             stage: PetStage::Adult,
             mood: PetMood::Idle,
             xp: 500,
@@ -1881,11 +361,9 @@ mod tests {
             PetActionState::Hit,
             PetActionState::Death,
         ] {
-            let frames = pet.frames_for_state(state);
-            assert_eq!(frames.len(), 4);
-            for f in frames {
-                assert_eq!(f.len(), 6, "Each isometric frame must have 6 lines");
-            }
+            let frame = pet.build_frame(state, 12, false);
+            assert!(!frame.core.is_empty(), "Core emoji should never be empty");
+            assert!(!frame.state_label.is_empty(), "State label should be set");
         }
     }
 }

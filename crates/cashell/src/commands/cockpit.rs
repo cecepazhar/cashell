@@ -7662,7 +7662,7 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let (name, species_str, xp) = if let Some(ref p) = pet_opt {
         (p.name.clone(), p.species.clone(), p.xp)
     } else {
-        (String::new(), "ayam".to_string(), 0)
+        (String::new(), "nagini".to_string(), 0)
     };
 
     let species = crate::pet::PetSpecies::parse(&species_str);
@@ -7708,19 +7708,19 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         }
     };
 
+    let status = crate::pet::PetStatus {
+        species,
+        name: pet_name_display.clone(),
+        stage,
+        mood: app.pet_mood,
+        xp,
+    };
+    let active_frame = status.build_frame(active_state, app.pet_tick, app.pet_is_stopped);
+
     let state_badge = if app.pet_is_stopped {
-        "⏸ STOPPED"
+        "⏸ STOPPED".to_string()
     } else {
-        match active_state {
-            crate::pet::PetActionState::Idle => "IDLE",
-            crate::pet::PetActionState::Walk => "WALK",
-            crate::pet::PetActionState::Run => "RUN >>",
-            crate::pet::PetActionState::Jump => "JUMP ▲",
-            crate::pet::PetActionState::Attack => "ATTACK ⚡",
-            crate::pet::PetActionState::Dash => "DASH 彡",
-            crate::pet::PetActionState::Hit => "HIT 💥",
-            crate::pet::PetActionState::Death => "REST / ZZZ",
-        }
+        active_frame.state_label.clone()
     };
 
     let title = if area.width >= 32 {
@@ -7780,69 +7780,14 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ])
         .split(inner);
 
-    // 1. Animated Sprite Screen
-    let status = crate::pet::PetStatus {
-        species,
-        name: pet_name_display.clone(),
-        stage,
-        mood: app.pet_mood,
-        xp,
-    };
-    let frames = status.frames_for_state(active_state);
-    let frame_idx = if app.pet_is_stopped {
-        0
+    // 1. Animated Sprite Screen - Render single reactive Emoji
+    let line1 = if !active_frame.particles.is_empty() && active_frame.y_offset == 0 {
+        format!("{} {} {}", active_frame.particles, active_frame.core, active_frame.particles)
     } else {
-        (app.pet_tick / 12) % frames.len()
+        format!("{} {}", active_frame.core, active_frame.particles)
     };
-    let current_frame = frames[frame_idx];
-
-    // Calm center alignment & gentle wander offset (reduced speed)
-    let pad_center = (inner.width.saturating_sub(26) / 2) as usize;
-    let max_sway = inner.width.saturating_sub(28).min(2) as usize;
-    let wander_offset = if app.pet_is_stopped {
-        pad_center
-    } else if active_state == crate::pet::PetActionState::Run || active_state == crate::pet::PetActionState::Dash {
-        if max_sway > 0 {
-            let cycle = (app.pet_tick / 16) % (max_sway * 2);
-            let shift = if cycle < max_sway { cycle } else { (max_sway * 2) - cycle };
-            pad_center.saturating_sub(max_sway / 2) + shift
-        } else {
-            pad_center
-        }
-    } else if active_state == crate::pet::PetActionState::Walk {
-        if max_sway > 0 {
-            let cycle = (app.pet_tick / 24) % (max_sway * 2);
-            let shift = if cycle < max_sway { cycle } else { (max_sway * 2) - cycle };
-            pad_center.saturating_sub(max_sway / 2) + shift
-        } else {
-            pad_center
-        }
-    } else {
-        // Idle: very gentle breathing sway
-        if max_sway > 0 {
-            let cycle = (app.pet_tick / 36) % (max_sway * 2);
-            let shift = if cycle < max_sway { cycle } else { (max_sway * 2) - cycle };
-            pad_center.saturating_sub(max_sway / 2) + shift
-        } else {
-            pad_center
-        }
-    };
-
-    let pad = " ".repeat(wander_offset);
-    let mut sprite_lines = Vec::new();
-    for (line_idx, row) in current_frame.iter().enumerate() {
-        let mut row_spans = vec![Span::raw(pad.clone())];
-        row_spans.extend(crate::pet::colorize_retro_sprite_line(
-            species,
-            active_state,
-            line_idx,
-            row,
-            app.pet_mood,
-            app.pet_is_stopped,
-        ));
-        sprite_lines.push(Line::from(row_spans));
-    }
-    f.render_widget(Paragraph::new(sprite_lines), chunks[0]);
+    let emoji_spans = vec![Span::styled(line1, Style::default().add_modifier(Modifier::BOLD))];
+    f.render_widget(Paragraph::new(Line::from(emoji_spans)).alignment(ratatui::layout::Alignment::Center), chunks[0]);
 
     // 2. Navigation Bar (Compact layout for smaller column)
     let nav_spans = vec![
@@ -7883,7 +7828,6 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     );
 
     // 3. Action Buttons with active selection highlight & Stop Button
-    // Clean text buttons without wide-variation emojis to prevent Unicode width misalignment
     let stop_label = if app.pet_is_stopped { "▶Play(p)" } else { "◼Stop(p)" };
     let stop_label_short = if app.pet_is_stopped { "▶(p)" } else { "◼(p)" };
     let actions: &[&str] = if inner.width >= 36 {
@@ -9308,10 +9252,9 @@ fn draw_pet_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 crate::pet::PetMood::Overheated => crate::pet::PetActionState::Hit,
                 crate::pet::PetMood::Sick => crate::pet::PetActionState::Death,
             });
-            let frames = status.frames_for_state(active_action);
-            for art in frames[0] {
-                lines.push(Line::from(Span::styled(*art, Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD))));
-            }
+            let frame = status.build_frame(active_action, app.pet_tick, app.pet_is_stopped);
+            let mascot_disp = format!("       {} {}       ", frame.core, frame.particles);
+            lines.push(Line::from(Span::styled(mascot_disp, Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD))));
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
                 Span::styled("Name: ", Style::default().fg(palette.text_muted)),
