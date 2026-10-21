@@ -4602,6 +4602,30 @@ fn truncate_str(s: &str, max: usize) -> &str {
     }
 }
 
+fn truncate_ellipsis(s: &str, max_len: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count <= max_len {
+        s.to_string()
+    } else if max_len <= 1 {
+        "…".to_string()
+    } else {
+        let mut res: String = s.chars().take(max_len - 1).collect();
+        res.push('…');
+        res
+    }
+}
+
+fn format_mount_capacity(used_mb: u64, total_mb: u64, used_gb: u64, total_gb: u64) -> String {
+    let fmt_val = |mb: u64, gb: u64| -> String {
+        if total_mb < 1024 || (gb == 0 && mb > 0) {
+            format!("{mb}M")
+        } else {
+            format!("{gb}G")
+        }
+    };
+    format!("{} / {}", fmt_val(used_mb, used_gb), fmt_val(total_mb, total_gb))
+}
+
 fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let palette = ThemePalette::get(&app.cfg.output.theme);
     let snap = app.latest_snap.clone();
@@ -4678,6 +4702,14 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         f.render_widget(cpu_block, top_chunks[0]);
 
         if cpu_inner.width > 10 && cpu_inner.height > 2 {
+            let temp_style = if snap.cpu_temp_c >= 80.0 {
+                Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)
+            } else if snap.cpu_temp_c >= 65.0 {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::Green)
+            };
+
             let mut header_spans = vec![
                 Span::styled("Load: ", Style::default().fg(palette.text_muted)),
                 Span::styled(
@@ -4690,16 +4722,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                     Style::default().fg(Color::White),
                 ),
                 Span::styled("Temp: ", Style::default().fg(palette.text_muted)),
-                Span::styled(
-                    format!("{:.1}°C", snap.cpu_temp_c),
-                    if snap.cpu_temp_c > 88.0 {
-                        Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD)
-                    } else if snap.cpu_temp_c > 75.0 {
-                        Style::default().fg(palette.status_warn)
-                    } else {
-                        Style::default().fg(palette.status_ok)
-                    },
-                ),
+                Span::styled(format!("{:.1}°C", snap.cpu_temp_c), temp_style),
             ];
 
             if thermal_alert {
@@ -4770,11 +4793,15 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             } else {
                 palette.chart_cpu
             };
-            let ram_label = format!("RAM: {ram_used}M/{ram_total}M ({ram_pct}%) [Cached: {}M]", snap.ram_cached_mb);
+            let ram_label_str = format!("RAM: {ram_used}M/{ram_total}M ({ram_pct}%) [Cached: {}M]", snap.ram_cached_mb);
+            let ram_label_span = Span::styled(
+                ram_label_str,
+                Style::default().fg(Color::Rgb(10, 15, 25)).add_modifier(Modifier::BOLD),
+            );
             let ram_gauge = Gauge::default()
                 .gauge_style(Style::default().fg(ram_color).bg(Color::DarkGray))
                 .ratio(((ram_used as f64) / (ram_total as f64)).clamp(0.0, 1.0))
-                .label(ram_label);
+                .label(ram_label_span);
             f.render_widget(ram_gauge, mem_layout[0]);
 
             let swap_used = snap.swap_used_mb;
@@ -4784,7 +4811,11 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             } else {
                 0
             };
-            let swap_label = format!("SWP: {swap_used}M/{swap_total}M ({swap_pct}%)");
+            let swap_label_str = format!("SWP: {swap_used}M/{swap_total}M ({swap_pct}%)");
+            let swap_label_span = Span::styled(
+                swap_label_str,
+                Style::default().fg(Color::Rgb(10, 15, 25)).add_modifier(Modifier::BOLD),
+            );
             let swap_gauge = Gauge::default()
                 .gauge_style(Style::default().fg(palette.chart_ram).bg(Color::DarkGray))
                 .ratio(if snap.swap_total_mb > 0 {
@@ -4792,7 +4823,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 } else {
                     0.0
                 })
-                .label(swap_label);
+                .label(swap_label_span);
             f.render_widget(swap_gauge, mem_layout[1]);
 
             let gpu_info = if snap.gpu_label != "No GPU" && !snap.gpu_label.is_empty() {
@@ -4817,7 +4848,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 } else {
                     m.mountpoint.as_str()
                 };
-                let used_total = format!("{}G / {}G", m.used_gb, m.total_gb);
+                let used_total = format_mount_capacity(m.used_mb, m.total_mb, m.used_gb, m.total_gb);
                 let bar_len: usize = 6;
                 let filled = ((m.pct as f32 / 100.0) * bar_len as f32).round() as usize;
                 let unfilled = bar_len.saturating_sub(filled);
@@ -4965,23 +4996,23 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let web_uv = snap.web_analytics.unique_visitors;
     let web_active = snap.web_analytics.active_visitors;
     alerts_spans.push(Span::styled(
-        format!(" 📊 Web: {web_active} live · {web_pv} views · {web_uv} visitors "),
-        Style::default().fg(Color::Black).bg(if web_active > 0 { palette.status_ok } else { palette.highlight_bg }).add_modifier(Modifier::BOLD),
+        format!("Web: {web_active} live · {web_pv} views · {web_uv} visitors"),
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
     ));
 
-    // Line 2: Immediate Visual Alert Callouts if anything is down, or health status
-    let mut alert_line2 = vec![
-        Span::styled("Status: ", Style::default().fg(palette.text_muted)),
-    ];
+    let available_width = alerts_inner.width.saturating_sub(2) as usize;
+    let mut alert_items: Vec<Vec<Span>> = Vec::new();
+    let alert_prefixes = vec![Span::styled("Status: ", Style::default().fg(palette.text_muted))];
     let mut any_alert = false;
 
     // Check containers down
     let exited_cont: Vec<&str> = snap.docker_containers.iter().filter(|c| c.state != "running").map(|c| c.name.as_str()).collect();
     if !exited_cont.is_empty() {
         let alert_bg = Color::Rgb(48, 22, 28);
-        alert_line2.push(Span::styled(" [✖ CONTAINER ALERT: ", Style::default().fg(Color::Rgb(242, 135, 125)).bg(alert_bg).add_modifier(Modifier::BOLD)));
-        alert_line2.push(Span::styled(exited_cont.join(", "), Style::default().fg(Color::Rgb(245, 185, 130)).bg(alert_bg).add_modifier(Modifier::BOLD)));
-        alert_line2.push(Span::styled(" EXITED] ", Style::default().fg(Color::Rgb(235, 125, 135)).bg(alert_bg).add_modifier(Modifier::BOLD)));
+        let mut item = vec![Span::styled(" [✖ CONTAINER ALERT: ", Style::default().fg(Color::Rgb(242, 135, 125)).bg(alert_bg).add_modifier(Modifier::BOLD))];
+        item.push(Span::styled(exited_cont.join(", "), Style::default().fg(Color::Rgb(245, 185, 130)).bg(alert_bg).add_modifier(Modifier::BOLD)));
+        item.push(Span::styled(" EXITED] ", Style::default().fg(Color::Rgb(235, 125, 135)).bg(alert_bg).add_modifier(Modifier::BOLD)));
+        alert_items.push(item);
         any_alert = true;
     }
 
@@ -4992,27 +5023,48 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         for (ep_name, code, ep_url) in down_endpoints.iter().take(2) {
             let code_str = code.map(|c| format!("HTTP {c}")).unwrap_or_else(|| "TIMEOUT/REFUSED".to_string());
             let short_url = truncate_str(ep_url, 26);
-            alert_line2.push(Span::styled(" [✖ OUTAGE ALERT: ", Style::default().fg(Color::Rgb(235, 125, 135)).bg(alert_bg).add_modifier(Modifier::BOLD)));
-            alert_line2.push(Span::styled(format!("{ep_name} "), Style::default().fg(Color::Rgb(245, 175, 135)).bg(alert_bg).add_modifier(Modifier::BOLD)));
-            alert_line2.push(Span::styled(format!("({short_url}) "), Style::default().fg(Color::Rgb(195, 165, 215)).bg(alert_bg)));
-            alert_line2.push(Span::styled(format!("{code_str} DOWN] "), Style::default().fg(Color::Rgb(240, 185, 120)).bg(alert_bg).add_modifier(Modifier::BOLD)));
+            let mut item = vec![Span::styled(" [✖ OUTAGE ALERT: ", Style::default().fg(Color::Rgb(235, 125, 135)).bg(alert_bg).add_modifier(Modifier::BOLD))];
+            item.push(Span::styled(format!("{ep_name} "), Style::default().fg(Color::Rgb(245, 175, 135)).bg(alert_bg).add_modifier(Modifier::BOLD)));
+            item.push(Span::styled(format!("({short_url}) "), Style::default().fg(Color::Rgb(195, 165, 215)).bg(alert_bg)));
+            item.push(Span::styled(format!("{code_str} DOWN] "), Style::default().fg(Color::Rgb(240, 185, 120)).bg(alert_bg).add_modifier(Modifier::BOLD)));
+            alert_items.push(item);
             any_alert = true;
         }
     }
 
     // Check hardware alerts
     if snap.cpu_temp_c > 85.0 {
-        alert_line2.push(Span::styled(" [🔥 Thermal Alert > 85°C] ", Style::default().fg(Color::Rgb(238, 128, 120)).bg(Color::Rgb(48, 22, 28)).add_modifier(Modifier::BOLD)));
+        alert_items.push(vec![Span::styled(" [🔥 Thermal Alert > 85°C] ", Style::default().fg(Color::Rgb(238, 128, 120)).bg(Color::Rgb(48, 22, 28)).add_modifier(Modifier::BOLD))]);
         any_alert = true;
     }
     if snap.cpu_pct > 80.0 {
-        alert_line2.push(Span::styled(" [⚡ High CPU Load > 80%] ", Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)));
+        alert_items.push(vec![Span::styled(" [⚡ High CPU Load > 80%] ", Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD))]);
         any_alert = true;
     }
     let ram_ratio = (snap.ram_used_mb as f64) / (snap.ram_total_mb.max(1) as f64);
     if ram_ratio > 0.85 {
-        alert_line2.push(Span::styled(" [💾 Low RAM Available] ", Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD)));
+        alert_items.push(vec![Span::styled(" [💾 Low RAM Available] ", Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD))]);
         any_alert = true;
+    }
+
+    let mut alert_line2 = alert_prefixes;
+    let mut remaining_width = available_width.saturating_sub(8);
+
+    for item in &alert_items {
+        let item_len: usize = item.iter().map(|s| s.content.chars().count()).sum();
+        if item_len <= remaining_width {
+            remaining_width = remaining_width.saturating_sub(item_len);
+            alert_line2.extend_from_slice(item);
+        } else if item_len > 0 && remaining_width > 0 {
+            let total_items = alert_items.len();
+            let shown_so_far = alert_line2.len().saturating_sub(1);
+            let remaining_total = total_items - shown_so_far;
+            alert_line2.push(Span::styled(
+                format!(" …+{} alerts", remaining_total),
+                Style::default().fg(Color::Rgb(230, 185, 240)).add_modifier(Modifier::BOLD),
+            ));
+            break;
+        }
     }
 
     if !any_alert {
@@ -5247,11 +5299,12 @@ fn draw_services_health_resume_panel(
             crate::systat::DaemonState::Degraded => ("◌ DEGRADED", palette.status_warn),
         };
 
+        let endpoint_disp = truncate_ellipsis(&s.endpoint, 18);
         rows.push(Row::new(vec![
             Cell::from(s.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
             Cell::from(s.category.clone()).style(Style::default().fg(palette.accent)),
             Cell::from(status_badge).style(Style::default().fg(status_col).add_modifier(Modifier::BOLD)),
-            Cell::from(s.endpoint.clone()).style(Style::default().fg(palette.chart_cpu)),
+            Cell::from(endpoint_disp).style(Style::default().fg(palette.chart_cpu)),
             Cell::from(s.detail.clone()).style(Style::default().fg(palette.text_muted)),
         ]));
     }
@@ -5329,33 +5382,15 @@ fn draw_docker_containers_resume_panel(
 
     let mut rows = Vec::new();
 
-    // Immediate visual alert if any container is down
-    if down_count > 0 {
-        let alert_bg = Color::Rgb(46, 22, 28);
-        for c in containers.iter().filter(|c| c.state != "running") {
-            rows.push(
-                Row::new(vec![
-                    Cell::from(format!("✖ ALERT: {}", c.name))
-                        .style(Style::default().fg(Color::Rgb(242, 135, 125)).bg(alert_bg).add_modifier(Modifier::BOLD)),
-                    Cell::from("EXITED")
-                        .style(Style::default().fg(Color::Rgb(245, 160, 125)).bg(alert_bg).add_modifier(Modifier::BOLD)),
-                    Cell::from(c.ports.clone())
-                        .style(Style::default().fg(Color::Rgb(240, 190, 130)).bg(alert_bg)),
-                    Cell::from("UNHEALTHY")
-                        .style(Style::default().fg(Color::Rgb(215, 165, 225)).bg(alert_bg).add_modifier(Modifier::BOLD)),
-                    Cell::from(format!("Down: {}", c.status_detail))
-                        .style(Style::default().fg(Color::Rgb(210, 155, 165)).bg(alert_bg)),
-                ]),
-            );
-        }
-    }
+    let mut sorted_containers: Vec<(usize, &crate::systat::DockerContainerInfo)> = containers.iter().enumerate().collect();
+    sorted_containers.sort_by_key(|(_, c)| if c.state == "running" { 1 } else { 0 });
 
-    let scroll_offset = scroll.min(containers.len().saturating_sub(1));
-    for (i, c) in containers.iter().enumerate().skip(scroll_offset) {
+    let scroll_offset = scroll.min(sorted_containers.len().saturating_sub(1));
+    for (i, c) in sorted_containers.iter().skip(scroll_offset) {
         let (status_label, status_col) = match c.state.as_str() {
             "running" => ("● Running", palette.status_ok),
             "paused" => ("◌ Paused", palette.status_warn),
-            _ => ("✖ Exited", Color::Rgb(240, 135, 125)),
+            _ => ("✖ Exited", Color::LightRed),
         };
 
         let health_label = if c.state == "running" {
@@ -5370,32 +5405,62 @@ fn draw_docker_containers_resume_panel(
         } else if c.state == "paused" {
             palette.status_warn
         } else {
-            Color::Rgb(242, 135, 125)
+            Color::LightRed
         };
 
+        let is_down = c.state != "running";
         let ports_display = if c.ports.is_empty() {
             "--".to_string()
         } else {
-            c.ports.replace("0.0.0.0:", "").replace("[::]:", "")
+            c.ports
+                .split(',')
+                .map(|p| {
+                    let p = p.trim();
+                    let p = p.strip_prefix("0.0.0.0:").unwrap_or(p);
+                    let p = p.strip_prefix("[::]:").unwrap_or(p);
+                    if let Some((host_port, container_port)) = p.split_once("->") {
+                        if host_port == container_port {
+                            container_port.to_string()
+                        } else {
+                            format!("{}->{}", host_port, container_port)
+                        }
+                    } else {
+                        p.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+
+        let row_bg = if is_down { Some(Color::Rgb(46, 22, 28)) } else { None };
+        let cell_style = |color: Color, bold: bool| -> Style {
+            let mut s = Style::default().fg(color);
+            if bold {
+                s = s.add_modifier(Modifier::BOLD);
+            }
+            if let Some(bg) = row_bg {
+                s = s.bg(bg);
+            }
+            s
         };
 
         rows.push(Row::new(vec![
-            Cell::from(c.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-            Cell::from(status_label).style(Style::default().fg(status_col).add_modifier(Modifier::BOLD)),
-            Cell::from(ports_display).style(Style::default().fg(palette.chart_cpu)),
-            Cell::from(health_label).style(Style::default().fg(health_col).add_modifier(Modifier::BOLD)),
-            Cell::from(c.image.clone()).style(Style::default().fg(palette.text_muted)),
+            Cell::from(c.name.clone()).style(cell_style(Color::White, true)),
+            Cell::from(status_label).style(cell_style(status_col, true)),
+            Cell::from(ports_display).style(cell_style(palette.chart_cpu, false)),
+            Cell::from(health_label).style(cell_style(health_col, true)),
+            Cell::from(c.image.clone()).style(cell_style(palette.text_muted, false)),
         ]));
 
-        if (i as u16) < inner.height.saturating_sub(1) {
+        if (*i as u16) < inner.height.saturating_sub(1) {
             app.register_hitbox(
                 Rect {
                     x: inner.x,
-                    y: inner.y + 1 + (i as u16),
+                    y: inner.y + 1 + (*i as u16),
                     width: inner.width,
                     height: 1,
                 },
-                HitboxAction::SelectContainer(i),
+                HitboxAction::SelectContainer(*i),
             );
         }
     }
@@ -5473,51 +5538,30 @@ fn draw_uptime_monitors_resume_panel(
 
     let mut rows = Vec::new();
 
-    // Attention-grabbing red alert badge if any endpoint is DOWN
-    if down_count > 0 {
-        let alert_bg = Color::Rgb(46, 22, 28);
-        for m in monitors.iter().filter(|m| !m.is_up) {
-            let err_code = m.status_code.map(|c| format!("HTTP {c}")).unwrap_or_else(|| "ERR_CONN_REFUSED/TIMEOUT".to_string());
-            let target_trunc = truncate_str(&m.target, 32);
-            rows.push(
-                Row::new(vec![
-                    Cell::from(format!("✖ ALERT: {}", m.name))
-                        .style(Style::default().fg(Color::Rgb(242, 135, 125)).bg(alert_bg).add_modifier(Modifier::BOLD)),
-                    Cell::from("DOWN")
-                        .style(Style::default().fg(Color::Rgb(245, 160, 125)).bg(alert_bg).add_modifier(Modifier::BOLD)),
-                    Cell::from(err_code)
-                        .style(Style::default().fg(Color::Rgb(240, 190, 130)).bg(alert_bg).add_modifier(Modifier::BOLD)),
-                    Cell::from("--")
-                        .style(Style::default().fg(Color::Rgb(180, 160, 170)).bg(alert_bg)),
-                    Cell::from(format!("Outage: {target_trunc}"))
-                        .style(Style::default().fg(Color::Rgb(215, 165, 225)).bg(alert_bg).add_modifier(Modifier::BOLD)),
-                ]),
-            );
-        }
-    }
+    let mut sorted_monitors: Vec<(usize, &crate::systat::UptimeMonitor)> = monitors.iter().enumerate().collect();
+    sorted_monitors.sort_by_key(|(_, m)| if m.is_up { 1 } else { 0 });
 
-    let scroll_offset = scroll.min(monitors.len().saturating_sub(1));
-    for (i, m) in monitors.iter().enumerate().skip(scroll_offset) {
+    let scroll_offset = scroll.min(sorted_monitors.len().saturating_sub(1));
+    for (i, m) in sorted_monitors.iter().skip(scroll_offset) {
         let (status_label, status_col) = if m.is_up {
             ("● UP", palette.status_ok)
         } else {
-            ("✖ DOWN", Color::Rgb(242, 135, 125))
+            ("✖ DOWN", Color::LightRed)
         };
 
-        let http_code = m.status_code.map(|c| format!("{c} OK")).unwrap_or_else(|| "--".to_string());
+        let http_code = match m.status_code {
+            Some(c) if (200..=299).contains(&c) => format!("{c} OK"),
+            Some(c) if (300..=399).contains(&c) => format!("{c} REDIR"),
+            Some(401) => "401 AUTH".to_string(),
+            Some(403) => "403 FORBIDDEN".to_string(),
+            Some(404) if m.is_up => "404 UP".to_string(),
+            Some(404) => "404 NOT FOUND".to_string(),
+            Some(c) if (500..=599).contains(&c) => format!("{c} ERR"),
+            Some(c) if m.is_up => format!("{c} UP"),
+            Some(c) => format!("{c}"),
+            None => "--".to_string(),
+        };
         let rtt_str = m.latency_ms.map(|ms| format!("{ms}ms")).unwrap_or_else(|| "--".to_string());
-
-        // 20-heartbeat sparkline string
-        let mut sparkline = String::with_capacity(30);
-        sparkline.push('[');
-        for &up in m.history.iter().take(20) {
-            if up {
-                sparkline.push('█');
-            } else {
-                sparkline.push('░');
-            }
-        }
-        sparkline.push_str(&format!("] {:.0}%", m.uptime_pct));
 
         let spark_col = if m.uptime_pct >= 95.0 {
             palette.status_ok
@@ -5527,23 +5571,57 @@ fn draw_uptime_monitors_resume_panel(
             palette.status_err
         };
 
+        let mut sparkline_spans = Vec::with_capacity(25);
+        sparkline_spans.push(Span::styled("[", Style::default().fg(Color::DarkGray)));
+        let history_len = m.history.len();
+        let pad_needed = 20usize.saturating_sub(history_len);
+        for _ in 0..pad_needed {
+            sparkline_spans.push(Span::styled("❚", Style::default().fg(Color::DarkGray)));
+        }
+        for &up in m.history.iter().take(20) {
+            let col = if up {
+                if let Some(ms) = m.latency_ms {
+                    if ms > 500 { Color::Yellow } else { palette.status_ok }
+                } else {
+                    palette.status_ok
+                }
+            } else {
+                Color::LightRed
+            };
+            sparkline_spans.push(Span::styled("❚", Style::default().fg(col)));
+        }
+        sparkline_spans.push(Span::styled(format!("] {:.0}%", m.uptime_pct), Style::default().fg(spark_col)));
+
+        let is_down = !m.is_up;
+        let row_bg = if is_down { Some(Color::Rgb(46, 22, 28)) } else { None };
+        let cell_style = |color: Color, bold: bool| -> Style {
+            let mut s = Style::default().fg(color);
+            if bold {
+                s = s.add_modifier(Modifier::BOLD);
+            }
+            if let Some(bg) = row_bg {
+                s = s.bg(bg);
+            }
+            s
+        };
+
         rows.push(Row::new(vec![
-            Cell::from(m.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-            Cell::from(status_label).style(Style::default().fg(status_col).add_modifier(Modifier::BOLD)),
-            Cell::from(http_code).style(Style::default().fg(palette.chart_cpu)),
-            Cell::from(rtt_str).style(Style::default().fg(palette.text)),
-            Cell::from(sparkline).style(Style::default().fg(spark_col)),
+            Cell::from(m.name.clone()).style(cell_style(if is_down { Color::LightRed } else { Color::White }, true)),
+            Cell::from(status_label).style(cell_style(status_col, true)),
+            Cell::from(http_code).style(cell_style(if is_down { Color::LightRed } else { palette.chart_cpu }, false)),
+            Cell::from(rtt_str).style(cell_style(palette.text, false)),
+            Cell::from(Line::from(sparkline_spans)),
         ]));
 
-        if (i as u16) < inner.height.saturating_sub(1) {
+        if (*i as u16) < inner.height.saturating_sub(1) {
             app.register_hitbox(
                 Rect {
                     x: inner.x,
-                    y: inner.y + 1 + (i as u16),
+                    y: inner.y + 1 + (*i as u16),
                     width: inner.width,
                     height: 1,
                 },
-                HitboxAction::SelectMonitor(i),
+                HitboxAction::SelectMonitor(*i),
             );
         }
     }
@@ -5596,19 +5674,47 @@ fn draw_web_analytics_resume_panel(
     let inner = block.inner(area);
     f.render_widget(block, area);
 
+    let mut sorted_products: Vec<&crate::systat::ProductAnalyticsSummary> = a.product_analytics.iter().collect();
+    sorted_products.sort_by_key(|p| {
+        if p.pageviews > 0 || p.status == "ACTIVE" || p.status == "IDLE" {
+            0
+        } else {
+            1
+        }
+    });
+
     let mut rows = Vec::new();
-    for p in &a.product_analytics {
+    let mut standby_items = Vec::new();
+
+    for p in sorted_products {
         let (stat_color, stat_label) = match p.status.as_str() {
             "ACTIVE" => (palette.status_ok, "● LIVE"),
             "IDLE" => (palette.status_warn, "◌ TRACKING"),
             _ => (palette.text_muted, "· STANDBY"),
         };
+
+        if p.pageviews == 0 && p.status != "ACTIVE" && p.status != "IDLE" {
+            standby_items.push(p);
+        } else {
+            rows.push(Row::new(vec![
+                Cell::from(p.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Cell::from(p.domain.clone()).style(Style::default().fg(palette.accent)),
+                Cell::from(format!("{}", p.pageviews)).style(Style::default().fg(palette.chart_cpu)),
+                Cell::from(format!("{}", p.visitors)).style(Style::default().fg(palette.chart_ram)),
+                Cell::from(stat_label).style(Style::default().fg(stat_color).add_modifier(Modifier::BOLD)),
+            ]));
+        }
+    }
+
+    if !standby_items.is_empty() {
         rows.push(Row::new(vec![
-            Cell::from(p.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-            Cell::from(p.domain.clone()).style(Style::default().fg(palette.accent)),
-            Cell::from(format!("{}", p.pageviews)).style(Style::default().fg(palette.chart_cpu)),
-            Cell::from(format!("{}", p.visitors)).style(Style::default().fg(palette.chart_ram)),
-            Cell::from(stat_label).style(Style::default().fg(stat_color).add_modifier(Modifier::BOLD)),
+            Cell::from(format!("⚪ {} standby items grouped", standby_items.len()))
+                .style(Style::default().fg(palette.text_muted)),
+            Cell::from(standby_items.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", "))
+                .style(Style::default().fg(palette.text_muted)),
+            Cell::from("--").style(Style::default().fg(palette.text_muted)),
+            Cell::from("--").style(Style::default().fg(palette.text_muted)),
+            Cell::from("STANDBY").style(Style::default().fg(palette.text_muted).add_modifier(Modifier::BOLD)),
         ]));
     }
 
@@ -7135,23 +7241,24 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     );
 
     // 3. Action Buttons with active selection highlight & Stop Button
-    let stop_label = if app.pet_is_stopped { "▶Play(p)" } else { "⏹Stop(p)" };
-    let stop_label_short = if app.pet_is_stopped { "▶(p)" } else { "⏹(p)" };
+    // Clean text buttons without wide-variation emojis to prevent Unicode width misalignment
+    let stop_label = if app.pet_is_stopped { "▶Play(p)" } else { "◼Stop(p)" };
+    let stop_label_short = if app.pet_is_stopped { "▶(p)" } else { "◼(p)" };
     let actions: &[&str] = if inner.width >= 36 {
         &[
-            "🍖Feed(f)",
-            "⚔Train(t)",
-            "🔄Switch(s)",
+            "Feed(f)",
+            "Train(t)",
+            "Switch(s)",
             stop_label,
-            "📜Log(h)",
+            "Log(h)",
         ]
     } else {
         &[
-            "🍖(f)",
-            "⚔(t)",
-            "🔄(s)",
+            "(f)",
+            "(t)",
+            "(s)",
             stop_label_short,
-            "📜(h)",
+            "(h)",
         ]
     };
 

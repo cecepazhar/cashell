@@ -22,6 +22,8 @@ pub struct MountInfo {
     pub mountpoint: String,
     pub used_gb: u64,
     pub total_gb: u64,
+    pub used_mb: u64,
+    pub total_mb: u64,
     pub pct: u8,
     pub fstype: String,
 }
@@ -1348,6 +1350,8 @@ fn probe_mounts() -> Vec<MountInfo> {
         let used = total.saturating_sub(avail);
         let total_gb = total / 1024 / 1024 / 1024;
         let used_gb = used / 1024 / 1024 / 1024;
+        let total_mb = total / 1024 / 1024;
+        let used_mb = used / 1024 / 1024;
         let pct = if total > 0 {
             ((used as f64 / total as f64) * 100.0).round() as u8
         } else {
@@ -1358,6 +1362,8 @@ fn probe_mounts() -> Vec<MountInfo> {
             mountpoint: mp,
             used_gb,
             total_gb,
+            used_mb,
+            total_mb,
             pct,
             fstype,
         });
