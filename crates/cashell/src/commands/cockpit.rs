@@ -228,6 +228,8 @@ pub enum HitboxAction {
     RemoveProject,
     RemoveContainer,
     EditContainer,
+    CycleProjectServer,
+    SelectProjectServer(usize),
     // Uptime tab actions
     SelectMonitor(usize),
     ProbeMonitors,
@@ -528,6 +530,10 @@ pub struct CockpitApp {
     // ── Tab 9: AI state ─────────────────────────────────────────────────────
     pub ai_model_idx: usize,
 
+    // ── Tab 2: Project & Remote Target Selector state ────────────────────────
+    pub project_server_target: usize,
+    pub project_scroll: usize,
+
     // Status bar & notification
     pub notification: Option<(String, Instant)>,
     pub is_compact: bool,
@@ -692,6 +698,8 @@ impl CockpitApp {
             project_view: ProjectView::Hierarchy,
             selected_project: 0,
             selected_container: 0,
+            project_server_target: 0,
+            project_scroll: 0,
 
             // ── Tab 3: Uptime state ─────────────────────────────────────────────────
             selected_monitor: 0,
@@ -921,6 +929,23 @@ impl CockpitApp {
     }
 
     // ── CRUD Edit & Delete Functions ─────────────────────────────────────────
+
+    pub fn project_server_targets(&self) -> Vec<(String, String)> {
+        let mut list = vec![("local".to_string(), "ThinkPad X1 (Local)".to_string())];
+        for (name, node) in &self.cfg.daemon.nodes {
+            list.push((name.clone(), format!("{} ({})", name.to_uppercase(), node.ip)));
+        }
+        list
+    }
+
+    pub fn cycle_project_server(&mut self) {
+        let targets = self.project_server_targets();
+        if !targets.is_empty() {
+            self.project_server_target = (self.project_server_target + 1) % targets.len();
+            let (_target_id, target_label) = &targets[self.project_server_target];
+            self.set_notification(format!("Target server switched: [{target_label}]"));
+        }
+    }
 
     pub fn remove_selected_project(&mut self) {
         if self.latest_snap.tracked_projects.is_empty() {
@@ -3147,6 +3172,9 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Char('r') if app.current_tab == CockpitTab::Project => {
             app.restart_selected_container();
         }
+        KeyCode::Char('g') if app.current_tab == CockpitTab::Project => {
+            app.cycle_project_server();
+        }
 
         // Uptime Tab shortcuts: 'm'/'u': Add monitor, 'p': Probe monitors, 'x': Delete monitor, 'e': Edit monitor
         KeyCode::Char('m') | KeyCode::Char('u') if app.current_tab == CockpitTab::Uptime || app.current_tab == CockpitTab::Dashboard => {
@@ -3577,6 +3605,16 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                     }
                     HitboxAction::SelectProjectView(view) => {
                         app.project_view = view;
+                    }
+                    HitboxAction::CycleProjectServer => {
+                        app.cycle_project_server();
+                    }
+                    HitboxAction::SelectProjectServer(idx) => {
+                        app.project_server_target = idx;
+                        let targets = app.project_server_targets();
+                        if let Some((_, label)) = targets.get(idx) {
+                            app.set_notification(format!("Target server switched: [{label}]"));
+                        }
                     }
                     HitboxAction::SelectProject(idx) => {
                         app.selected_project = idx;
@@ -5703,6 +5741,16 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let btn_edit_w = 12u16;
     let btn_del_w = 14u16;
 
+    let target_list = app.project_server_targets();
+    let target_display = if app.project_server_target == 0 {
+        "LOCAL".to_string()
+    } else {
+        target_list.get(app.project_server_target - 1).map(|(name, _)| name.clone()).unwrap_or_else(|| "LOCAL".to_string())
+    };
+    let target_label_text = format!(" [🖥 Target: {} (g)] ", target_display);
+    let target_btn_w = (target_label_text.len() + 1) as u16;
+    let btn_target_w = target_btn_w;
+
     let mut cur_x = action_inner.x + 1;
     let y = action_inner.y;
 
@@ -5723,6 +5771,12 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         HitboxAction::SelectProjectView(ProjectView::Containers),
     );
     cur_x += btn_cont_w + 1;
+
+    app.register_hitbox(
+        Rect { x: cur_x, y, width: btn_target_w, height: 1 },
+        HitboxAction::CycleProjectServer,
+    );
+    cur_x += btn_target_w + 1;
 
     app.register_hitbox(
         Rect { x: cur_x, y, width: btn_add_proj_w, height: 1 },
@@ -5777,17 +5831,23 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         Span::styled(" [🌳 Tree] ", Style::default().fg(btn_tree_fg).bg(btn_tree_bg).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
         Span::styled(" [🐳 Containers] ", Style::default().fg(btn_cont_fg).bg(btn_cont_bg).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(
+            target_label_text.as_str(),
+            Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" │ "),
-        Span::styled(" [+ Add Project] ", Style::default().fg(Color::Black).bg(palette.status_warn).add_modifier(Modifier::BOLD)),
-        Span::raw(" "),
-        Span::styled(" [+ Add Container] ", Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD)),
-        Span::raw(" │ Actions: "),
-        Span::styled(" [▶ Start] ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
-        Span::raw(" "),
-        Span::styled(" [■ Stop] ", Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)),
-        Span::raw(" "),
-        Span::styled(" [↺ Restart] ", Style::default().fg(Color::Black).bg(palette.status_warn).add_modifier(Modifier::BOLD)),
     ];
+    bar_spans.push(Span::raw(" "));
+    bar_spans.push(Span::styled(" [+ Add Project] ", Style::default().fg(Color::Black).bg(palette.status_warn).add_modifier(Modifier::BOLD)));
+    bar_spans.push(Span::raw(" "));
+    bar_spans.push(Span::styled(" [+ Add Container] ", Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD)));
+    bar_spans.push(Span::raw(" │ Actions: "));
+    bar_spans.push(Span::styled(" [▶ Start] ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD)));
+    bar_spans.push(Span::raw(" "));
+    bar_spans.push(Span::styled(" [■ Stop] ", Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)));
+    bar_spans.push(Span::raw(" "));
+    bar_spans.push(Span::styled(" [↺ Restart] ", Style::default().fg(Color::Black).bg(palette.status_warn).add_modifier(Modifier::BOLD)));
 
     if app.project_view == ProjectView::Containers {
         bar_spans.push(Span::raw(" "));
@@ -5813,44 +5873,86 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
                 .split(chunks[1]);
 
-            // Left panel: Project workspaces list
+            let total_projects = app.latest_snap.tracked_projects.len();
             let block = Block::default()
                 .borders(Borders::ALL)
-                .title(format!(" 📁 Project Workspaces ({}) ", app.latest_snap.tracked_projects.len()))
+                .title(format!(" 📁 Project Workspaces ({}) ", total_projects))
                 .border_style(Style::default().fg(palette.border));
             let inner = block.inner(sub_chunks[0]);
+
+            let visible_rows = inner.height.saturating_sub(1) as usize; // reserve 1 line for header
+            if total_projects > 0 && app.selected_project >= total_projects {
+                app.selected_project = total_projects - 1;
+            }
+
+            let start_idx = if visible_rows == 0 || total_projects <= visible_rows {
+                0
+            } else {
+                let sel = app.selected_project;
+                if sel < app.project_scroll {
+                    sel
+                } else if sel >= app.project_scroll + visible_rows {
+                    sel + 1 - visible_rows
+                } else {
+                    app.project_scroll
+                }
+            };
+            let start_idx = start_idx.min(total_projects.saturating_sub(visible_rows));
+            app.project_scroll = start_idx;
+            let end_idx = (start_idx + visible_rows).min(total_projects);
+
+            let title_text = if total_projects > visible_rows {
+                format!(
+                    " 📁 Workspaces ({}) [{}-{}/{}] ",
+                    total_projects,
+                    start_idx + 1,
+                    end_idx,
+                    total_projects
+                )
+            } else {
+                format!(" 📁 Project Workspaces ({}) ", total_projects)
+            };
+
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(title_text)
+                .border_style(Style::default().fg(palette.border));
             f.render_widget(block, sub_chunks[0]);
 
-            let rows: Vec<Row> = app
-                .latest_snap
-                .tracked_projects
-                .iter()
-                .enumerate()
-                .map(|(i, p)| {
-                    let is_sel = i == app.selected_project;
-                    let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
-                    let (dirty_badge, dirty_col) = if p.is_dirty {
-                        ("● DIRTY", palette.status_warn)
-                    } else {
-                        ("● CLEAN", palette.status_ok)
-                    };
-                    let repos_str = format!("📦 {}", p.repos.len());
-                    let cont_str = if p.containers.is_empty() { "-".to_string() } else { format!("🐳 {}", p.containers.len()) };
-                    let svc_str = if p.services.is_empty() { "-".to_string() } else { format!("⚙ {}", p.services.len()) };
-                    let db_str = if p.databases.is_empty() { "-".to_string() } else { format!("🗄 {}", p.databases.len()) };
+            let rows: Vec<Row> = if total_projects == 0 {
+                Vec::new()
+            } else {
+                app.latest_snap
+                    .tracked_projects[start_idx..end_idx]
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, p)| {
+                        let real_idx = start_idx + offset;
+                        let is_sel = real_idx == app.selected_project;
+                        let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
+                        let (dirty_badge, dirty_col) = if p.is_dirty {
+                            ("● DIRTY", palette.status_warn)
+                        } else {
+                            ("● CLEAN", palette.status_ok)
+                        };
+                        let repos_str = format!("📦 {}", p.repos.len());
+                        let cont_str = if p.containers.is_empty() { "-".to_string() } else { format!("🐳 {}", p.containers.len()) };
+                        let svc_str = if p.services.is_empty() { "-".to_string() } else { format!("⚙ {}", p.services.len()) };
+                        let db_str = if p.databases.is_empty() { "-".to_string() } else { format!("🗄 {}", p.databases.len()) };
 
-                    Row::new(vec![
-                        Cell::from(p.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                        Cell::from(p.category.clone()).style(Style::default().fg(palette.accent)),
-                        Cell::from(repos_str).style(Style::default().fg(palette.chart_cpu)),
-                        Cell::from(cont_str).style(Style::default().fg(palette.status_ok)),
-                        Cell::from(svc_str).style(Style::default().fg(palette.status_warn)),
-                        Cell::from(db_str).style(Style::default().fg(palette.accent)),
-                        Cell::from(dirty_badge).style(Style::default().fg(dirty_col).add_modifier(Modifier::BOLD)),
-                    ])
-                    .style(Style::default().bg(bg))
-                })
-                .collect();
+                        Row::new(vec![
+                            Cell::from(p.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                            Cell::from(p.category.clone()).style(Style::default().fg(palette.accent)),
+                            Cell::from(repos_str).style(Style::default().fg(palette.chart_cpu)),
+                            Cell::from(cont_str).style(Style::default().fg(palette.status_ok)),
+                            Cell::from(svc_str).style(Style::default().fg(palette.status_warn)),
+                            Cell::from(db_str).style(Style::default().fg(palette.accent)),
+                            Cell::from(dirty_badge).style(Style::default().fg(dirty_col).add_modifier(Modifier::BOLD)),
+                        ])
+                        .style(Style::default().bg(bg))
+                    })
+                    .collect()
+            };
 
             let table = Table::new(
                 rows,
@@ -5870,18 +5972,17 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             );
             f.render_widget(table, inner);
 
-            for i in 0..app.latest_snap.tracked_projects.len() {
-                if (i as u16) < inner.height.saturating_sub(1) {
-                    app.register_hitbox(
-                        Rect {
-                            x: inner.x,
-                            y: inner.y + 1 + (i as u16),
-                            width: inner.width,
-                            height: 1,
-                        },
-                        HitboxAction::SelectProject(i),
-                    );
-                }
+            for offset in 0..(end_idx.saturating_sub(start_idx)) {
+                let real_idx = start_idx + offset;
+                app.register_hitbox(
+                    Rect {
+                        x: inner.x,
+                        y: inner.y + 1 + (offset as u16),
+                        width: inner.width,
+                        height: 1,
+                    },
+                    HitboxAction::SelectProject(real_idx),
+                );
             }
 
             // Right panel: Selected workspace resources (Repos, Containers, Services, DBs)
