@@ -22,13 +22,22 @@ fi
 declare -A NODE_IPS=(
     ["ypc"]="100.127.232.32"
     ["hostinger"]="100.76.150.46"
-    ["tencent"]="150.109.112.1"
+    ["tencent"]="100.96.8.82"
 )
 
 declare -A NODE_USERS=(
     ["ypc"]="cecep"
     ["hostinger"]="root"
     ["tencent"]="root"
+)
+
+# Tencent COS runs Debian Bookworm (glibc 2.36), older than ThinkPad X1 Yoga.
+# Build the binary inside a matching Debian 12 Docker container to avoid
+# GLIBC_2.39 incompatibility errors.
+declare -A NODE_BINARIES=(
+    ["ypc"]="target/release/caorch"
+    ["hostinger"]="target/release/caorch"
+    ["tencent"]="target/debian-bookworm/release/caorch"
 )
 
 IP="${NODE_IPS[$NODE]:-}"
@@ -39,11 +48,16 @@ if [ -z "$IP" ]; then
     exit 1
 fi
 
-BIN="target/release/caorch"
+BIN="${NODE_BINARIES[$NODE]:-target/release/caorch}"
 
-if [ ! -f "$BIN" ]; then
+if [ ! -f "$BIN" ] && [ "$NODE" != "tencent" ]; then
     echo "📦 Building caorch agent (release mode)..."
     cargo build --release -p caorch
+fi
+
+if [ ! -f "$BIN" ]; then
+    echo "✗ Binary $BIN not found. Please build first."
+    exit 1
 fi
 
 echo "🚀 Deploying caorch agent to $NODE ($USER@$IP)..."

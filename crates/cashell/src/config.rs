@@ -190,6 +190,25 @@ fn default_nodes() -> std::collections::HashMap<String, NodeConfig> {
             }],
         },
     );
+    m.insert(
+        "tencent".to_string(),
+        NodeConfig {
+            ip: "100.96.8.82".to_string(),
+            user: "root".to_string(),
+            services: vec![
+                ServiceConfig {
+                    name: "caorch-agent".to_string(),
+                    port: 8091,
+                    protocol: "http".to_string(),
+                },
+                ServiceConfig {
+                    name: "tailscaled".to_string(),
+                    port: 22,
+                    protocol: "tcp".to_string(),
+                },
+            ],
+        },
+    );
     m
 }
 

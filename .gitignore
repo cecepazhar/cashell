@@ -5,3 +5,4 @@
 .cashell*
 /target-arm64
 /target-bookworm
+.rustup/
