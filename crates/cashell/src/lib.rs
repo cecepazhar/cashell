@@ -10,5 +10,7 @@ pub mod cron;
 pub mod db;
 pub mod output;
 pub mod pet;
+pub mod pro;
+pub mod sync;
 pub mod systat;
 pub mod tui;

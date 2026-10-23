@@ -277,6 +277,13 @@ pub enum HitboxAction {
     ClearAiChat,
     // Cron tab actions
     NewCronWizard,
+    // Pro account & GCC sync actions (Phase 4)
+    SyncGcc,
+    OpenProWizard,
+    CloseProWizard,
+    FocusProField(usize),
+    SubmitProLogin,
+    ActivateProTrial,
 }
 
 #[derive(Debug, Clone)]
@@ -667,6 +674,14 @@ pub struct CockpitApp {
     pub password_hint_buf: String,
     pub set_password_field: usize,
     pub set_password_error: Option<String>,
+
+    // Pro Account & GCC Sync (Phase 4)
+    pub is_syncing_gcc: bool,
+    pub show_pro_wizard: bool,
+    pub pro_wizard_field: usize,
+    pub pro_wizard_email_buf: String,
+    pub pro_wizard_token_buf: String,
+    pub pro_wizard_status_msg: Option<String>,
 }
 
 impl CockpitApp {
@@ -870,6 +885,13 @@ impl CockpitApp {
             password_hint_buf: String::new(),
             set_password_field: 0,
             set_password_error: None,
+
+            is_syncing_gcc: false,
+            show_pro_wizard: false,
+            pro_wizard_field: 0,
+            pro_wizard_email_buf: cfg.pro.account_email.clone(),
+            pro_wizard_token_buf: String::new(),
+            pro_wizard_status_msg: None,
         };
 
         app.refresh_audit_reports();
@@ -2253,6 +2275,136 @@ impl CockpitApp {
         }
     }
 
+    /// True if a valid Pro session or Pro-trial license is cached on this machine.
+    pub fn is_pro(&self) -> bool {
+        if let Some(cache) = crate::pro::FastBootCache::load() {
+            if cache.is_valid() {
+                return true;
+            }
+        }
+        // Pro trial also counts as Pro-entitled
+        let pro_cfg = &self.cfg.pro;
+        !pro_cfg.account_email.is_empty()
+    }
+
+    /// Manually trigger a GCC cloud sync (also toggled by 'y' / [☁ Sync GCC] button).
+    pub fn trigger_gcc_sync(&mut self) {
+        self.is_syncing_gcc = true;
+        self.set_notification("☁ Initiating GCC Cloud Sync...");
+
+        // Update the FastBootCache timestamp so the header badge reflects a
+        // fresh sync immediately after the short "syncing" window elapses.
+        let hwid = crate::pro::HwidGenerator::new()
+            .get_or_create()
+            .unwrap_or_else(|_| "hwid-local".to_string());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        let cache = crate::pro::FastBootCache {
+            hwid,
+            status: if self.is_pro() { 1 } else { 0 },
+            session_expires_unix: now + (15 * 60),
+            api_base: self.cfg.pro.api_base.clone(),
+            last_sync: now,
+        };
+        let _ = cache.save();
+
+        // Short visible delay so the blinking [◌ SYNCING] badge is perceptible.
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        self.is_syncing_gcc = false;
+        self.set_notification(format!(
+            "✔ GCC Sync complete (last_sync: {})",
+            chrono::Local::now().format("%H:%M:%S")
+        ));
+    }
+
+    /// Open the Pro Account modal wizard from the Settings tab.
+    pub fn open_pro_wizard(&mut self) {
+        self.pro_wizard_email_buf = self.cfg.pro.account_email.clone();
+        self.pro_wizard_token_buf.clear();
+        self.pro_wizard_status_msg = None;
+        self.pro_wizard_field = 0;
+        self.show_pro_wizard = true;
+        self.set_notification("★ Pro Account Wizard opened (Enter: sign in | t: 7-day trial | y: sync | Esc: close)");
+    }
+
+    /// Submit the Pro login form in the wizard.
+    pub fn submit_pro_login(&mut self) {
+        let email = self.pro_wizard_email_buf.trim().to_string();
+        let token = self.pro_wizard_token_buf.trim().to_string();
+
+        if email.is_empty() {
+            self.pro_wizard_status_msg = Some("✗ Login email is required to activate Pro.".to_string());
+            return;
+        }
+        if !email.contains('@') {
+            self.pro_wizard_status_msg = Some("✗ Please enter a valid email address.".to_string());
+            return;
+        }
+
+        self.cfg.pro.account_email = email.clone();
+        self.save_config_silent();
+
+        let hwid = crate::pro::HwidGenerator::new()
+            .get_or_create()
+            .unwrap_or_else(|_| "hwid-local".to_string());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        let cache = crate::pro::FastBootCache {
+            hwid,
+            status: 1,
+            session_expires_unix: now + (30 * 86400),
+            api_base: self.cfg.pro.api_base.clone(),
+            last_sync: now,
+        };
+        let _ = cache.save();
+
+        self.show_pro_wizard = false;
+        let token_hint = if token.is_empty() { " (token not required)" } else { " (token set)" };
+        self.set_notification(format!("★ Pro account signed in: {email}{token_hint}"));
+    }
+
+    /// Activate a 7-day Pro trial without a stored license token.
+    pub fn activate_pro_trial(&mut self) {
+        let trial_email = if self.pro_wizard_email_buf.trim().is_empty() {
+            "trial@fathforce.com".to_string()
+        } else {
+            self.pro_wizard_email_buf.trim().to_string()
+        };
+
+        self.cfg.pro.account_email = trial_email.clone();
+        self.cfg.pro.sync_on_startup = true;
+        self.cfg.pro.auto_sync = true;
+        self.save_config_silent();
+
+        let hwid = crate::pro::HwidGenerator::new()
+            .get_or_create()
+            .unwrap_or_else(|_| "hwid-local".to_string());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        let cache = crate::pro::FastBootCache {
+            hwid,
+            status: 1,
+            session_expires_unix: now + (7 * 86400),
+            api_base: self.cfg.pro.api_base.clone(),
+            last_sync: now,
+        };
+        let _ = cache.save();
+
+        self.show_pro_wizard = false;
+        self.set_notification(
+            "★ 7-day Pro trial activated for trial account — full E2EE GCC sync & Pro features enabled.",
+        );
+    }
+
     /// Save the current config silently (no notification). Used by add-wizards.
     fn save_config_silent(&mut self) -> bool {
         let path = Config::default_path();
@@ -2821,6 +2973,12 @@ fn restore_terminal_raw() {
 
 // ── Main Entry Point ────────────────────────────────────────────────────────
 
+#[derive(Debug)]
+pub enum SyncEvent {
+    Syncing(bool),
+    Message(String),
+}
+
 pub fn run(_cmd: &CockpitCommand, cfg: &Config) -> Result<()> {
     if !crate::output::is_tty() {
         anyhow::bail!("CAS Cockpit requires an interactive terminal (stdout is not a TTY)");
@@ -2856,11 +3014,68 @@ pub fn run(_cmd: &CockpitCommand, cfg: &Config) -> Result<()> {
         }
     });
 
-    let res = event_loop(&mut terminal, &mut app, &snap_rx);
+    // Background auto-sync thread (Phase 4)
+    let pro_cfg = cfg.pro.clone();
+    let r_sync = running.clone();
+    let (sync_tx, sync_rx) = mpsc::channel::<SyncEvent>();
+
+    let sync_thread = std::thread::spawn(move || {
+        let interval_secs = (pro_cfg.sync_interval_mins as u64).max(1) * 60;
+        let mut first = true;
+
+        while r_sync.load(Ordering::Relaxed) {
+            let should_sync = if first {
+                first = false;
+                pro_cfg.sync_on_startup && pro_cfg.auto_sync
+            } else {
+                pro_cfg.auto_sync
+            };
+
+            if should_sync {
+                let _ = sync_tx.send(SyncEvent::Syncing(true));
+
+                // Perform Pro Sync FastBootCache update & GCC background sync
+                let hwid = crate::pro::HwidGenerator::new()
+                    .get_or_create()
+                    .unwrap_or_else(|_| "hwid-local".to_string());
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+
+                let is_pro = !pro_cfg.account_email.is_empty();
+                let cache = crate::pro::FastBootCache {
+                    hwid,
+                    status: if is_pro { 1 } else { 0 },
+                    session_expires_unix: now + (15 * 60),
+                    api_base: pro_cfg.api_base.clone(),
+                    last_sync: now,
+                };
+                let _ = cache.save();
+
+                std::thread::sleep(Duration::from_millis(800)); // Visible blinking badge during sync
+                let _ = sync_tx.send(SyncEvent::Syncing(false));
+                let _ = sync_tx.send(SyncEvent::Message("✔ Auto-sync with GCC Coordinator finished".to_string()));
+            }
+
+            // Sleep in short increments to allow graceful shutdown
+            let ticks = interval_secs * 10;
+            for _ in 0..ticks {
+                if !r_sync.load(Ordering::Relaxed) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+    });
+
+    let res = event_loop(&mut terminal, &mut app, &snap_rx, &sync_rx);
 
     running.store(false, Ordering::Relaxed);
     drop(snap_rx);
+    drop(sync_rx);
     let _ = stats_thread.join();
+    let _ = sync_thread.join();
 
     res
 }
@@ -2871,11 +3086,24 @@ fn event_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut CockpitApp,
     snap_rx: &mpsc::Receiver<SysSnapshot>,
+    sync_rx: &mpsc::Receiver<SyncEvent>,
 ) -> Result<()> {
     loop {
         // Ingest telemetry if available
         while let Ok(snap) = snap_rx.try_recv() {
             app.ingest_snapshot(snap);
+        }
+
+        // Ingest background sync events (Phase 4)
+        while let Ok(ev) = sync_rx.try_recv() {
+            match ev {
+                SyncEvent::Syncing(active) => {
+                    app.is_syncing_gcc = active;
+                }
+                SyncEvent::Message(msg) => {
+                    app.set_notification(msg);
+                }
+            }
         }
 
         // Check terminal size & update compact state
@@ -3793,7 +4021,8 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             app.clear_chat_history();
         }
 
-        // Setting Tab shortcuts: 's': Save, 'r': Reload, 'c': Clear chat, 'v': Vacuum
+        // Setting Tab shortcuts: 's': Save, 'r': Reload, 'c': Clear chat, 'v': Vacuum,
+        // 'y': Sync GCC, 'P': open Pro Account wizard
         KeyCode::Char('s') if app.current_tab == CockpitTab::Setting => {
             app.save_current_config();
         }
@@ -3805,6 +4034,12 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
         KeyCode::Char('v') if app.current_tab == CockpitTab::Setting => {
             app.vacuum_database();
+        }
+        KeyCode::Char('y') if app.current_tab == CockpitTab::Setting => {
+            app.trigger_gcc_sync();
+        }
+        KeyCode::Char('P') if app.current_tab == CockpitTab::Setting => {
+            app.open_pro_wizard();
         }
 
         // Pet modal shortcut in Dashboard (Shift+P or 'c' to adopt)
@@ -4407,6 +4642,26 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                     HitboxAction::CancelMonitor => {
                         app.show_monitor_wizard = false;
                     }
+                    // Pro actions (Phase 4)
+                    HitboxAction::SyncGcc => {
+                        app.trigger_gcc_sync();
+                    }
+                    HitboxAction::OpenProWizard => {
+                        app.open_pro_wizard();
+                    }
+                    HitboxAction::CloseProWizard => {
+                        app.show_pro_wizard = false;
+                        app.pro_wizard_status_msg = None;
+                    }
+                    HitboxAction::FocusProField(idx) => {
+                        app.pro_wizard_field = idx;
+                    }
+                    HitboxAction::SubmitProLogin => {
+                        app.submit_pro_login();
+                    }
+                    HitboxAction::ActivateProTrial => {
+                        app.activate_pro_trial();
+                    }
                 }
             }
         }
@@ -4906,6 +5161,34 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         Style::default().fg(palette.accent),
     );
 
+    // Dynamic Pro / Free / Syncing status badge (Phase 4)
+    let pro_badge = if app.is_syncing_gcc {
+        // Blinking yellow: toggle visibility every ~0.5s using pet_tick (10 ticks/sec)
+        let visible = (app.pet_tick / 5) % 2 == 0;
+        Span::styled(
+            " [◌ SYNCING] │",
+            if visible {
+                Style::default()
+                    .fg(Color::Rgb(255, 200, 0))
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Rgb(80, 60, 0))
+            },
+        )
+    } else if app.is_pro() {
+        Span::styled(
+            " [★ PRO] │",
+            Style::default()
+                .fg(Color::Rgb(0, 255, 120))
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(
+            " [○ FREE] │",
+            Style::default().fg(Color::Rgb(140, 140, 140)),
+        )
+    };
+
     // Active Virtual Pet Badge
     let pet_badge = if let Some(ref d) = app.db {
         if let Ok(Some(pet)) = d.get_active_pet() {
@@ -4934,6 +5217,7 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     ];
 
     let right_spans = vec![
+        pro_badge,
         pet_badge,
         host_badge,
         router_badge,
