@@ -18,16 +18,12 @@ use serde::{Deserialize, Serialize};
 pub enum PetSpecies { Sovereign }
 
 impl PetSpecies {
-    pub fn parse(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            // backward-compat: everything → Sovereign
-            "nagini" | "dragon" | "ular" | "snake" |
-            "ayam" | "singa" | "burung" | "beruang" |
-            "lion" | "bird" | "bear" |
-            "" | _ => Self::Sovereign,
-        }
+    pub fn parse(_s: &str) -> Self {
+        Self::Sovereign
     }
-    pub fn display_name(&self) -> &'static str { "Sovereign" }
+    pub fn display_name(&self) -> &'static str {
+        "Sovereign"
+    }
 }
 
 // ── Stage / Mood ─────────────────────────────────────────────────────────────
@@ -58,22 +54,22 @@ impl PetStage {
 }
 
 /// The canonical face — the sovereign agent 🤓
-const SOVEREIGN_FACE: &'static str = "😎";
+const SOVEREIGN_FACE: &str = "😎";
 
 /// The face used when the pet is sleeping / dead-ish
-const SOVEREIGN_SLEEP: &'static str = "😴";
+const SOVEREIGN_SLEEP: &str = "😴";
 
 /// The face used during alert / overheated
-const SOVEREIGN_ALERT: &'static str = "😠";
+const SOVEREIGN_ALERT: &str = "😠";
 
 /// The face used during sprint / high load
-const SOVEREIGN_SPINT: &'static str = "🤯";
+const SOVEREIGN_SPINT: &str = "🤯";
 
 /// The face used during sickness
-const SOVEREIGN_SICK: &'static str = "🤢";
+const SOVEREIGN_SICK: &str = "🤢";
 
 /// The face used for feed / treat bonus
-const SOVEREIGN_JEALOUSY: &'static str = "🥰";
+const SOVEREIGN_JEALOUSY: &str = "🥰";
 
 /// The extra-expression pool — the source of the "thousands of character" variety.
 const SOVEREIGN_EXTRA: &[&str] = &[
@@ -271,17 +267,17 @@ impl PetStatus {
             }
             PetActionState::Walk => {
                 let step = t % 32;
-                let x = match step { 0..=7=>-2, 8..=15=>0, 16..=23=>2, _=>0 } as i32;
+                let x = match step { 0..=7=>-2, 8..=15=>0, 16..=23=>2, _=>0 };
                 (x, 0, "WALK".into())
             }
             PetActionState::Run => {
                 let step = t % 16;
-                let x = match step { 0..=3=>-4, 4..=7=>0, 8..=11=>4, _=>0 } as i32;
+                let x = match step { 0..=3=>-4, 4..=7=>0, 8..=11=>4, _=>0 };
                 (x, 0, "RUN >>".into())
             }
             PetActionState::Jump => {
                 let step = t % 12;
-                let y = match step { 0..=2=>0, 3..=5=>-1, 6..=8=>0, _=>1 } as i32;
+                let y = match step { 0..=2=>0, 3..=5=>-1, 6..=8=>0, _=>1 };
                 (0, y, "JUMP ▲".into())
             }
             PetActionState::Attack => {
@@ -290,7 +286,7 @@ impl PetStatus {
             }
             PetActionState::Dash => {
                 let step = t % 10;
-                let x = match step { 0..=2=>-5, 3..=4=>0, 5..=7=>5, _=>0 } as i32;
+                let x = match step { 0..=2=>-5, 3..=4=>0, 5..=7=>5, _=>0 };
                 (x, 0, "DASH".into())
             }
             PetActionState::Hit => {

@@ -71,6 +71,29 @@ pub struct TrackedProjectRecord {
     pub is_dirty: bool,
 }
 
+/// A Pro multi-device record stored in `pro_state`.
+#[derive(Debug, Clone)]
+pub struct ProDeviceRecord {
+    pub device_id: String,
+    pub device_label: String,
+    pub status: String,
+    pub last_seen: Option<String>,
+    pub last_error: Option<String>,
+    pub extra_json: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+/// A zero-knowledge vault sync-metadata row stored in `pro_sync_metadata`.
+#[derive(Debug, Clone)]
+pub struct ProSyncMetadataRecord {
+    pub entity_type: String,
+    pub entity_id: String,
+    pub revision: i64,
+    pub etag: Option<String>,
+    pub sync_state: String,
+    pub last_synced_at: Option<String>,
+}
+
 /// Primary SQLite persistence manager for cashell.
 pub struct Database {
     conn: Connection,
@@ -1186,6 +1209,109 @@ impl Database {
             daily_traffic,
             product_analytics,
         })
+    }
+
+    // ── Pro multi-device & zero-knowledge sync state ─────────────────────────
+
+    /// Upsert a device row in the `pro_state` table.
+    pub fn upsert_pro_device(
+        &self,
+        device_id: &str,
+        device_label: &str,
+        status: &str,
+        last_error: Option<&str>,
+        extra_json: Option<&str>,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO pro_state (device_id, device_label, status, last_seen, last_error, extra_json, updated_at)
+             VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP, ?4, ?5, CURRENT_TIMESTAMP)
+             ON CONFLICT(device_id) DO UPDATE SET
+               device_label = excluded.device_label,
+               status = excluded.status,
+               last_seen = CURRENT_TIMESTAMP,
+               last_error = excluded.last_error,
+               extra_json = excluded.extra_json,
+               updated_at = CURRENT_TIMESTAMP",
+            params![device_id, device_label, status, last_error, extra_json],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve all known Pro device rows, ordered by `updated_at` descending.
+    pub fn get_pro_devices(&self) -> Result<Vec<ProDeviceRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT device_id, device_label, status, last_seen, last_error, extra_json, updated_at
+             FROM pro_state ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(ProDeviceRecord {
+                device_id: row.get(0)?,
+                device_label: row.get(1)?,
+                status: row.get(2)?,
+                last_seen: row.get(3)?,
+                last_error: row.get(4)?,
+                extra_json: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })?;
+        let mut devices = Vec::new();
+        for row in rows {
+            devices.push(row?);
+        }
+        Ok(devices)
+    }
+
+    /// Remove a single device from `pro_state`.
+    pub fn delete_pro_device(&self, device_id: &str) -> Result<usize> {
+        let n = self
+            .conn
+            .execute("DELETE FROM pro_state WHERE device_id = ?1", params![device_id])?;
+        Ok(n)
+    }
+
+    /// Upsert a zero-knowledge sync-metadata row.
+    pub fn upsert_pro_sync_metadata(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+        revision: i64,
+        etag: Option<&str>,
+        sync_state: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO pro_sync_metadata (entity_type, entity_id, revision, etag, sync_state, last_synced_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
+             ON CONFLICT(entity_type, entity_id) DO UPDATE SET
+               revision = excluded.revision,
+               etag = excluded.etag,
+               sync_state = excluded.sync_state,
+               last_synced_at = CURRENT_TIMESTAMP",
+            params![entity_type, entity_id, revision, etag, sync_state],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve all zero-knowledge sync-metadata rows, grouped for inspection.
+    pub fn get_pro_sync_metadata(&self) -> Result<Vec<ProSyncMetadataRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT entity_type, entity_id, revision, etag, sync_state, last_synced_at
+             FROM pro_sync_metadata ORDER BY entity_type, entity_id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(ProSyncMetadataRecord {
+                entity_type: row.get(0)?,
+                entity_id: row.get(1)?,
+                revision: row.get(2)?,
+                etag: row.get(3)?,
+                sync_state: row.get(4)?,
+                last_synced_at: row.get(5)?,
+            })
+        })?;
+        let mut records = Vec::new();
+        for row in rows {
+            records.push(row?);
+        }
+        Ok(records)
     }
 }
 

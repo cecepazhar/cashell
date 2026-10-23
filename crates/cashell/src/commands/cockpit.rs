@@ -3341,6 +3341,12 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         return Ok(false);
     }
 
+    // Pro wizard key interception
+    if app.show_pro_wizard {
+        handle_pro_wizard_key(key, app);
+        return Ok(false);
+    }
+
     // 3. If user is editing a field in Settings GUI
     if let Some(field_idx) = app.editing_field {
         match key.code {
@@ -4229,6 +4235,47 @@ fn handle_site_import_modal_key(key: event::KeyEvent, app: &mut CockpitApp) {
     }
 }
 
+fn handle_pro_wizard_key(key: event::KeyEvent, app: &mut CockpitApp) {
+    match key.code {
+        KeyCode::Esc => {
+            app.show_pro_wizard = false;
+            app.pro_wizard_status_msg = None;
+        }
+        KeyCode::Tab | KeyCode::Down => {
+            app.pro_wizard_field = (app.pro_wizard_field + 1) % 2;
+        }
+        KeyCode::BackTab | KeyCode::Up => {
+            app.pro_wizard_field = (app.pro_wizard_field + 1) % 2;
+        }
+        KeyCode::Enter => {
+            app.submit_pro_login();
+        }
+        KeyCode::Char('t') | KeyCode::Char('T') => {
+            app.activate_pro_trial();
+        }
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            app.trigger_gcc_sync();
+        }
+        KeyCode::Backspace => {
+            match app.pro_wizard_field {
+                0 => { app.pro_wizard_email_buf.pop(); }
+                1 => { app.pro_wizard_token_buf.pop(); }
+                _ => {}
+            }
+            app.pro_wizard_status_msg = None;
+        }
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            match app.pro_wizard_field {
+                0 => app.pro_wizard_email_buf.push(c),
+                1 => app.pro_wizard_token_buf.push(c),
+                _ => {}
+            }
+            app.pro_wizard_status_msg = None;
+        }
+        _ => {}
+    }
+}
+
 // ── Mouse Event Handling ─────────────────────────────────────────────────────
 
 fn handle_mouse_event<B: ratatui::backend::Backend>(
@@ -5107,6 +5154,10 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     if app.show_site_import_modal {
         draw_site_import_modal(f, app, area);
+    }
+
+    if app.show_pro_wizard {
+        draw_pro_wizard(f, app, area);
     }
 }
 
@@ -8735,6 +8786,216 @@ fn draw_site_import_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     );
 }
 
+// ── Pro Modal Wizard (Phase 4) ──────────────────────────────────────────────
+
+fn draw_pro_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let popup_area = centered_rect(65, 46, area);
+    f.render_widget(Clear, popup_area);
+
+    let is_pro = app.is_pro();
+    let title = if is_pro {
+        " ★ CAShell Pro — Cloud Sync & Sovereign Account "
+    } else {
+        " ○ CAShell Free — Activate Pro Account or 7-Day Trial "
+    };
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(
+            Style::default()
+                .fg(if is_pro {
+                    Color::Rgb(0, 255, 120)
+                } else {
+                    Color::Rgb(255, 200, 0)
+                })
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    if inner.width < 20 || inner.height < 6 {
+        return;
+    }
+
+    let cache = crate::pro::FastBootCache::load();
+    let account_status = if is_pro {
+        let email = if app.cfg.pro.account_email.is_empty() {
+            "trial@fathforce.com".to_string()
+        } else {
+            app.cfg.pro.account_email.clone()
+        };
+        let expiry_str = cache
+            .as_ref()
+            .map(|c| {
+                if c.status == 1 && c.session_expires_unix > 0 {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    let rem_days = (c.session_expires_unix.saturating_sub(now) as f64 / 86400.0).ceil() as i64;
+                    format!("{rem_days} days")
+                } else {
+                    "Perpetual".to_string()
+                }
+            })
+            .unwrap_or_else(|| "Active".to_string());
+        format!("Active Pro ({email}) │ Validity: {expiry_str}")
+    } else {
+        "Free Tier │ Local Only (Cloud Sync Locked)".to_string()
+    };
+
+    let auto_sync_str = if app.cfg.pro.auto_sync { "ON" } else { "OFF" };
+    let interval = app.cfg.pro.sync_interval_mins;
+
+    let mut lines = Vec::new();
+    lines.push(Line::from(Span::styled(
+        format!("Status: {account_status}  │  Auto-Sync: {auto_sync_str} ({interval}m)"),
+        Style::default().fg(palette.text_muted),
+    )));
+    lines.push(Line::from(""));
+
+    // Field 0: Email
+    let is_email = app.pro_wizard_field == 0;
+    let prefix0 = if is_email { "▶ " } else { "  " };
+    let email_val = if is_email {
+        Span::styled(
+            format!(" [ {}█ ] ", app.pro_wizard_email_buf),
+            Style::default()
+                .fg(Color::Rgb(0, 0, 0))
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        let display = if app.pro_wizard_email_buf.is_empty() {
+            "user@fathforce.com".to_string()
+        } else {
+            app.pro_wizard_email_buf.clone()
+        };
+        Span::styled(
+            format!(" [ {} ] ", display),
+            Style::default().fg(if app.pro_wizard_email_buf.is_empty() { Color::DarkGray } else { Color::White }),
+        )
+    };
+
+    lines.push(Line::from(vec![
+        Span::styled(prefix0, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled("Pro Account Email: ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        email_val,
+    ]));
+
+    // Field 1: License Token / Secret
+    let is_token = app.pro_wizard_field == 1;
+    let prefix1 = if is_token { "▶ " } else { "  " };
+    let token_val = if is_token {
+        Span::styled(
+            format!(" [ {}█ ] ", app.pro_wizard_token_buf),
+            Style::default()
+                .fg(Color::Rgb(0, 0, 0))
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        let display = if app.pro_wizard_token_buf.is_empty() {
+            "optional license token".to_string()
+        } else {
+            "••••••••••••••••".to_string()
+        };
+        Span::styled(
+            format!(" [ {} ] ", display),
+            Style::default().fg(if app.pro_wizard_token_buf.is_empty() { Color::DarkGray } else { Color::White }),
+        )
+    };
+
+    lines.push(Line::from(vec![
+        Span::styled(prefix1, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled("License / Passphrase: ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        token_val,
+    ]));
+
+    lines.push(Line::from(""));
+
+    let err_msg = app.pro_wizard_status_msg.clone();
+    if let Some(msg) = err_msg {
+        lines.push(Line::from(Span::styled(
+            msg,
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+    }
+
+    let btn_sync_label = if app.is_syncing_gcc { "Syncing…" } else { "Sync GCC" };
+    let btn_sync = Span::styled(
+        format!(" [☁ {btn_sync_label}] (y) "),
+        Style::default().fg(Color::Black).bg(Color::Rgb(0, 200, 255)).add_modifier(Modifier::BOLD),
+    );
+    let btn_trial = Span::styled(
+        " [★ 7-Day Trial] (t) ",
+        Style::default().fg(Color::Black).bg(Color::Rgb(255, 200, 0)).add_modifier(Modifier::BOLD),
+    );
+    let btn_login = Span::styled(
+        " [🔐 Sign In] (Enter) ",
+        Style::default().fg(Color::Black).bg(Color::Rgb(0, 255, 120)).add_modifier(Modifier::BOLD),
+    );
+    let btn_close = Span::styled(
+        " [✖ Cancel] (Esc) ",
+        Style::default().fg(Color::DarkGray),
+    );
+
+    let btn_y = inner.bottom().saturating_sub(3);
+
+    app.register_hitbox(
+        Rect { x: inner.x + 2, y: inner.y + 2, width: inner.width.saturating_sub(4), height: 1 },
+        HitboxAction::FocusProField(0),
+    );
+    app.register_hitbox(
+        Rect { x: inner.x + 2, y: inner.y + 3, width: inner.width.saturating_sub(4), height: 1 },
+        HitboxAction::FocusProField(1),
+    );
+    app.register_hitbox(
+        Rect { x: inner.x + 2, y: btn_y, width: 18, height: 1 },
+        HitboxAction::SyncGcc,
+    );
+    app.register_hitbox(
+        Rect { x: inner.x + 21, y: btn_y, width: 22, height: 1 },
+        HitboxAction::ActivateProTrial,
+    );
+    app.register_hitbox(
+        Rect { x: inner.x + 44, y: btn_y, width: 20, height: 1 },
+        HitboxAction::SubmitProLogin,
+    );
+    app.register_hitbox(
+        Rect { x: inner.x + 2, y: btn_y + 1, width: 18, height: 1 },
+        HitboxAction::CloseProWizard,
+    );
+
+    lines.push(Line::from(vec![
+        btn_sync,
+        Span::raw(" "),
+        btn_trial,
+        Span::raw(" "),
+        btn_login,
+        Span::raw(" "),
+        btn_close,
+    ]));
+
+    lines.push(Line::from(Span::styled(
+        "Tab: switch field │ Enter: sign in │ t: activate 7-day trial │ y: sync │ Esc: exit",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    f.render_widget(
+        Paragraph::new(lines),
+        Rect {
+            x: inner.x + 1,
+            y: inner.y + 1,
+            width: inner.width.saturating_sub(2),
+            height: inner.height.saturating_sub(2),
+        },
+    );
+}
+
 fn draw_analytics_script_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let palette = ThemePalette::get(&app.cfg.output.theme);
     let modal_width = 96.min(area.width.saturating_sub(2));
@@ -8986,11 +9247,25 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         width: 15,
         height: 1,
     };
+    let btn_sync_gcc_rect = Rect {
+        x: action_inner.x + 65,
+        y: action_inner.y,
+        width: 14,
+        height: 1,
+    };
+    let btn_pro_rect = Rect {
+        x: action_inner.x + 80,
+        y: action_inner.y,
+        width: 18,
+        height: 1,
+    };
 
     app.register_hitbox(btn_save_rect, HitboxAction::SaveSettings);
     app.register_hitbox(btn_reload_rect, HitboxAction::ReloadSettings);
     app.register_hitbox(btn_clear_rect, HitboxAction::ClearChat);
     app.register_hitbox(btn_vacuum_rect, HitboxAction::VacuumDb);
+    app.register_hitbox(btn_sync_gcc_rect, HitboxAction::SyncGcc);
+    app.register_hitbox(btn_pro_rect, HitboxAction::OpenProWizard);
 
     let btn_save = Span::styled(
         " [💾 Save] ",
@@ -9008,11 +9283,26 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         " [🧹 Vacuum DB] ",
         Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.accent).add_modifier(Modifier::BOLD),
     );
+    let btn_sync_gcc = Span::styled(
+        " [☁ Sync GCC] ",
+        Style::default()
+            .fg(Color::Rgb(0, 0, 0))
+            .bg(Color::Rgb(0, 200, 255))
+            .add_modifier(Modifier::BOLD),
+    );
+    let is_pro = app.is_pro();
+    let btn_pro = Span::styled(
+        " [★ Pro Account] ",
+        Style::default()
+            .fg(Color::Rgb(0, 0, 0))
+            .bg(if is_pro { Color::Rgb(0, 255, 120) } else { Color::Rgb(255, 200, 0) })
+            .add_modifier(Modifier::BOLD),
+    );
 
     let status = app
         .settings_status_msg
         .as_deref()
-        .unwrap_or("s: save | r: reload | c: clear chat | v: vacuum | Enter: edit | ←/→: cycle");
+        .unwrap_or("s: save | r: reload | c: clear chat | v: vacuum | y: sync | P: pro");
 
     f.render_widget(
         Paragraph::new(Line::from(vec![
@@ -9023,6 +9313,10 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             btn_clear,
             Span::raw(" "),
             btn_vacuum,
+            Span::raw(" "),
+            btn_sync_gcc,
+            Span::raw(" "),
+            btn_pro,
             Span::styled(format!("  {status}"), Style::default().fg(palette.accent)),
         ])),
         action_inner,

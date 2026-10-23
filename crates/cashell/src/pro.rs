@@ -412,6 +412,24 @@ impl SessionManager {
         let sm: SessionManager = serde_json::from_str(&raw)?;
         Ok(sm)
     }
+
+    /// Return the standard path for persisting the Pro session (`~/.config/cashell/pro_session.json`).
+    pub fn default_path() -> PathBuf {
+        dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from(".config"))
+            .join("cashell")
+            .join("pro_session.json")
+    }
+
+    /// Load the session from the default file path.
+    pub fn load_default() -> Option<Self> {
+        Self::load(&Self::default_path()).ok()
+    }
+
+    /// Save the session to the default file path.
+    pub fn save_default(&self) -> Result<()> {
+        self.save(&Self::default_path())
+    }
 }
 
 // ── Ed25519Verifier ─────────────────────────────────────────────────────────
@@ -594,11 +612,10 @@ mod tests {
         // Access token is 15 minutes = 900 seconds (+/- 2 seconds tolerance)
         let now = now_unix();
         let access_rem = sm.access_expires_unix() - now;
-        assert!(access_rem >= 898 && access_rem <= 902);
-
+        assert!((898..=902).contains(&access_rem));
         // Refresh token is 60 hours = 216,000 seconds
         let refresh_rem = sm.refresh_expires_unix() - now;
-        assert!(refresh_rem >= 215998 && refresh_rem <= 216002);
+        assert!((215998..=216002).contains(&refresh_rem));
 
         // Verify tokens cryptographically
         let access_claims = verify_jwt(sm.access_token(), secret).expect("verify access token");
@@ -615,8 +632,8 @@ mod tests {
         assert_eq!(verifier.public_key_hex, GCC_ED25519_PUBLIC_KEY);
 
         // Test with a freshly generated keypair to check signing & verification logic
-        let mut csprng = rand::rngs::OsRng;
-        let signing_key = ed25519_dalek::SigningKey::generate(&mut csprng);
+        let secret_bytes = [42u8; 32];
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret_bytes);
         let verifying_key = signing_key.verifying_key();
         let pub_hex = hex::encode(verifying_key.as_bytes());
 
