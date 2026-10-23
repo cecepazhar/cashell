@@ -120,6 +120,11 @@ impl Database {
         Ok(db)
     }
 
+    /// Expose the underlying connection (used by tests & low-level ops).
+    pub fn conn(&self) -> &Connection {
+        &self.conn
+    }
+
     fn init(&self) -> Result<()> {
         self.conn.execute_batch(
             "PRAGMA journal_mode = WAL;
@@ -245,7 +250,26 @@ impl Database {
                  name TEXT NOT NULL,
                  domain TEXT NOT NULL,
                  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-             );",
+             );
+             CREATE TABLE IF NOT EXISTS pro_state (
+                 device_id TEXT PRIMARY KEY,
+                 device_label TEXT NOT NULL DEFAULT '',
+                 status TEXT NOT NULL DEFAULT 'unknown',
+                 last_seen DATETIME,
+                 last_error TEXT,
+                 extra_json TEXT,
+                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+             );
+             CREATE TABLE IF NOT EXISTS pro_sync_metadata (
+                 entity_type TEXT NOT NULL,
+                 entity_id TEXT NOT NULL,
+                 revision INTEGER NOT NULL DEFAULT 1,
+                 etag TEXT,
+                 sync_state TEXT NOT NULL DEFAULT 'local',
+                 last_synced_at DATETIME,
+                 PRIMARY KEY (entity_type, entity_id)
+             );
+             CREATE INDEX IF NOT EXISTS idx_pro_sync_metadata_state ON pro_sync_metadata(sync_state);",
         )?;
         Ok(())
     }
@@ -1388,6 +1412,21 @@ mod tests {
     fn test_db_size_memory() -> Result<()> {
         let db = Database::open_in_memory()?;
         assert_eq!(db.get_db_size_bytes(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_pro_tables_exist() -> Result<()> {
+        let db = Database::open_in_memory()?;
+        let tables: Vec<String> = {
+            let mut stmt = db.conn().prepare(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('pro_state','pro_sync_metadata') ORDER BY name",
+            )?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        assert!(tables.contains(&"pro_state".to_string()), "pro_state table missing");
+        assert!(tables.contains(&"pro_sync_metadata".to_string()), "pro_sync_metadata table missing");
         Ok(())
     }
 }

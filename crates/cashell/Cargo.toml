@@ -39,3 +39,7 @@ sysinfo = "0.31"
 rusqlite = { version = "0.31", features = ["bundled"] }
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8" }
+ed25519-dalek = "2.1.1"
+argon2 = "0.5.3"
+aes-gcm = "0.10.3"
+machine-uid = "0.6.0"

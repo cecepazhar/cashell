@@ -800,7 +800,7 @@ impl CockpitApp {
 
             show_pet_modal: false,
             pet_name_buffer: "Ciko".to_string(),
-            pet_species_buffer: "ayam".to_string(),
+            pet_species_buffer: "sovereign".to_string(),
             pet_tick: 0,
             pet_selected_action: 0,
             show_pet_history: false,
@@ -2122,34 +2122,18 @@ impl CockpitApp {
     }
 
     pub fn confirm_switch_pet_species(&mut self) {
+        // Sovereign form-shift: instead of changing species, the mascot does a
+        // dramatic pose transition and gets a mood boost.
         self.show_pet_switch_confirm = false;
-        self.pet_transient_action = Some((crate::pet::PetActionState::Dash, 16));
-        let species_list = ["ayam", "singa", "burung", "ular", "beruang"];
-        let names = ["Ciko", "Simba", "Rio", "Nagini", "Koda"];
-        let mut notif = None;
+        self.pet_transient_action = Some((crate::pet::PetActionState::Dash, 24));
         if let Some(ref d) = self.db {
-            let next_idx = match d.get_active_pet().ok().flatten() {
-                Some(p) => match p.species.as_str() {
-                    "ayam" => 1,
-                    "singa" => 2,
-                    "burung" => 3,
-                    "ular" => 4,
-                    _ => 0,
-                },
-                None => 0,
-            };
-            let next_species = species_list[next_idx];
-            let next_name = names[next_idx];
-            let _ = d.create_pet(next_species, next_name);
-            let _ = d.log_pet_action(1, next_name, "Switch", &format!("Switched to {}", next_species));
-            notif = Some(format!("🔄 Switched companion to {} {}! [DASH]", next_species, next_name));
-            if let Ok(logs) = d.get_pet_history(10) {
-                self.pet_history_logs = logs;
+            if let Ok(Some(pet)) = d.get_active_pet() {
+                // Bonus XP on every form-shift
+                let _ = d.add_pet_xp(pet.id, 5);
+                let _ = d.log_pet_action(pet.id, &pet.name, "Switch", "Form Shift — 5 XP bonus");
             }
         }
-        if let Some(msg) = notif {
-            self.set_notification(msg);
-        }
+        self.set_notification("🌀 Form Shift! (+5 XP) [DASH]");
     }
 
     pub fn feed_pet(&mut self) {
@@ -2161,9 +2145,9 @@ impl CockpitApp {
                 let _ = d.log_pet_action(pet.id, &pet.name, "Feed", "+10 XP (Joyful Leap)");
                 notif = Some(format!("🍖 Fed {}! (+10 XP) [JUMP]", pet.name));
             } else {
-                let _ = d.create_pet("ayam", "Ciko");
-                let _ = d.log_pet_action(1, "Ciko", "Adopt", "Adopted Ciko the Chicken");
-                notif = Some("🐣 Adopted Ciko the Chicken!".to_string());
+                let _ = d.create_pet("sovereign", "Ciko");
+                let _ = d.log_pet_action(1, "Ciko", "Adopt", "Adopted the Sovereign Mascot");
+                notif = Some("😎 Adopted the Sovereign Mascot!".to_string());
             }
             if let Ok(logs) = d.get_pet_history(10) {
                 self.pet_history_logs = logs;
@@ -3829,7 +3813,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
         KeyCode::Char('c') if app.show_pet_modal => {
             if let Some(ref d) = app.db {
-                let _ = d.create_pet("ayam", "Ciko");
+                let _ = d.create_pet("sovereign", "Ciko");
                 app.set_notification("🐣 Created pet Ayam Ciko!");
             }
         }
@@ -7898,45 +7882,29 @@ fn draw_pet_switch_confirm_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
-    let (current_name, current_species, next_name, next_species) = if let Some(ref d) = app.db {
-        let pet = d.get_active_pet().ok().flatten();
-        let species_list = ["ayam", "singa", "burung", "ular", "beruang"];
-        let names = ["Ciko", "Simba", "Rio", "Nagini", "Koda"];
-        let (cur_n, cur_s, next_idx) = match pet {
-            Some(p) => {
-                let idx = match p.species.as_str() {
-                    "ayam" => 1,
-                    "singa" => 2,
-                    "burung" => 3,
-                    "ular" => 4,
-                    _ => 0,
-                };
-                (p.name, p.species, idx)
-            }
-            None => ("Ciko".to_string(), "ayam".to_string(), 1),
-        };
-        (cur_n, cur_s, names[next_idx].to_string(), species_list[next_idx].to_string())
+    let current_name = if let Some(ref d) = app.db {
+        d.get_active_pet().ok().flatten().map(|p| p.name).unwrap_or_else(|| "Sovereign".to_string())
     } else {
-        ("Current".to_string(), "pet".to_string(), "Next".to_string(), "pet".to_string())
+        "Sovereign".to_string()
     };
 
     let lines = vec![
         Line::from(""),
         Line::from(Span::styled(
-            " Are you sure you want to switch companion? ",
+            " Trigger Sovereign Form Shift & +5 XP Bonus? ",
             Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled(" Current: ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{current_name} ({current_species})"), Style::default().fg(Color::Cyan)),
-            Span::styled("  ➔  Next: ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{next_name} ({next_species})"), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(" Mascot: ", Style::default().fg(palette.text_muted)),
+            Span::styled(format!("😎 {current_name}"), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled("  ➔  ", Style::default().fg(palette.text_muted)),
+            Span::styled("🌀 Dynamic Dash + Pose Shift", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
         ]),
         Line::from(""),
         Line::from(vec![
             Span::styled(
-                " [Y] Yes, Switch ",
+                " [Y] Yes, Shift ",
                 Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD),
             ),
             Span::raw("    "),

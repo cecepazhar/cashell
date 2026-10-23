@@ -57,6 +57,8 @@ pub struct Config {
     pub docker: DockerConfig,
     #[serde(default)]
     pub security: SecurityConfig,
+    #[serde(default)]
+    pub pro: ProConfig,
 }
 
 /// Daemon & multi-node orchestration configuration.
@@ -661,4 +663,77 @@ pub fn verify_master_password(password: &str, stored_hash: &str) -> bool {
         return true;
     }
     hash_master_password(password) == stored_hash
+}
+
+/// Pro subscription and multi-device zero-knowledge sync configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProConfig {
+    #[serde(default = "default_pro_api_base")]
+    pub api_base: String,
+    #[serde(default)]
+    pub account_email: String,
+    #[serde(default = "default_pro_auto_sync")]
+    pub auto_sync: bool,
+    #[serde(default = "default_pro_sync_interval_mins")]
+    pub sync_interval_mins: u32,
+    #[serde(default = "default_pro_sync_on_startup")]
+    pub sync_on_startup: bool,
+}
+
+impl Default for ProConfig {
+    fn default() -> Self {
+        Self {
+            api_base: default_pro_api_base(),
+            account_email: String::new(),
+            auto_sync: default_pro_auto_sync(),
+            sync_interval_mins: default_pro_sync_interval_mins(),
+            sync_on_startup: default_pro_sync_on_startup(),
+        }
+    }
+}
+
+fn default_pro_api_base() -> String {
+    "https://api.fathforce.com".to_string()
+}
+
+fn default_pro_auto_sync() -> bool {
+    true
+}
+
+fn default_pro_sync_interval_mins() -> u32 {
+    15
+}
+
+fn default_pro_sync_on_startup() -> bool {
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pro_config_defaults() {
+        let pro = ProConfig::default();
+        assert_eq!(pro.api_base, "https://api.fathforce.com");
+        assert_eq!(pro.account_email, "");
+        assert!(pro.auto_sync);
+        assert_eq!(pro.sync_interval_mins, 15);
+        assert!(pro.sync_on_startup);
+    }
+
+    #[test]
+    fn test_pro_config_deserialize_partial() {
+        let toml_str = r#"
+            [pro]
+            account_email = "dev@fathforce.com"
+            sync_interval_mins = 30
+        "#;
+        let cfg: Config = toml::from_str(toml_str).expect("deserialize failed");
+        assert_eq!(cfg.pro.account_email, "dev@fathforce.com");
+        assert_eq!(cfg.pro.sync_interval_mins, 30);
+        assert_eq!(cfg.pro.api_base, "https://api.fathforce.com");
+        assert!(cfg.pro.auto_sync);
+        assert!(cfg.pro.sync_on_startup);
+    }
 }

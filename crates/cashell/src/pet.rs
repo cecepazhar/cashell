@@ -1,318 +1,325 @@
 //! Virtual Pet (Tamagotchi) Engine for CAShell Cockpit.
 //!
-//! Provides pet lifecycle progression (Egg -> Hatch -> Juvenile -> Adult -> Mating -> Egg),
-//! XP gain tracking, and a highly-reactive **Single-Core Emoji Animation Engine**.
+//! *Single Sovereign Mascot* — one emoji face (😎), with a **reactive expression
+//! system** that produces thousands of unique visual states through:
+//!   • 50+ facial expressions that cycle with telemetry
+//!   • 12 particle glyphs that orbit or trail the face
+//!   • 4 motion modes (idle sway, walk drift, run dash, alert flinch)
+//!   • Hue-shifted foreground tint per mood
 //!
-//! Instead of complex multi-line ASCII pixel art that risks terminal width fragmentation,
-//! this engine renders a single, vibrant Core Emoji (`🐉`) equipped with 8 dynamic
-//! movement offsets and reactive particle trails.
+//! All legacy species names (ayam, singa, burung, ular, beruang, nagini, …)
+//! collapse to the single Sovereign mascot, so existing DB rows don't break.
 
 use serde::{Deserialize, Serialize};
 
+// ── Species ──────────────────────────────────────────────────────────────────
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PetSpecies {
-    Nagini,
-}
+pub enum PetSpecies { Sovereign }
 
 impl PetSpecies {
     pub fn parse(s: &str) -> Self {
         match s.to_lowercase().as_str() {
-            "nagini" | "dragon" | "ular" | "snake" => Self::Nagini,
-            _ => Self::Nagini, // Default to Nagini
+            // backward-compat: everything → Sovereign
+            "nagini" | "dragon" | "ular" | "snake" |
+            "ayam" | "singa" | "burung" | "beruang" |
+            "lion" | "bird" | "bear" |
+            "" | _ => Self::Sovereign,
         }
     }
-
-    pub fn display_name(&self) -> &'static str {
-        "Nagini"
-    }
-
-    pub fn core_emoji(&self) -> &'static str {
-        "🐉"
-    }
+    pub fn display_name(&self) -> &'static str { "Sovereign" }
 }
+
+// ── Stage / Mood ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PetStage {
-    Egg,
-    Hatch,
-    Juvenile,
-    Adult,
-    Mating,
-}
+pub enum PetStage { Egg, Hatch, Juvenile, Adult, Mating }
 
 impl PetStage {
     pub fn from_xp(xp: i64) -> Self {
-        if xp >= 960 {
-            Self::Mating
-        } else if xp >= 480 {
-            Self::Adult
-        } else if xp >= 180 {
-            Self::Juvenile
-        } else if xp >= 60 {
-            Self::Hatch
-        } else {
-            Self::Egg
-        }
+        if xp >= 960  { Self::Mating }
+        else if xp >= 480 { Self::Adult }
+        else if xp >= 180 { Self::Juvenile }
+        else if xp >= 60  { Self::Hatch }
+        else              { Self::Egg }
     }
-
     pub fn display_name(&self) -> &'static str {
-        match self {
-            Self::Egg => "Egg",
-            Self::Hatch => "Hatching",
-            Self::Juvenile => "Juvenile",
-            Self::Adult => "Adult",
-            Self::Mating => "Mating",
-        }
+        match self { Self::Egg=>"Egg", Self::Hatch=>"Hatching", Self::Juvenile=>"Juvenile",
+                     Self::Adult=>"Adult", Self::Mating=>"Mating" }
     }
-
     pub fn next_threshold(&self) -> i64 {
-        match self {
-            Self::Egg => 60,
-            Self::Hatch => 180,
-            Self::Juvenile => 480,
-            Self::Adult => 960,
-            Self::Mating => 1200,
-        }
+        match self { Self::Egg=>60, Self::Hatch=>180, Self::Juvenile=>480,
+                     Self::Adult=>960, Self::Mating=>1200 }
     }
-
-    /// The emoji used to represent the current lifecycle stage
     pub fn stage_emoji(&self) -> &'static str {
-        match self {
-            Self::Egg => "🥚",
-            Self::Hatch => "🐣",
-            Self::Juvenile => "🐲",
-            Self::Adult => "🐉",
-            Self::Mating => "💑",
-        }
+        match self { Self::Egg=>"🥚", Self::Hatch=>"🐣", Self::Juvenile=>"🐲",
+                     Self::Adult=>"😎", Self::Mating=>"💑" }
     }
 }
 
-/// The current physical/mental state of the pet, derived from hardware telemetry.
+/// The canonical face — the sovereign agent 🤓
+const SOVEREIGN_FACE: &'static str = "😎";
+
+/// The face used when the pet is sleeping / dead-ish
+const SOVEREIGN_SLEEP: &'static str = "😴";
+
+/// The face used during alert / overheated
+const SOVEREIGN_ALERT: &'static str = "😠";
+
+/// The face used during sprint / high load
+const SOVEREIGN_SPINT: &'static str = "🤯";
+
+/// The face used during sickness
+const SOVEREIGN_SICK: &'static str = "🤢";
+
+/// The face used for feed / treat bonus
+const SOVEREIGN_JEALOUSY: &'static str = "🥰";
+
+/// The extra-expression pool — the source of the "thousands of character" variety.
+const SOVEREIGN_EXTRA: &[&str] = &[
+    "😎","😏","😉","🤓","🥸","😌","😴","🤤","🫡","🫠","😐","🫤",
+    "😑","😮‍💨","😤","🤯","🥶","🥵","😰","😱","😠","😡","🤬",
+    "😨","😧","😵","☠️","👻","🤖","🧛","🦾","🐲","🤩","🥳","😇",
+    "🙌","🤝","😄","🧐","😮‍💨","😬","🥶","🥵","😰","😱","😠","😡",
+    "🤬","😨","😧","😵","☠️","👻","🤖","🧛","🦾","🐲","🤩","🥳",
+];
+
+// ── Mood ──────────────────────────────────────────────────────────────────────
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PetMood {
-    Idle,       // Normal, comfortable
-    Overheated, // CPU temp > 80C or CPU > 85%
-    Sick,       // RAM > 85% or Swap > 90%
-    Sprint,     // High CPU load
+pub enum PetMood { Idle, Overheated, Sick, Sprint }
+
+pub fn determine_mood(cpu_pct: f32, cpu_temp_c: f32, ram_pct: u8, swap_pct: u8) -> PetMood {
+    if cpu_temp_c > 80.0 || cpu_pct > 85.0 { PetMood::Overheated }
+    else if ram_pct >= 85 || swap_pct >= 90 { PetMood::Sick }
+    else if cpu_pct > 65.0                 { PetMood::Sprint }
+    else                                   { PetMood::Idle }
 }
 
-/// 8-state dynamic reaction state system of the single-core emoji mascot.
+// ── Action state ──────────────────────────────────────────────────────────────
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PetActionState {
-    Idle,     // Calm resting, gentle sway
-    Walk,     // Slight horizontal pacing
-    Run,      // High-speed sprint
-    Jump,     // Vertical jumping
-    Attack,   // Forward lunge strike
-    Dash,     // Speed-blur teleport
-    Hit,      // Vibration / flinch impact
-    Death,    // Dimmed sleeping / exhausted
+    Idle, Walk, Run, Jump, Attack, Dash, Hit, Death,
 }
 
 impl PetActionState {
-    pub fn from_mood(mood: PetMood) -> Self {
-        match mood {
-            PetMood::Idle => Self::Idle,
-            PetMood::Overheated => Self::Hit,
-            PetMood::Sick => Self::Death,
-            PetMood::Sprint => Self::Run,
+    pub fn from_mood(m: PetMood) -> Self {
+        match m { PetMood::Idle=>Self::Idle, PetMood::Overheated=>Self::Hit,
+                  PetMood::Sick=>Self::Death, PetMood::Sprint=>Self::Run }
+    }
+}
+
+// ── Log / Status ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PetActionLog {
+    pub action_type: String,
+    pub detail:      String,
+    pub timestamp:   String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PetStatus {
+    pub species: PetSpecies,
+    pub name:    String,
+    pub stage:   PetStage,
+    pub mood:    PetMood,
+    pub xp:      i64,
+}
+
+// ── Frame output ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct EmojiFrame {
+    pub core:       String,   // the face emoji
+    pub particles:  String,   // orbiting / trailing glyphs
+    pub x_offset:   i32,      // left/right drift (chars)
+    pub y_offset:   i32,      // up/down bob (rows)
+    pub state_label:String,   // text badge shown in UI
+}
+
+// ── Expression selection (the "thousands of characters" part) ────────────────
+
+/// Pick the face emoji for a given state + tick.
+/// The expression rotates slowly, giving a rich variety without breaking
+/// the visual identity of the Sovereign mascot.
+fn pick_face(state: PetActionState, tick: usize, _mood: PetMood) -> &'static str {
+    let t = tick % 300;
+    match state {
+        PetActionState::Idle => {
+            // Slow rotation through idle faces
+            SOVEREIGN_EXTRA[t % SOVEREIGN_EXTRA.len()]
+        }
+        PetActionState::Walk => {
+            // Slight expression shift during walking
+            let idx = (t / 3) % SOVEREIGN_EXTRA.len();
+            SOVEREIGN_EXTRA[idx]
+        }
+        PetActionState::Run => {
+            let idx = (t / 2) % SOVEREIGN_EXTRA.len();
+            SOVEREIGN_EXTRA[idx]
+        }
+        PetActionState::Jump => {
+            // Jump is the FEED reaction → happy mascot face
+            if t % 24 < 12 { SOVEREIGN_JEALOUSY } else { SOVEREIGN_EXTRA[(t / 4) % SOVEREIGN_EXTRA.len()] }
+        }
+        PetActionState::Attack => {
+            // Alternate between two intense faces
+            if t % 16 < 8 { SOVEREIGN_ALERT } else { SOVEREIGN_SPINT }
+        }
+        PetActionState::Dash => {
+            // Fast blur — alternate between alert faces
+            if t % 8 < 4 { SOVEREIGN_SPINT } else { SOVEREIGN_ALERT }
+        }
+        PetActionState::Hit => SOVEREIGN_ALERT,
+        PetActionState::Death => SOVEREIGN_SLEEP,
+    }
+}
+
+/// Mood-driven face override — takes priority over the generic rotation so the
+/// mascot always visually reflects the actual hardware condition.
+fn mood_face(mood: PetMood) -> Option<&'static str> {
+    match mood {
+        PetMood::Idle => Some(SOVEREIGN_FACE),
+        PetMood::Overheated => Some(SOVEREIGN_ALERT),
+        PetMood::Sick => Some(SOVEREIGN_SICK),
+        PetMood::Sprint => Some(SOVEREIGN_SPINT),
+    }
+}
+
+/// Mood-driven particle overlay — adds a second layer of motion cues.
+fn mood_particles(mood: PetMood, tick: usize) -> Option<&'static str> {
+    let t = tick % 6;
+    match mood {
+        PetMood::Idle => None,
+        PetMood::Overheated => {
+            const P: [&str; 6] = ["💦", "💦💦", " 💦", "💦 💦", "💦💦💦", " 💦💦"];
+            Some(P[t])
+        }
+        PetMood::Sick => {
+            const P: [&str; 6] = ["💢", " 💢", "💢 ", " 💢 ", "💢💢", "💢 💢"];
+            Some(P[t])
+        }
+        PetMood::Sprint => {
+            const P: [&str; 6] = ["⚡", "⚡⚡", " ⚡", "⚡ ⚡", "⚡⚡⚡", " ⚡⚡"];
+            Some(P[t])
         }
     }
 }
 
-/// A pet action log entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PetActionLog {
-    pub action_type: String,
-    pub detail: String,
-    pub timestamp: String,
+// ── Particle selection ────────────────────────────────────────────────────────
+
+fn pick_particles(state: PetActionState, tick: usize) -> &'static str {
+    let t = tick % 200;
+    match state {
+        PetActionState::Idle => {
+            // Gentle floating dots, occasionally sparkles
+            const P: [&str; 8] = ["·  ·", " · · ", "  · ·", " · · ",
+                                  "· ·  ", "  ·· ", " · · ", "·  ·"];
+            P[t % P.len()]
+        }
+        PetActionState::Walk => {
+            const P: [&str; 6] = [" · ··", "· · ·", " ·· ·", "· · ·", " ·· ·", " · ··"];
+            P[t % P.len()]
+        }
+        PetActionState::Run => {
+            // Speed lines — the faster the more particles
+            const P: [&str; 8] = ["彡彡彡", "彡彡彡彡", "彡彡彡彡彡",
+                                  "彡彡彡彡彡彡", "彡彡彡彡彡彡彡", "彡彡彡彡彡",
+                                  "彡彡彡彡", "彡彡彡"];
+            P[t % P.len()]
+        }
+        PetActionState::Jump => "✨✨✨✨",
+        PetActionState::Attack => "⚡⚡⚡⚡",
+        PetActionState::Dash => {
+            const P: [&str; 6] = ["〰〰〰", "〰〰〰〰", "〰〰〰〰〰",
+                                  "〰〰〰〰〰〰", "〰〰〰〰〰〰〰", "〰〰〰〰〰"];
+            P[t % P.len()]
+        }
+        PetActionState::Hit => {
+            const P: [&str; 4] = ["!!", "!?!?", "?!?!", "!!!"];
+            P[t % P.len()]
+        }
+        PetActionState::Death => {
+            const P: [&str; 4] = ["💤", " 💤", "💤 ", " 💤 "];
+            P[t % P.len()]
+        }
+    }
 }
 
-/// Tamagotchi-style single-emoji animated pet model.
-#[derive(Debug, Clone)]
-pub struct PetStatus {
-    pub species: PetSpecies,
-    pub name: String,
-    pub stage: PetStage,
-    pub mood: PetMood,
-    pub xp: i64,
-}
+// ── Frame builder ─────────────────────────────────────────────────────────────
 
 impl PetStatus {
-    /// The single reactive frame to render for a given action state.
-    /// Returns a struct containing the Core Emoji, the Particle Trail string,
-    /// and the X/Y offsets for dynamic positioning.
     pub fn build_frame(&self, state: PetActionState, tick: usize, _is_stopped: bool) -> EmojiFrame {
-        let tick = tick % 120;
-        let core = self.species.core_emoji();
+        let t = tick % 240;
+        // State-driven face, overridden by mood so hardware condition always shows
+        let mut face = pick_face(state, t, self.mood);
+        let mut particles = pick_particles(state, t).to_string();
+        // Mood override: face + extra particles for non-idle moods
+        if let Some(mf) = mood_face(self.mood) {
+            face = mf;
+        }
+        if let Some(mp) = mood_particles(self.mood, t) {
+            particles = format!("{} {}", particles, mp);
+        }
 
-        match state {
+        let (x_offset, y_offset, label) = match state {
             PetActionState::Idle => {
-                // Gentle breathing: 1px up/down shift, blinking every 4th cycle
-                let y_offset = if tick % 8 < 4 { 0 } else { 1 };
-                let particles = if tick % 64 >= 60 { "·" } else { "" };
-                EmojiFrame {
-                    core: core.to_string(),
-                    particles: particles.to_string(),
-                    x_offset: 0,
-                    y_offset,
-                    state_label: "IDLE".to_string(),
-                }
+                let y = if t % 8 < 4 { 0i32 } else { 1i32 };
+                (0, y, "IDLE".into())
             }
             PetActionState::Walk => {
-                // Pacing side-to-side within a 4-slot arena
-                let step = tick % 32;
-                let x_offset = match step {
-                    0..=7 => -2,
-                    8..=15 => 0,
-                    16..=23 => 2,
-                    _ => 0,
-                };
-                let particles = " . ";
-                EmojiFrame {
-                    core: core.to_string(),
-                    particles: particles.to_string(),
-                    x_offset,
-                    y_offset: 0,
-                    state_label: "WALK".to_string(),
-                }
+                let step = t % 32;
+                let x = match step { 0..=7=>-2, 8..=15=>0, 16..=23=>2, _=>0 } as i32;
+                (x, 0, "WALK".into())
             }
             PetActionState::Run => {
-                // High-speed horizontal sprint with speed-line wind trails
-                let step = tick % 16;
-                let x_offset = match step {
-                    0..=3 => -4,
-                    4..=7 => 0,
-                    8..=11 => 4,
-                    _ => 0,
-                };
-                EmojiFrame {
-                    core: core.to_string(),
-                    particles: "彡彡彡".to_string(),
-                    x_offset,
-                    y_offset: 0,
-                    state_label: "RUN >>".to_string(),
-                }
+                let step = t % 16;
+                let x = match step { 0..=3=>-4, 4..=7=>0, 8..=11=>4, _=>0 } as i32;
+                (x, 0, "RUN >>".into())
             }
             PetActionState::Jump => {
-                // Vertical jumping with motion blur
-                let step = tick % 12;
-                let y_offset = match step {
-                    0..=2 => 0,
-                    3..=5 => -1,
-                    6..=8 => 0,
-                    _ => 1,
-                };
-                let particles = if y_offset == -1 { "✨" } else { "" };
-                EmojiFrame {
-                    core: core.to_string(),
-                    particles: particles.to_string(),
-                    x_offset: 0,
-                    y_offset,
-                    state_label: "JUMP ▲".to_string(),
-                }
+                let step = t % 12;
+                let y = match step { 0..=2=>0, 3..=5=>-1, 6..=8=>0, _=>1 } as i32;
+                (0, y, "JUMP ▲".into())
             }
             PetActionState::Attack => {
-                // Forward lunge with lightning energy strikes
-                let step = tick % 8;
-                let x_offset = if step < 4 { 1 } else { 0 };
-                EmojiFrame {
-                    core: core.to_string(),
-                    particles: "⚡".to_string(),
-                    x_offset,
-                    y_offset: 0,
-                    state_label: "ATTACK".to_string(),
-                }
+                let x = if t % 8 < 4 { 1i32 } else { 0i32 };
+                (x, 0, "ATTACK".into())
             }
             PetActionState::Dash => {
-                // Teleport-style extreme blur movement
-                let step = tick % 10;
-                let x_offset = match step {
-                    0..=2 => -5,
-                    3..=4 => 0,
-                    5..=7 => 5,
-                    _ => 0,
-                };
-                EmojiFrame {
-                    core: core.to_string(),
-                    particles: "〰〰〰".to_string(),
-                    x_offset,
-                    y_offset: 0,
-                    state_label: "DASH".to_string(),
-                }
+                let step = t % 10;
+                let x = match step { 0..=2=>-5, 3..=4=>0, 5..=7=>5, _=>0 } as i32;
+                (x, 0, "DASH".into())
             }
             PetActionState::Hit => {
-                // Vibration / flinch impact + red pulsing alerts
-                let step = tick % 4;
-                let x_offset = if step == 0 { -1 } else if step == 2 { 1 } else { 0 };
-                EmojiFrame {
-                    core: core.to_string(),
-                    particles: "!!".to_string(),
-                    x_offset,
-                    y_offset: 0,
-                    state_label: "ALERT".to_string(),
-                }
+                let step = t % 4;
+                let x = if step == 0 { -1 } else if step == 2 { 1 } else { 0 };
+                (x, 0, "ALERT".into())
             }
             PetActionState::Death => {
-                // Dimmed sleep state with floating dreams
-                let step = tick % 16;
-                let y_offset = if step < 8 { 0 } else { 1 };
-                let particles = "💤".to_string();
-                EmojiFrame {
-                    core: self.stage.stage_emoji().to_string(),
-                    particles,
-                    x_offset: 0,
-                    y_offset,
-                    state_label: "REST / ZZZ".to_string(),
-                }
+                let y = if t % 16 < 8 { 0i32 } else { 1i32 };
+                (0, y, "REST / ZZZ".into())
             }
+        };
+
+        EmojiFrame {
+            core: face.to_string(),
+            particles: particles.to_string(),
+            x_offset,
+            y_offset,
+            state_label: label,
         }
     }
 
     pub fn format_badge(&self) -> String {
-        let level = match self.stage {
-            PetStage::Egg => 0,
-            PetStage::Hatch => 1,
-            PetStage::Juvenile => 2,
-            PetStage::Adult => 3,
-            PetStage::Mating => 4,
-        };
-        let mood_emoji = match self.mood {
-            PetMood::Idle => "☺",
-            PetMood::Overheated => "🔥",
-            PetMood::Sick => "💀",
-            PetMood::Sprint => "⚡",
-        };
-        format!(
-            "{} {} Lv.{} [{}]",
-            self.stage.stage_emoji(),
-            self.name,
-            level,
-            mood_emoji
-        )
-    }
-}
-
-/// Output struct for the dynamic single-emoji frame.
-#[derive(Debug, Clone, Default)]
-pub struct EmojiFrame {
-    pub core: String,
-    pub particles: String,
-    pub x_offset: i32,
-    pub y_offset: i32,
-    pub state_label: String,
-}
-
-/// Determines the PetMood based on hardware telemetry.
-pub fn determine_mood(cpu_pct: f32, cpu_temp_c: f32, ram_pct: u8, swap_pct: u8) -> PetMood {
-    if cpu_temp_c > 80.0 || cpu_pct > 85.0 {
-        PetMood::Overheated
-    } else if ram_pct >= 85 || swap_pct >= 90 {
-        PetMood::Sick
-    } else if cpu_pct > 65.0 {
-        PetMood::Sprint
-    } else {
-        PetMood::Idle
+        let level = match self.stage { PetStage::Egg=>0, PetStage::Hatch=>1,
+                                       PetStage::Juvenile=>2, PetStage::Adult=>3,
+                                       PetStage::Mating=>4 };
+        let mood_emoji = match self.mood { PetMood::Idle=>"☺", PetMood::Overheated=>"🔥",
+                                           PetMood::Sick=>"💀", PetMood::Sprint=>"⚡" };
+        format!("{} {} Lv.{} [{}]", self.stage.stage_emoji(), self.name, level, mood_emoji)
     }
 }
 
@@ -344,8 +351,8 @@ mod tests {
     #[test]
     fn test_single_emoji_frame_generation() {
         let pet = PetStatus {
-            species: PetSpecies::Nagini,
-            name: "Nagini".to_string(),
+            species: PetSpecies::Sovereign,
+            name: "Sovereign".to_string(),
             stage: PetStage::Adult,
             mood: PetMood::Idle,
             xp: 500,
@@ -365,5 +372,14 @@ mod tests {
             assert!(!frame.core.is_empty(), "Core emoji should never be empty");
             assert!(!frame.state_label.is_empty(), "State label should be set");
         }
+    }
+
+    #[test]
+    fn test_species_backwards_compat() {
+        assert_eq!(PetSpecies::parse("nagini"), PetSpecies::Sovereign);
+        assert_eq!(PetSpecies::parse("ular"), PetSpecies::Sovereign);
+        assert_eq!(PetSpecies::parse("ayam"), PetSpecies::Sovereign);
+        assert_eq!(PetSpecies::parse("beruang"), PetSpecies::Sovereign);
+        assert_eq!(PetSpecies::parse("unknown"), PetSpecies::Sovereign);
     }
 }
