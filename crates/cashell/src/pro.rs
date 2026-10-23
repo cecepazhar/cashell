@@ -1,4 +1,4 @@
-//! Pro Sync — license, hardware binding & session management.
+//! Pro Sync — license, hardware binding & session management (Phase 2).
 //!
 //! - [`HwidGenerator`] — stable hardware ID for license binding.
 //! - [`SessionManager`] — JWT access (15 min) + refresh (60 h) tokens.
@@ -429,6 +429,16 @@ impl SessionManager {
     /// Save the session to the default file path.
     pub fn save_default(&self) -> Result<()> {
         self.save(&Self::default_path())
+    }
+
+    /// Delete the default session file (used on `pro logout`).
+    pub fn delete_default() -> Result<()> {
+        let path = Self::default_path();
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(anyhow!("failed to remove {}: {e}", path.display())),
+        }
     }
 }
 

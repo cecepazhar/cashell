@@ -123,6 +123,13 @@ fn main() -> Result<()> {
         Some(Commands::Daemon(cmd)) => {
             commands::daemon::run(&cmd, &cfg)?;
         }
+        Some(Commands::Pro(cmd)) => {
+            banner::print(args.quiet);
+            let code = commands::pro::run(&cmd, &cfg)?;
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
     }
     Ok(())
 }

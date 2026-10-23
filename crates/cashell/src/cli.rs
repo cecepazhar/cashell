@@ -84,6 +84,162 @@ pub enum Commands {
 
     /// 24/7 fleet & health monitoring daemon & HTTP API
     Daemon(DaemonCommand),
+
+    /// Pro multi-device zero-knowledge sync: login, status, sync, push, pull, devices, logout
+    Pro(ProCommand),
+}
+
+// ── Pro Command CLI types ────────────────────────────────────────────────────
+
+/// Top-level `cashell pro` CLI command.
+#[derive(Parser, Debug, Clone)]
+#[command(name = "pro", about = "CAShell Pro: multi-device zero-knowledge GCC sync & device management")]
+pub struct ProCommand {
+    #[command(subcommand)]
+    pub mode: ProMode,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum ProMode {
+    /// Log in / activate a Pro account or 7-day trial
+    Login(ProLoginArgs),
+
+    /// Show current Pro session status (HWID, tier, token validity, device count)
+    Status(ProStatusArgs),
+
+    /// Full GCC sync cycle: pull → resolve → push the zero-knowledge vault
+    Sync(ProSyncArgs),
+
+    /// Push the encrypted local vault to the GCC REST API
+    Push(ProPushArgs),
+
+    /// Pull & decrypt the remote zero-knowledge vault from the GCC REST API
+    Pull(ProPullArgs),
+
+    /// Manage registered Pro devices (list / remove / rename)
+    Devices(ProDevicesArgs),
+
+    /// Revoke the Pro session and mark this device inactive
+    Logout(ProLogoutArgs),
+}
+
+/// `cashell pro login` arguments.
+#[derive(Parser, Debug, Clone)]
+pub struct ProLoginArgs {
+    /// Pro account email address (prompted interactively if omitted on a TTY)
+    #[arg(long)]
+    pub email: Option<String>,
+
+    /// Pro license token (prompted interactively if omitted on a TTY)
+    #[arg(long)]
+    pub token: Option<String>,
+
+    /// Activate a 7-day free trial instead of a paid license
+    #[arg(long)]
+    pub trial: bool,
+
+    /// Override the GCC API base URL
+    #[arg(long)]
+    pub api_base: Option<String>,
+
+    /// Emit machine-readable JSON output
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `cashell pro status` arguments.
+#[derive(Parser, Debug, Clone)]
+pub struct ProStatusArgs {
+    /// Emit machine-readable JSON output
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `cashell pro sync` arguments.
+#[derive(Parser, Debug, Clone)]
+pub struct ProSyncArgs {
+    /// Explicit vault passphrase (zero-knowledge; never transmitted to the server).
+    /// Falls back to `CASHELL_PRO_PASS` env var, then interactive prompt.
+    #[arg(long)]
+    pub passphrase: Option<String>,
+
+    /// Emit machine-readable JSON output
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `cashell pro push` arguments.
+#[derive(Parser, Debug, Clone)]
+pub struct ProPushArgs {
+    /// Explicit vault passphrase (zero-knowledge; never transmitted to the server).
+    /// Falls back to `CASHELL_PRO_PASS` env var, then interactive prompt.
+    #[arg(long)]
+    pub passphrase: Option<String>,
+
+    /// Emit machine-readable JSON output
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `cashell pro pull` arguments.
+#[derive(Parser, Debug, Clone)]
+pub struct ProPullArgs {
+    /// Explicit vault passphrase (zero-knowledge; never transmitted to the server).
+    /// Falls back to `CASHELL_PRO_PASS` env var, then interactive prompt.
+    #[arg(long)]
+    pub passphrase: Option<String>,
+
+    /// Write the decrypted vault to a file instead of stdout
+    #[arg(long)]
+    pub out: Option<String>,
+
+    /// Emit machine-readable JSON output
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `cashell pro devices` arguments.
+#[derive(Parser, Debug, Clone)]
+pub struct ProDevicesArgs {
+    /// What to do with the device registry
+    #[command(subcommand)]
+    pub action: ProDevicesAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum ProDevicesAction {
+    /// List all registered Pro devices (default)
+    List(ProDevicesListArgs),
+
+    /// Remove a device from the `pro_state` registry
+    Remove {
+        /// The HWID of the device to remove
+        device_id: String,
+    },
+
+    /// Rename a device in the `pro_state` registry
+    Rename {
+        /// The HWID of the device to rename
+        device_id: String,
+        /// New human-readable label
+        label: String,
+    },
+}
+
+/// `cashell pro devices list` arguments.
+#[derive(Parser, Debug, Clone)]
+pub struct ProDevicesListArgs {
+    /// Emit machine-readable JSON output
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// `cashell pro logout` arguments.
+#[derive(Parser, Debug, Clone)]
+pub struct ProLogoutArgs {
+    /// Emit machine-readable JSON output
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Parser, Debug, Clone)]

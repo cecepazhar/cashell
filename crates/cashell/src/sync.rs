@@ -1,4 +1,4 @@
-//! Pro Sync — zero-knowledge E2EE vault engine & GCC REST client.
+//! Pro Sync — zero-knowledge E2EE vault engine & GCC REST client (Phase 2).
 //!
 //! - [`ZeroKnowledgeCrypto`] — Argon2id KDF + AES-256-GCM client-side encryption.
 //!   Keys are derived locally from user passphrase and never transmitted.
@@ -17,6 +17,13 @@ use crate::pro::SessionManager;
 pub const DEFAULT_M_COST_KIB: u32 = 65536; // 64 MiB memory cost
 pub const DEFAULT_T_COST: u32 = 3;         // 3 iterations
 pub const DEFAULT_P_COST: u32 = 4;         // 4-way parallelism
+
+/// Standard local file path for the zero-knowledge plaintext vault.
+///
+/// The file contains the user's vault document (credentials, notes, etc.) in
+/// plain text. It is encrypted client-side before any network transmission,
+/// and decrypted locally on pull.
+pub const ZERO_KNOWLEDGE_VAULT_PATH: &str = ".cashell/vault.local";
 
 // ── ZeroKnowledgeCrypto ─────────────────────────────────────────────────────
 
