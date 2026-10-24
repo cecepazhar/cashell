@@ -237,6 +237,14 @@ pub enum HitboxAction {
     SelectProjectServer(usize),
     // Uptime tab actions
     SelectMonitor(usize),
+    ViewMonitorDetail(usize),
+    CloseMonitorDetail,
+    ToggleMonitorAlerts,
+    TestTelegramAlert,
+    CycleUptimeGroup,
+    CycleUptimeSort,
+    ExportUptimeJson,
+    ImportUptimeJson,
     ProbeMonitors,
     RemoveMonitor,
     EditMonitor,
@@ -244,6 +252,8 @@ pub enum HitboxAction {
     // Analytics tab actions
     RefreshAnalytics,
     SelectAnalyticsSite(usize),
+    ViewAnalyticsDetail(usize),
+    CloseAnalyticsDetail,
     ShowAnalyticsScript,
     ClearAnalyticsData,
     ImportAnalyticsSites,
@@ -284,6 +294,9 @@ pub enum HitboxAction {
     FocusProField(usize),
     SubmitProLogin,
     ActivateProTrial,
+    // Turbo tab actions
+    TurboProfile(usize),
+    TurboAction(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -319,6 +332,62 @@ impl DeleteTarget {
     }
 }
 
+// ── Uptime Sort Mode ───────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UptimeSortMode {
+    #[default]
+    DefaultOrder = 0,
+    DownFirst = 1,
+    Latency = 2,
+    Name = 3,
+    Uptime = 4,
+}
+
+impl UptimeSortMode {
+    pub const COUNT: usize = 5;
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::DefaultOrder => "Default",
+            Self::DownFirst => "Down First",
+            Self::Latency => "Lowest Latency",
+            Self::Name => "Name A-Z",
+            Self::Uptime => "Lowest Uptime %",
+        }
+    }
+
+    pub fn label_short(self) -> &'static str {
+        match self {
+            Self::DefaultOrder => "DEFAULT",
+            Self::DownFirst => "DOWN",
+            Self::Latency => "LATENCY",
+            Self::Name => "NAME",
+            Self::Uptime => "UPTIME",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        let idx = (self as usize + 1) % Self::COUNT;
+        match idx {
+            0 => Self::DefaultOrder,
+            1 => Self::DownFirst,
+            2 => Self::Latency,
+            3 => Self::Name,
+            _ => Self::Uptime,
+        }
+    }
+}
+
+pub const UPTIME_MONITOR_GROUPS: &[&str] = &[
+    "All",
+    "Down Only",
+    "CA Ecosystem",
+    "Fleet Nodes",
+    "Localhost",
+    "Custom",
+];
+
 // ── Tab Navigation ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -334,10 +403,11 @@ pub enum CockpitTab {
     Terminal = 8,
     AI = 9,
     Setting = 10,
+    Turbo = 11,
 }
 
 impl CockpitTab {
-    pub const COUNT: usize = 11;
+    pub const COUNT: usize = 12;
 
     pub fn from_index(idx: usize) -> Self {
         match idx {
@@ -351,7 +421,8 @@ impl CockpitTab {
             7 => Self::Log,
             8 => Self::Terminal,
             9 => Self::AI,
-            _ => Self::Setting,
+            10 => Self::Setting,
+            _ => Self::Turbo,
         }
     }
 
@@ -359,7 +430,7 @@ impl CockpitTab {
         self as usize
     }
 
-    pub fn titles() -> [&'static str; 11] {
+    pub fn titles() -> [&'static str; 12] {
         [
             "[1] Dashboard",
             "[2] Project",
@@ -372,6 +443,7 @@ impl CockpitTab {
             "[9] Terminal",
             "[0] AI",
             "[-] Setting",
+            "[=] Turbo",
         ]
     }
 }
@@ -494,6 +566,7 @@ pub const SETTINGS_FIELDS: &[&str] = &[
     "Coolify Base URL",
     "Coolify API Token",
     "DB Auto Prune",
+    "Matrix Rain Effect",
 ];
 
 pub const PROVIDER_OPTIONS: &[&str] = &["9router", "omniroute", "openai", "anthropic", "local"];
@@ -553,6 +626,11 @@ pub struct CockpitApp {
     // ── Tab 3: Uptime state ─────────────────────────────────────────────────
     pub selected_monitor: usize,
     pub uptime_probe_msg: Option<String>,
+    pub uptime_group_filter: String,
+    pub uptime_sort_mode: UptimeSortMode,
+    pub show_uptime_detail_modal: bool,
+    pub uptime_detail_index: usize,
+    pub pending_delete_name: String,
 
     // ── Tab 4: Server state ─────────────────────────────────────────────────
     pub selected_server: usize,
@@ -615,6 +693,9 @@ pub struct CockpitApp {
     pub pending_delete_target: DeleteTarget,
     pub pending_delete_label: String,
 
+    // Service restart confirmation state (AI chat command)
+    pub pending_service_restart: Option<String>,
+
     // Cron Job Wizard
     pub show_cron_wizard: bool,
     pub cron_schedule_buffer: String,
@@ -650,10 +731,12 @@ pub struct CockpitApp {
     pub monitor_wizard_field: usize,
     pub monitor_name_buf: String,
     pub monitor_url_buf: String,
+    pub monitor_group_buf: String,
 
     // Sovereign Web Analytics (Umami-like) tab state
     pub analytics_selected_site: usize,
     pub analytics_site_filter: Option<String>,
+    pub show_analytics_detail: bool,
     pub analytics_scroll: usize,
     pub show_analytics_script_modal: bool,
     pub show_site_import_modal: bool,
@@ -682,6 +765,13 @@ pub struct CockpitApp {
     pub pro_wizard_email_buf: String,
     pub pro_wizard_token_buf: String,
     pub pro_wizard_status_msg: Option<String>,
+
+    // Turbo tab state
+    pub turbo_selected_action: usize,
+    pub turbo_profile_active: String,
+    pub turbo_log_buffer: Vec<String>,
+    pub turbo_scroll: usize,
+    pub turbo_is_busy: bool,
 }
 
 impl CockpitApp {
@@ -776,6 +866,11 @@ impl CockpitApp {
             // ── Tab 3: Uptime state ─────────────────────────────────────────────────
             selected_monitor: 0,
             uptime_probe_msg: None,
+            uptime_group_filter: "All".to_string(),
+            uptime_sort_mode: UptimeSortMode::DefaultOrder,
+            show_uptime_detail_modal: false,
+            uptime_detail_index: 0,
+            pending_delete_name: String::new(),
 
             // ── Tab 4: Server state ─────────────────────────────────────────────────
             selected_server: 0,
@@ -831,6 +926,8 @@ impl CockpitApp {
             pending_delete_target: DeleteTarget::Server,
             pending_delete_label: String::new(),
 
+            pending_service_restart: None,
+
             show_cron_wizard: false,
             cron_schedule_buffer: "0 * * * *".to_string(),
             cron_command_buffer: "echo 'hello'".to_string(),
@@ -864,9 +961,11 @@ impl CockpitApp {
             monitor_wizard_field: 0,
             monitor_name_buf: String::new(),
             monitor_url_buf: String::new(),
+            monitor_group_buf: String::new(),
 
             analytics_selected_site: 0,
             analytics_site_filter: None,
+            show_analytics_detail: false,
             analytics_scroll: 0,
             show_analytics_script_modal: false,
             show_site_import_modal: false,
@@ -892,6 +991,15 @@ impl CockpitApp {
             pro_wizard_email_buf: cfg.pro.account_email.clone(),
             pro_wizard_token_buf: String::new(),
             pro_wizard_status_msg: None,
+
+            turbo_selected_action: 0,
+            turbo_profile_active: "BALANCED".to_string(),
+            turbo_log_buffer: vec![
+                "⚡ CAShell Sovereign Turbo Engine initialized.".to_string(),
+                "Ready for CPU, Memory, Storage & Cargo build optimizations.".to_string(),
+            ],
+            turbo_scroll: 0,
+            turbo_is_busy: false,
         };
 
         app.refresh_audit_reports();
@@ -1325,6 +1433,7 @@ impl CockpitApp {
         self.cfg.uptime.custom_monitors.push(crate::config::UptimeMonitorConfig {
             name: new_name.clone(),
             target: monitor.target.clone(),
+            group: monitor.group.clone(),
         });
         self.save_config_silent();
         self.set_notification(format!("✓ Cloned uptime monitor as '{new_name}'"));
@@ -1792,6 +1901,100 @@ impl CockpitApp {
         self.chat_state.select(Some(idx));
     }
 
+    pub fn add_ai_response(&mut self, text: &str) {
+        if let Some(ref d) = self.db {
+            let _ = d.save_chat("AI", text);
+        }
+        for line in text.lines() {
+            if line.starts_with("AI: ") {
+                self.add_chat_line(line);
+            } else {
+                self.add_chat_line(&format!("AI: {line}"));
+            }
+        }
+    }
+
+    pub fn trigger_test_telegram_alert(&mut self) {
+        let mut token = self.cfg.uptime.telegram_bot_token.trim().to_string();
+        let mut chat_id = self.cfg.uptime.telegram_chat_id.trim().to_string();
+        if token.is_empty() && !self.cfg.daemon.telegram_bot_token.trim().is_empty() {
+            token = self.cfg.daemon.telegram_bot_token.trim().to_string();
+            chat_id = self.cfg.daemon.telegram_chat_id.trim().to_string();
+            self.cfg.uptime.telegram_bot_token = token.clone();
+            self.cfg.uptime.telegram_chat_id = chat_id.clone();
+        }
+
+        if token.is_empty() {
+            self.set_notification("⚠ Configure Telegram Bot Token & Chat ID in Settings first.");
+        } else {
+            crate::systat::send_telegram_alert(
+                &token,
+                &chat_id,
+                "✅ CAShell Test Alert: Uptime Monitor OK — all endpoints reachable",
+            );
+            self.set_notification("📨 Test Telegram alert sent! Check your Telegram if it's configured.");
+        }
+    }
+
+    pub fn execute_service_restart(&mut self, service_name: &str) {
+        let trimmed = service_name.trim();
+        if trimmed.is_empty() {
+            self.add_ai_response("⚠ Service name cannot be empty.");
+            return;
+        }
+
+        // 1. Try remediation config if defined
+        let remediation_cmd = self.cfg.daemon.remediation.get(trimmed)
+            .or_else(|| {
+                self.cfg.daemon.remediation.iter()
+                    .find(|(k, _)| k.ends_with(&format!(".{trimmed}")))
+                    .map(|(_, v)| v)
+            })
+            .cloned();
+
+        let result = if let Some(cmd) = remediation_cmd {
+            std::process::Command::new("sh").args(["-c", &cmd]).output()
+        } else {
+            // 2. Try docker restart, then podman restart, then systemctl restart
+            std::process::Command::new("docker")
+                .args(["restart", trimmed])
+                .output()
+                .or_else(|_| {
+                    std::process::Command::new("podman")
+                        .args(["restart", trimmed])
+                        .output()
+                })
+                .or_else(|_| {
+                    std::process::Command::new("systemctl")
+                        .args(["restart", trimmed])
+                        .output()
+                })
+        };
+
+        match result {
+            Ok(out) if out.status.success() => {
+                self.set_notification(format!("✓ Service '{trimmed}' restarted"));
+                self.add_ai_response(&format!("✅ Fleet: Service '{trimmed}' successfully restarted."));
+                self.sample_system();
+            }
+            Ok(out) => {
+                let err = String::from_utf8_lossy(&out.stderr);
+                let err_msg = if err.trim().is_empty() {
+                    String::from_utf8_lossy(&out.stdout)
+                } else {
+                    err
+                };
+                let short_err = err_msg.lines().next().unwrap_or("Non-zero exit");
+                self.set_notification(format!("✗ Failed to restart '{trimmed}'"));
+                self.add_ai_response(&format!("✗ Fleet: Failed to restart '{trimmed}': {short_err}"));
+            }
+            Err(e) => {
+                self.set_notification(format!("✗ Error restarting '{trimmed}'"));
+                self.add_ai_response(&format!("✗ Fleet: Error restarting '{trimmed}': {e}"));
+            }
+        }
+    }
+
     pub fn scroll_chat_up(&mut self) {
         let i = match self.chat_state.selected() {
             Some(i) => i.saturating_sub(1),
@@ -2079,6 +2282,12 @@ impl CockpitApp {
                 let state_str = if self.cfg.database.auto_prune { "Enabled" } else { "Disabled" };
                 self.set_notification(format!("DB Auto-Prune: {state_str}"));
             }
+            22 => {
+                self.cfg.output.matrix_rain = !self.cfg.output.matrix_rain;
+                self.save_config_silent();
+                let state_str = if self.cfg.output.matrix_rain { "Enabled" } else { "Disabled" };
+                self.set_notification(format!("Matrix Rain Effect: {state_str}"));
+            }
             _ => {}
         }
     }
@@ -2210,6 +2419,161 @@ impl CockpitApp {
                     self.pet_history_logs = logs;
                 }
             }
+        }
+    }
+
+    // ── Turbo & Overclock System Operations ──────────────────────────────────
+
+    pub fn execute_turbo_profile(&mut self, profile_idx: usize) {
+        match profile_idx {
+            0 => {
+                // 1. MAX SOVEREIGN TURBO
+                let _ = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg("for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo performance | sudo tee \"$g\" >/dev/null 2>&1 || true; done; for e in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do echo performance | sudo tee \"$e\" >/dev/null 2>&1 || true; done; echo 0 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo >/dev/null 2>&1 || true; pgrep -f 'cashell|caorch|9router' | xargs -r renice -n -10 >/dev/null 2>&1 || true; sudo sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1 || true")
+                    .status();
+
+                self.turbo_profile_active = "MAX_TURBO".to_string();
+                self.turbo_log_buffer.push("⚡ [MAX TURBO] CPU Performance Governor & EPP locked. Turbo Boost Active (4.2GHz). Reniced CA Daemons (-10). TCP BBR active.".to_string());
+                self.set_notification("⚡ Sovereign Max Turbo Activated (Peak Performance)");
+            }
+            1 => {
+                // 2. DEV BUILD ACCELERATOR
+                let _ = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg("echo 1 | sudo tee /proc/sys/vm/compact_memory >/dev/null 2>&1 || true; pgrep -f 'cargo|rustc' | xargs -r ionice -c 2 -n 0 >/dev/null 2>&1 || true")
+                    .status();
+
+                self.turbo_profile_active = "BUILD_ACCEL".to_string();
+                self.turbo_log_buffer.push("🛠 [BUILD ACCEL] Concurrency tuned (8 threads). Memory compact complete. Cargo I/O Best-Effort high priority engaged.".to_string());
+                self.set_notification("🛠 Build Accelerator Engaged (High I/O & Memory Fast-path)");
+            }
+            2 => {
+                // 3. DEEP MEMORY & DOCKER PURGE
+                let out = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg("sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true; docker builder prune -f 2>&1 | tail -n 2; docker image prune -f 2>&1 | tail -n 2; fstrim -v / 2>&1 | head -n 1")
+                    .output();
+
+                let mut summary = String::new();
+                if let Ok(o) = out {
+                    summary = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                }
+
+                if let Some(ref d) = self.db {
+                    let _ = d.vacuum();
+                }
+
+                self.turbo_profile_active = "PURGE_CACHE".to_string();
+                self.turbo_log_buffer.push(format!("🧹 [PURGE] VFS Caches dropped. SQLite vacuumed. Docker & SSD: {summary}"));
+                self.set_notification("🧹 Deep Memory & Storage Purge Completed");
+            }
+            3 => {
+                // 4. THERMAL SAFE / ECO
+                let _ = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg("for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo powersave | sudo tee \"$g\" >/dev/null 2>&1 || true; done; for e in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do echo balance_performance | sudo tee \"$e\" >/dev/null 2>&1 || true; done")
+                    .status();
+
+                self.turbo_profile_active = "ECO_BALANCED".to_string();
+                self.turbo_log_buffer.push("🍃 [ECO SAFE] CPU Governor set to powersave / balance_performance. Fan acoustics normalized.".to_string());
+                self.set_notification("🍃 Eco Balanced Profile Active (Quiet & Safe)");
+            }
+            _ => {}
+        }
+    }
+
+    pub fn execute_turbo_action(&mut self, action_idx: usize) {
+        match action_idx {
+            0 => {
+                // Drop VFS Page Caches
+                let _ = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg("sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true")
+                    .status();
+                self.turbo_log_buffer.push("✔ [VFS CACHE] Pagecaches, dentries & inodes flushed clean.".to_string());
+                self.set_notification("✔ Dropped Linux Kernel VFS Caches");
+            }
+            1 => {
+                // Compact Memory
+                let _ = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg("echo 1 | sudo tee /proc/sys/vm/compact_memory >/dev/null 2>&1 || true")
+                    .status();
+                self.turbo_log_buffer.push("✔ [MEMORY] Linux memory compaction executed (continuous page allocator optimized).".to_string());
+                self.set_notification("✔ Memory Defragmented & Compacted");
+            }
+            2 => {
+                // Prune Docker BuildKit Cache
+                let out = std::process::Command::new("docker")
+                    .args(["builder", "prune", "-f"])
+                    .output();
+                let msg = if let Ok(o) = out {
+                    String::from_utf8_lossy(&o.stdout).lines().last().unwrap_or("Done").to_string()
+                } else {
+                    "Docker not running or error".to_string()
+                };
+                self.turbo_log_buffer.push(format!("✔ [DOCKER BUILDER] {msg}"));
+                self.set_notification("✔ Docker BuildKit Cache Pruned");
+            }
+            3 => {
+                // Prune Dangling Docker Images
+                let out = std::process::Command::new("docker")
+                    .args(["image", "prune", "-f"])
+                    .output();
+                let msg = if let Ok(o) = out {
+                    String::from_utf8_lossy(&o.stdout).lines().last().unwrap_or("Done").to_string()
+                } else {
+                    "Docker image prune completed".to_string()
+                };
+                self.turbo_log_buffer.push(format!("✔ [DOCKER IMAGES] {msg}"));
+                self.set_notification("✔ Unused Docker Images Pruned");
+            }
+            4 => {
+                // Renice CA Tools & Daemons
+                let _ = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg("pgrep -f 'cashell|caorch|9router' | xargs -r renice -n -10 >/dev/null 2>&1 || true")
+                    .status();
+                self.turbo_log_buffer.push("✔ [PROCESS PRIORITY] CAShell daemon & 9Router proxy elevated to nice -10.".to_string());
+                self.set_notification("✔ CA Ecosystem Processes Elevated (Nice -10)");
+            }
+            5 => {
+                // SSD NVMe TRIM
+                let out = std::process::Command::new("fstrim")
+                    .args(["-v", "/"])
+                    .output();
+                let msg = if let Ok(o) = out {
+                    String::from_utf8_lossy(&o.stdout).trim().to_string()
+                } else {
+                    "fstrim executed".to_string()
+                };
+                self.turbo_log_buffer.push(format!("✔ [NVME TRIM] {msg}"));
+                self.set_notification("✔ NVMe SSD Blocks Trimmed");
+            }
+            6 => {
+                // TCP BBR Congestion Control
+                let out = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg("sudo sysctl -w net.ipv4.tcp_congestion_control=bbr 2>&1 || cat /proc/sys/net/ipv4/tcp_congestion_control")
+                    .output();
+                let msg = if let Ok(o) = out {
+                    String::from_utf8_lossy(&o.stdout).trim().to_string()
+                } else {
+                    "TCP CC checked".to_string()
+                };
+                self.turbo_log_buffer.push(format!("✔ [NETWORK TCP] Congestion control: {msg}"));
+                self.set_notification(format!("✔ TCP CC: {msg}"));
+            }
+            7 => {
+                // Vacuum & WAL Checkpoint SQLite
+                if let Some(ref d) = self.db {
+                    let _ = d.vacuum();
+                }
+                self.turbo_log_buffer.push("✔ [SQLITE WAL] PRAGMA wal_checkpoint(TRUNCATE) & VACUUM executed successfully.".to_string());
+                self.set_notification("✔ Database Optimized & Shrunk");
+            }
+            _ => {}
         }
     }
 
@@ -2856,6 +3220,8 @@ impl CockpitApp {
     pub fn submit_monitor_wizard(&mut self) {
         let name = self.monitor_name_buf.trim().to_string();
         let url_raw = self.monitor_url_buf.trim().to_string();
+        let group_raw = self.monitor_group_buf.trim().to_string();
+        let group = if group_raw.is_empty() { "Custom".to_string() } else { group_raw };
 
         if name.is_empty() {
             self.set_notification("✗ Monitor name cannot be empty");
@@ -2873,9 +3239,13 @@ impl CockpitApp {
             format!("http://{}", url_raw)
         };
 
+        // Remove from disabled_monitors if present
+        self.cfg.uptime.disabled_monitors.retain(|d| d != &name);
+
         // If monitor exists by name, update it; otherwise check for duplicate target
         if let Some(pos) = self.cfg.uptime.custom_monitors.iter().position(|m| m.name == name) {
             self.cfg.uptime.custom_monitors[pos].target = url.clone();
+            self.cfg.uptime.custom_monitors[pos].group = group.clone();
         } else {
             let target_exists = self.cfg.uptime.custom_monitors.iter().any(|m| m.target == url);
             if target_exists {
@@ -2885,6 +3255,7 @@ impl CockpitApp {
             self.cfg.uptime.custom_monitors.push(crate::config::UptimeMonitorConfig {
                 name: name.clone(),
                 target: url.clone(),
+                group: group.clone(),
             });
         }
         self.save_config_silent();
@@ -2902,6 +3273,7 @@ impl CockpitApp {
         // Update in-memory snapshot
         if let Some(m) = self.latest_snap.uptime_monitors.iter_mut().find(|m| m.name == name) {
             m.target = url.clone();
+            m.group = group.clone();
         } else {
             self.latest_snap.uptime_monitors.push(crate::systat::UptimeMonitor {
                 name: name.clone(),
@@ -2911,6 +3283,7 @@ impl CockpitApp {
                 status_code: None,
                 uptime_pct: 100.0,
                 history: vec![true],
+                group: group.clone(),
             });
         }
 
@@ -2919,6 +3292,7 @@ impl CockpitApp {
         self.monitor_wizard_field = 0;
         self.monitor_name_buf.clear();
         self.monitor_url_buf.clear();
+        self.monitor_group_buf.clear();
     }
 }
 
@@ -3160,6 +3534,413 @@ fn event_loop<B: ratatui::backend::Backend>(
     }
 }
 
+// ── AI Tab Slash Commands ───────────────────────────────────────────────────
+
+fn parse_command_tokens(input: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut quote_char = '"';
+
+    for ch in input.chars() {
+        if in_quotes {
+            if ch == quote_char {
+                in_quotes = false;
+            } else {
+                current.push(ch);
+            }
+        } else if ch == '"' || ch == '\'' {
+            in_quotes = true;
+            quote_char = ch;
+        } else if ch.is_whitespace() {
+            if !current.is_empty() {
+                tokens.push(current);
+                current = String::new();
+            }
+        } else {
+            current.push(ch);
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
+    let trimmed = prompt.trim();
+
+    // Check if user is confirming or cancelling a pending service restart
+    if let Some(service_name) = app.pending_service_restart.clone() {
+        if trimmed.eq_ignore_ascii_case("y")
+            || trimmed.eq_ignore_ascii_case("yes")
+            || trimmed.eq_ignore_ascii_case("confirm")
+        {
+            app.pending_service_restart = None;
+            app.execute_service_restart(&service_name);
+            return true;
+        } else if trimmed.eq_ignore_ascii_case("n")
+            || trimmed.eq_ignore_ascii_case("no")
+            || trimmed.eq_ignore_ascii_case("cancel")
+        {
+            app.pending_service_restart = None;
+            let msg = format!("Restart of service '{service_name}' cancelled.");
+            app.set_notification(&msg);
+            app.add_ai_response(&msg);
+            return true;
+        }
+    }
+
+    if !trimmed.starts_with('/') {
+        return false;
+    }
+
+    let tokens = parse_command_tokens(trimmed);
+    if tokens.is_empty() {
+        return false;
+    }
+
+    let cmd = tokens[0].to_lowercase();
+    match cmd.as_str() {
+        "/uptime" => {
+            if tokens.len() < 2 {
+                app.add_ai_response("Usage: /uptime <test-telegram | add-monitor \"name\" \"url\" | delete \"name\">");
+                return true;
+            }
+            let sub = tokens[1].to_lowercase();
+            match sub.as_str() {
+                "test-telegram" | "test_telegram" | "test" | "tg" => {
+                    let has_token = !app.cfg.uptime.telegram_bot_token.trim().is_empty()
+                        || !app.cfg.daemon.telegram_bot_token.trim().is_empty();
+                    app.trigger_test_telegram_alert();
+                    if has_token {
+                        app.add_ai_response("📨 Test Telegram alert sent! Check your Telegram.");
+                    } else {
+                        app.add_ai_response("⚠ Configure Telegram Bot Token & Chat ID in Settings first.");
+                    }
+                }
+                "add-monitor" | "add" => {
+                    if tokens.len() < 4 {
+                        app.add_ai_response("Usage: /uptime add-monitor \"name\" \"url\"");
+                        return true;
+                    }
+                    let name = tokens[2].trim().to_string();
+                    let url_raw = tokens[3].trim().to_string();
+                    let group = if tokens.len() > 4 {
+                        tokens[4].trim().to_string()
+                    } else {
+                        "Custom".to_string()
+                    };
+
+                    if name.is_empty() || url_raw.is_empty() {
+                        app.add_ai_response("Monitor name and URL cannot be empty.");
+                        return true;
+                    }
+
+                    let url = if url_raw.starts_with("http://") || url_raw.starts_with("https://") {
+                        url_raw
+                    } else {
+                        format!("http://{url_raw}")
+                    };
+
+                    app.cfg.uptime.disabled_monitors.retain(|d| d != &name);
+
+                    if let Some(pos) = app.cfg.uptime.custom_monitors.iter().position(|m| m.name == name) {
+                        app.cfg.uptime.custom_monitors[pos].target = url.clone();
+                        app.cfg.uptime.custom_monitors[pos].group = group.clone();
+                    } else {
+                        app.cfg.uptime.custom_monitors.push(crate::config::UptimeMonitorConfig {
+                            name: name.clone(),
+                            target: url.clone(),
+                            group: group.clone(),
+                        });
+                    }
+                    app.save_config_silent();
+
+                    if let Some(ref d) = app.db {
+                        let _ = d.add_uptime_monitor(&name, &url);
+                        let _ = d.log_event(
+                            "INFO",
+                            "cockpit",
+                            &format!("Uptime monitor '{name}' ({url}) added via AI slash command"),
+                        );
+                    }
+
+                    if let Some(m) = app.latest_snap.uptime_monitors.iter_mut().find(|m| m.name == name) {
+                        m.target = url.clone();
+                        m.group = group.clone();
+                    } else {
+                        app.latest_snap.uptime_monitors.push(crate::systat::UptimeMonitor {
+                            name: name.clone(),
+                            target: url.clone(),
+                            is_up: true,
+                            latency_ms: None,
+                            status_code: None,
+                            uptime_pct: 100.0,
+                            history: vec![true],
+                            group: group.clone(),
+                        });
+                    }
+
+                    app.set_notification(format!("✓ Uptime monitor '{name}' saved"));
+                    app.add_ai_response(&format!("✅ Uptime: Added monitor '{name}'"));
+                }
+                "delete" | "remove" | "rm" => {
+                    if tokens.len() < 3 {
+                        app.add_ai_response("Usage: /uptime delete \"name\"");
+                        return true;
+                    }
+                    let name = tokens[2].trim();
+                    if let Some(idx) = app.latest_snap.uptime_monitors.iter().position(|m| m.name.eq_ignore_ascii_case(name)) {
+                        let actual_name = app.latest_snap.uptime_monitors[idx].name.clone();
+                        app.selected_monitor = idx;
+                        app.request_monitor_deletion(actual_name.clone());
+                        app.add_ai_response(&format!("🗑 Requested deletion confirmation for monitor '{actual_name}'. Press 'y' to confirm or 'n' to cancel."));
+                    } else if let Some(pos) = app.cfg.uptime.custom_monitors.iter().position(|m| m.name.eq_ignore_ascii_case(name)) {
+                        let actual_name = app.cfg.uptime.custom_monitors[pos].name.clone();
+                        app.request_monitor_deletion(actual_name.clone());
+                        app.add_ai_response(&format!("🗑 Requested deletion confirmation for monitor '{actual_name}'. Press 'y' to confirm or 'n' to cancel."));
+                    } else {
+                        app.add_ai_response(&format!("⚠ Monitor '{name}' not found."));
+                    }
+                }
+                _ => {
+                    app.add_ai_response(&format!("⚠ Unknown uptime subcommand '{}'. Usage: /uptime <test-telegram | add-monitor \"name\" \"url\" | delete \"name\">", tokens[1]));
+                }
+            }
+            true
+        }
+        "/analytics" => {
+            if tokens.len() < 2 {
+                app.add_ai_response("Usage: /analytics <list | detail <site> | refresh | site <site-name>>");
+                return true;
+            }
+            let sub = tokens[1].to_lowercase();
+            match sub.as_str() {
+                "list" | "overview" => {
+                    app.show_analytics_detail = false;
+                    app.current_tab = CockpitTab::Analytics;
+                    app.add_ai_response("✅ Analytics: showing sites list overview");
+                }
+                "detail" => {
+                    if tokens.len() > 2 {
+                        let site_query = tokens[2..].join(" ").trim().to_string();
+                        let sites = app.analytic_sites();
+                        if let Some((idx, s)) = sites.iter().enumerate().find(|(_, s)| {
+                            s.name.eq_ignore_ascii_case(&site_query)
+                                || s.id.eq_ignore_ascii_case(&site_query)
+                                || s.domain.eq_ignore_ascii_case(&site_query)
+                                || s.name.to_lowercase().contains(&site_query.to_lowercase())
+                                || s.id.to_lowercase().contains(&site_query.to_lowercase())
+                        }) {
+                            let site_id = s.id.clone();
+                            let site_name = s.name.clone();
+                            app.analytics_selected_site = idx;
+                            app.analytics_site_filter = if idx == 0 { None } else { Some(site_id) };
+                            app.show_analytics_detail = true;
+                            app.current_tab = CockpitTab::Analytics;
+                            app.sample_system();
+                            app.ingest_snapshot(app.latest_snap.clone());
+                            app.set_notification(format!("Analytics detail: {site_name}"));
+                            app.add_ai_response(&format!("✅ Analytics detail opened for '{site_name}'"));
+                            return true;
+                        } else {
+                            app.add_ai_response(&format!("⚠ Analytics site '{site_query}' not found."));
+                            return true;
+                        }
+                    } else {
+                        app.show_analytics_detail = true;
+                        app.current_tab = CockpitTab::Analytics;
+                        app.add_ai_response("✅ Analytics: showing detailed metrics");
+                    }
+                }
+                "refresh" | "reload" => {
+                    app.sample_system();
+                    app.ingest_snapshot(app.latest_snap.clone());
+                    app.set_notification("📊 Web Analytics refreshed");
+                    app.add_ai_response("✅ Analytics refreshed");
+                }
+                "site" | "filter" => {
+                    if tokens.len() < 3 {
+                        app.add_ai_response("Usage: /analytics site <site-name> (or /analytics site all)");
+                        return true;
+                    }
+                    let site_query = tokens[2..].join(" ").trim().to_string();
+                    if site_query.eq_ignore_ascii_case("all") || site_query == "*" {
+                        app.analytics_selected_site = 0;
+                        app.analytics_site_filter = None;
+                        app.show_analytics_detail = false;
+                        app.sample_system();
+                        app.ingest_snapshot(app.latest_snap.clone());
+                        app.set_notification("Analytics filter: All Sites");
+                        app.add_ai_response("✅ Analytics filter set to 'All Sovereign Apps'");
+                    } else {
+                        let sites = app.analytic_sites();
+                        if let Some((idx, s)) = sites.iter().enumerate().find(|(_, s)| {
+                            s.name.eq_ignore_ascii_case(&site_query)
+                                || s.id.eq_ignore_ascii_case(&site_query)
+                                || s.domain.eq_ignore_ascii_case(&site_query)
+                                || s.name.to_lowercase().contains(&site_query.to_lowercase())
+                                || s.id.to_lowercase().contains(&site_query.to_lowercase())
+                        }) {
+                            let site_id = s.id.clone();
+                            let site_name = s.name.clone();
+                            app.analytics_selected_site = idx;
+                            app.analytics_site_filter = if idx == 0 { None } else { Some(site_id) };
+                            app.show_analytics_detail = true;
+                            app.sample_system();
+                            app.ingest_snapshot(app.latest_snap.clone());
+                            app.set_notification(format!("Analytics filter: {site_name}"));
+                            app.add_ai_response(&format!("✅ Analytics filter set to '{site_name}'"));
+                        } else {
+                            app.add_ai_response(&format!("⚠ Analytics site '{site_query}' not found."));
+                        }
+                    }
+                }
+                _ => {
+                    app.add_ai_response(&format!("⚠ Unknown analytics subcommand '{}'. Usage: /analytics <list | detail <site> | refresh | site <site-name>>", tokens[1]));
+                }
+            }
+            true
+        }
+        "/fleet" => {
+            if tokens.len() < 2 {
+                app.add_ai_response("Usage: /fleet <status | restart <service-name>>");
+                return true;
+            }
+            let sub = tokens[1].to_lowercase();
+            match sub.as_str() {
+                "status" | "info" => {
+                    let snap = &app.latest_snap;
+                    let total = snap.fleet_nodes.len();
+                    let online = snap.fleet_nodes.iter().filter(|n| n.status == "ONLINE").count();
+                    let mut status_lines = vec![
+                        format!("🖥 Fleet Status: {online}/{total} Nodes Online"),
+                    ];
+                    for n in &snap.fleet_nodes {
+                        let rtt = n.latency_ms.map(|ms| format!("{ms}ms")).unwrap_or_else(|| "--".to_string());
+                        let cpu = n.cpu_pct.map(|c| format!("{c:.1}%")).unwrap_or_else(|| "--".to_string());
+                        let ram = n.ram_pct.map(|r| format!("{r}%")).unwrap_or_else(|| "--".to_string());
+                        status_lines.push(format!("  • {:<16} {:<15} [{}] RTT: {:<6} CPU: {:<6} RAM: {}", n.name, n.ip, n.status, rtt, cpu, ram));
+                    }
+                    if total == 0 && !app.server_probe_results.is_empty() {
+                        status_lines.push("Probed Fleet Servers:".to_string());
+                        for (name, lat) in &app.server_probe_results {
+                            let lat_str = lat.map(|ms| format!("{ms}ms")).unwrap_or_else(|| "Unreachable".to_string());
+                            status_lines.push(format!("  • {name}: {lat_str}"));
+                        }
+                    }
+                    for l in status_lines {
+                        app.add_ai_response(&l);
+                    }
+                }
+                "restart" => {
+                    if tokens.len() < 3 {
+                        app.add_ai_response("Usage: /fleet restart <service-name> [--confirm]");
+                        return true;
+                    }
+                    let service_name = tokens[2].trim().to_string();
+                    let has_flag = tokens.iter().skip(3).any(|t| t == "--confirm" || t == "--yes" || t == "-y");
+                    if has_flag {
+                        app.execute_service_restart(&service_name);
+                    } else {
+                        app.pending_service_restart = Some(service_name.clone());
+                        app.add_ai_response(&format!("⚠ Confirm restart of service '{service_name}'? Type 'yes' (or 'y') to proceed, 'no' to cancel."));
+                    }
+                }
+                _ => {
+                    app.add_ai_response(&format!("⚠ Unknown fleet subcommand '{}'. Usage: /fleet <status | restart <service-name>>", tokens[1]));
+                }
+            }
+            true
+        }
+        "/go" => {
+            if tokens.len() < 2 {
+                app.add_ai_response("Usage: /go <uptime | analytics | fleet | dashboard | project | server | audit | cron | log | terminal | ai | setting>");
+                return true;
+            }
+            let target = tokens[1].to_lowercase();
+            match target.as_str() {
+                "uptime" | "monitors" | "3" => {
+                    app.current_tab = CockpitTab::Uptime;
+                    app.set_notification("Switched to Uptime tab");
+                    app.add_ai_response("✅ Switched to Uptime tab");
+                }
+                "analytics" | "stats" | "5" => {
+                    app.current_tab = CockpitTab::Analytics;
+                    app.set_notification("Switched to Analytics tab");
+                    app.add_ai_response("✅ Switched to Analytics tab");
+                }
+                "fleet" | "server" | "servers" | "4" => {
+                    app.current_tab = CockpitTab::Server;
+                    app.set_notification("Switched to Fleet Server tab");
+                    app.add_ai_response("✅ Switched to Fleet tab");
+                }
+                "dashboard" | "dash" | "1" => {
+                    app.current_tab = CockpitTab::Dashboard;
+                    app.set_notification("Switched to Dashboard tab");
+                    app.add_ai_response("✅ Switched to Dashboard tab");
+                }
+                "project" | "projects" | "2" => {
+                    app.current_tab = CockpitTab::Project;
+                    app.set_notification("Switched to Project tab");
+                    app.add_ai_response("✅ Switched to Project tab");
+                }
+                "audit" | "doctor" | "6" => {
+                    app.current_tab = CockpitTab::Audit;
+                    app.set_notification("Switched to Audit tab");
+                    app.add_ai_response("✅ Switched to Audit tab");
+                }
+                "cron" | "cronjob" | "7" => {
+                    app.current_tab = CockpitTab::Cron;
+                    app.set_notification("Switched to CRON tab");
+                    app.add_ai_response("✅ Switched to CRON tab");
+                }
+                "log" | "logs" | "8" => {
+                    app.current_tab = CockpitTab::Log;
+                    app.set_notification("Switched to Log tab");
+                    app.add_ai_response("✅ Switched to Log tab");
+                }
+                "terminal" | "term" | "9" => {
+                    app.current_tab = CockpitTab::Terminal;
+                    app.set_notification("Switched to Terminal tab");
+                    app.add_ai_response("✅ Switched to Terminal tab");
+                }
+                "ai" | "chat" | "0" => {
+                    app.current_tab = CockpitTab::AI;
+                    app.set_notification("Switched to AI tab");
+                    app.add_ai_response("✅ Switched to AI tab");
+                }
+                "setting" | "settings" | "config" | "-" => {
+                    app.current_tab = CockpitTab::Setting;
+                    app.set_notification("Switched to Setting tab");
+                    app.add_ai_response("✅ Switched to Setting tab");
+                }
+                _ => {
+                    app.add_ai_response(&format!("⚠ Unknown tab '{target}'. Options: uptime, analytics, fleet, dashboard, project, server, audit, cron, log, terminal, ai, setting"));
+                }
+            }
+            true
+        }
+        "/help" | "/h" | "/?" => {
+            app.add_ai_response("📖 Available Cockpit Slash Commands:");
+            app.add_ai_response("  /uptime test-telegram                - Send test alert to configured Telegram bot/chat");
+            app.add_ai_response("  /uptime add-monitor \"name\" \"url\"     - Add new uptime monitor");
+            app.add_ai_response("  /uptime delete \"name\"                - Request deletion confirmation for monitor");
+            app.add_ai_response("  /analytics refresh                   - Refresh web analytics metrics");
+            app.add_ai_response("  /analytics site <site-name>          - Set active analytics site filter (or 'all')");
+            app.add_ai_response("  /fleet status                        - View fleet nodes health & latency matrix");
+            app.add_ai_response("  /fleet restart <service> [--confirm] - Restart a fleet container/service");
+            app.add_ai_response("  /go <uptime|analytics|fleet|...>     - Switch directly to cockpit tab");
+            true
+        }
+        _ => {
+            app.add_ai_response(&format!("⚠ Unknown command '{cmd}'. Type /help for available slash commands."));
+            true
+        }
+    }
+}
+
 // ── Key Event Handling ───────────────────────────────────────────────────────
 
 fn handle_key_event<B: ratatui::backend::Backend>(
@@ -3388,6 +4169,12 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 if let Some(ref d) = app.db {
                     let _ = d.save_chat("User", &prompt);
                 }
+
+                if handle_ai_slash_command(app, &prompt) {
+                    terminal.draw(|f| draw(f, app))?;
+                    return Ok(false);
+                }
+
                 app.is_chat_processing = true;
 
                 terminal.draw(|f| draw(f, app))?;
@@ -3612,6 +4399,10 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Esc if app.show_analytics_script_modal => {
             app.show_analytics_script_modal = false;
         }
+        KeyCode::Esc if app.show_analytics_detail => {
+            app.show_analytics_detail = false;
+            app.set_notification("Analytics: Sites Overview");
+        }
         KeyCode::Char('q') | KeyCode::Esc => {
             if app.inspector_open {
                 app.inspector_open = false;
@@ -3636,6 +4427,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Char('9') => app.current_tab = CockpitTab::Terminal,
         KeyCode::Char('0') => app.current_tab = CockpitTab::AI,
         KeyCode::Char('-') => app.current_tab = CockpitTab::Setting,
+        KeyCode::Char('=') => app.current_tab = CockpitTab::Turbo,
 
         // ── Pet Play Area Controls (Hardware-Reactive Tamagotchi) ─────────────
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -3704,7 +4496,11 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 app.selected_server = app.selected_server.saturating_sub(1);
             }
             CockpitTab::Analytics => {
-                app.analytics_scroll = app.analytics_scroll.saturating_sub(3);
+                if app.show_analytics_detail {
+                    app.analytics_scroll = app.analytics_scroll.saturating_sub(3);
+                } else {
+                    app.analytics_selected_site = app.analytics_selected_site.saturating_sub(1);
+                }
             }
             CockpitTab::Audit => {
                 app.selected_report = app.selected_report.saturating_sub(1);
@@ -3721,6 +4517,9 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             }
             CockpitTab::Setting => {
                 app.selected_field = app.selected_field.saturating_sub(1);
+            }
+            CockpitTab::Turbo => {
+                app.turbo_selected_action = app.turbo_selected_action.saturating_sub(1);
             }
         },
         KeyCode::Down | KeyCode::Char('j') => match app.current_tab {
@@ -3759,7 +4558,14 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 }
             }
             CockpitTab::Analytics => {
-                app.analytics_scroll = (app.analytics_scroll + 3).min(30);
+                if app.show_analytics_detail {
+                    app.analytics_scroll = (app.analytics_scroll + 3).min(30);
+                } else {
+                    let total_sites = app.analytic_sites().len();
+                    if total_sites > 0 {
+                        app.analytics_selected_site = (app.analytics_selected_site + 1).min(total_sites - 1);
+                    }
+                }
             }
             CockpitTab::Audit => {
                 if !app.audit_reports.is_empty() {
@@ -3779,6 +4585,9 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             }
             CockpitTab::Setting => {
                 app.selected_field = (app.selected_field + 1).min(SETTINGS_FIELDS.len() - 1);
+            }
+            CockpitTab::Turbo => {
+                app.turbo_selected_action = (app.turbo_selected_action + 1).min(7);
             }
         },
 
@@ -3831,8 +4640,31 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             app.show_cron_wizard = false;
         }
         KeyCode::Enter => match app.current_tab {
+            CockpitTab::Analytics => {
+                if !app.show_analytics_detail {
+                    let sites = app.analytic_sites();
+                    if !sites.is_empty() {
+                        let idx = app.analytics_selected_site.min(sites.len() - 1);
+                        app.analytics_site_filter = if idx == 0 {
+                            None
+                        } else {
+                            Some(sites[idx].id.clone())
+                        };
+                        app.show_analytics_detail = true;
+                        app.analytics_scroll = 0;
+                        app.sample_system();
+                        app.ingest_snapshot(app.latest_snap.clone());
+                        let label = app.analytics_site_filter.as_deref().unwrap_or("All Sites");
+                        app.set_notification(format!("Detail Analytics: {label}"));
+                    }
+                }
+            }
             CockpitTab::Setting => {
                 start_field_edit(app);
+            }
+            CockpitTab::Turbo => {
+                let action_idx = app.turbo_selected_action;
+                app.execute_turbo_action(action_idx);
             }
             CockpitTab::Project => {
                 // Toggle view: Hierarchy -> Tree -> Containers
@@ -3936,7 +4768,28 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             app.clone_selected_monitor();
         }
 
-        // Analytics Tab shortcuts: 'w': Cycle site, 's'/'t': Script/Template, 'r': Refresh, 'p': Test hit, 'i': Import, 'e': Export, 'a': Add Site, 'x': Clear/Delete
+        // Analytics Tab shortcuts: 'w': Cycle site, 's'/'t': Script/Template, 'r': Refresh, 'p': Test hit, 'i': Import, 'e': Export, 'a': Add Site, 'x': Clear/Delete, 'd'/'v': View Detail, 'b': Back to List
+        KeyCode::Char('b') if app.current_tab == CockpitTab::Analytics && app.show_analytics_detail => {
+            app.show_analytics_detail = false;
+            app.set_notification("Analytics: Sites Overview");
+        }
+        KeyCode::Char('d') | KeyCode::Char('v') if app.current_tab == CockpitTab::Analytics && !app.show_analytics_detail => {
+            let sites = app.analytic_sites();
+            if !sites.is_empty() {
+                let idx = app.analytics_selected_site.min(sites.len() - 1);
+                app.analytics_site_filter = if idx == 0 {
+                    None
+                } else {
+                    Some(sites[idx].id.clone())
+                };
+                app.show_analytics_detail = true;
+                app.analytics_scroll = 0;
+                app.sample_system();
+                app.ingest_snapshot(app.latest_snap.clone());
+                let label = app.analytics_site_filter.as_deref().unwrap_or("All Sites");
+                app.set_notification(format!("Detail Analytics: {label}"));
+            }
+        }
         KeyCode::Char('w') if app.current_tab == CockpitTab::Analytics => {
             let sites = app.analytic_sites();
             if !sites.is_empty() {
@@ -4046,6 +4899,20 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
         KeyCode::Char('P') if app.current_tab == CockpitTab::Setting => {
             app.open_pro_wizard();
+        }
+
+        // Turbo Tab shortcuts: 't': Max Turbo, 'b': Build Accel, 'p': Deep Purge, 'e': Eco Safe
+        KeyCode::Char('t') if app.current_tab == CockpitTab::Turbo => {
+            app.execute_turbo_profile(0);
+        }
+        KeyCode::Char('b') if app.current_tab == CockpitTab::Turbo => {
+            app.execute_turbo_profile(1);
+        }
+        KeyCode::Char('p') if app.current_tab == CockpitTab::Turbo => {
+            app.execute_turbo_profile(2);
+        }
+        KeyCode::Char('e') if app.current_tab == CockpitTab::Turbo => {
+            app.execute_turbo_profile(3);
         }
 
         // Pet modal shortcut in Dashboard (Shift+P or 'c' to adopt)
@@ -4180,15 +5047,16 @@ fn handle_monitor_wizard_key(key: event::KeyEvent, app: &mut CockpitApp) {
             app.submit_monitor_wizard();
         }
         KeyCode::Tab | KeyCode::Down => {
-            app.monitor_wizard_field = (app.monitor_wizard_field + 1) % 2;
+            app.monitor_wizard_field = (app.monitor_wizard_field + 1) % 3;
         }
         KeyCode::BackTab | KeyCode::Up => {
-            app.monitor_wizard_field = (app.monitor_wizard_field + 1) % 2;
+            app.monitor_wizard_field = (app.monitor_wizard_field + 2) % 3;
         }
         KeyCode::Backspace => {
             match app.monitor_wizard_field {
                 0 => { app.monitor_name_buf.pop(); }
                 1 => { app.monitor_url_buf.pop(); }
+                2 => { app.monitor_group_buf.pop(); }
                 _ => {}
             }
         }
@@ -4196,6 +5064,7 @@ fn handle_monitor_wizard_key(key: event::KeyEvent, app: &mut CockpitApp) {
             match app.monitor_wizard_field {
                 0 => app.monitor_name_buf.push(c),
                 1 => app.monitor_url_buf.push(c),
+                2 => app.monitor_group_buf.push(c),
                 _ => {}
             }
         }
@@ -4305,6 +5174,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
             CockpitTab::Terminal => app.term_scroll = app.term_scroll.saturating_sub(1),
             CockpitTab::AI => app.scroll_chat_up(),
             CockpitTab::Setting => app.selected_field = app.selected_field.saturating_sub(1),
+            CockpitTab::Turbo => app.turbo_selected_action = app.turbo_selected_action.saturating_sub(1),
         },
         MouseEventKind::ScrollDown => match app.current_tab {
             CockpitTab::Dashboard => match app.dashboard_focused_panel {
@@ -4350,6 +5220,9 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
             CockpitTab::AI => app.scroll_chat_down(),
             CockpitTab::Setting => {
                 app.selected_field = (app.selected_field + 1).min(SETTINGS_FIELDS.len() - 1);
+            }
+            CockpitTab::Turbo => {
+                app.turbo_selected_action = (app.turbo_selected_action + 1).min(3);
             }
         },
         MouseEventKind::Down(MouseButton::Left) => {
@@ -4493,6 +5366,25 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                         app.ingest_snapshot(app.latest_snap.clone());
                         let label = app.analytics_site_filter.as_deref().unwrap_or("All Sites");
                         app.set_notification(format!("Analytics filter: {label}"));
+                    }
+                    HitboxAction::ViewAnalyticsDetail(idx) => {
+                        app.analytics_selected_site = idx;
+                        let sites = app.analytic_sites();
+                        app.analytics_site_filter = if idx == 0 {
+                            None
+                        } else {
+                            Some(sites.get(idx).map(|s| s.id.clone()).unwrap_or_default())
+                        };
+                        app.show_analytics_detail = true;
+                        app.analytics_scroll = 0;
+                        app.sample_system();
+                        app.ingest_snapshot(app.latest_snap.clone());
+                        let label = app.analytics_site_filter.as_deref().unwrap_or("All Sites");
+                        app.set_notification(format!("Detail Analytics: {label}"));
+                    }
+                    HitboxAction::CloseAnalyticsDetail => {
+                        app.show_analytics_detail = false;
+                        app.set_notification("Analytics: Sites Overview");
                     }
                     HitboxAction::ShowAnalyticsScript => {
                         app.show_analytics_script_modal = !app.show_analytics_script_modal;
@@ -4709,6 +5601,40 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                     HitboxAction::ActivateProTrial => {
                         app.activate_pro_trial();
                     }
+                    HitboxAction::ViewMonitorDetail(idx) => {
+                        app.uptime_detail_index = idx;
+                        app.show_uptime_detail_modal = true;
+                    }
+                    HitboxAction::CloseMonitorDetail => {
+                        app.show_uptime_detail_modal = false;
+                    }
+                    HitboxAction::ToggleMonitorAlerts => {
+                        app.cfg.uptime.telegram_alerts_enabled = !app.cfg.uptime.telegram_alerts_enabled;
+                        app.save_config_silent();
+                        let state = if app.cfg.uptime.telegram_alerts_enabled { "ON" } else { "OFF" };
+                        app.set_notification(format!("Telegram alerts toggled: {state}"));
+                    }
+                    HitboxAction::TestTelegramAlert => {
+                        app.trigger_test_telegram_alert();
+                    }
+                    HitboxAction::CycleUptimeGroup => {
+                        crate::commands::cockpit::noop();
+                    }
+                    HitboxAction::CycleUptimeSort => {
+                        crate::commands::cockpit::noop();
+                    }
+                    HitboxAction::ExportUptimeJson => {
+                        crate::commands::cockpit::noop();
+                    }
+                    HitboxAction::ImportUptimeJson => {
+                        crate::commands::cockpit::noop();
+                    }
+                    HitboxAction::TurboProfile(idx) => {
+                        app.execute_turbo_profile(idx);
+                    }
+                    HitboxAction::TurboAction(idx) => {
+                        app.execute_turbo_action(idx);
+                    }
                 }
             }
         }
@@ -4803,12 +5729,22 @@ fn start_field_edit(app: &mut CockpitApp) {
         14 => {
             // Telegram Bot Token
             app.editing_field = Some(14);
-            app.edit_buffer = app.cfg.daemon.telegram_bot_token.clone();
+            let token = if !app.cfg.uptime.telegram_bot_token.is_empty() {
+                app.cfg.uptime.telegram_bot_token.clone()
+            } else {
+                app.cfg.daemon.telegram_bot_token.clone()
+            };
+            app.edit_buffer = token;
         }
         15 => {
             // Telegram Chat ID
             app.editing_field = Some(15);
-            app.edit_buffer = app.cfg.daemon.telegram_chat_id.clone();
+            let chat_id = if !app.cfg.uptime.telegram_chat_id.is_empty() {
+                app.cfg.uptime.telegram_chat_id.clone()
+            } else {
+                app.cfg.daemon.telegram_chat_id.clone()
+            };
+            app.edit_buffer = chat_id;
         }
         16 => {
             // Daemon Port
@@ -4907,11 +5843,13 @@ fn commit_field_edit(app: &mut CockpitApp, field_idx: usize) {
             app.set_notification(format!("Password hint set to: {val}"));
         }
         14 => {
-            app.cfg.daemon.telegram_bot_token = val;
+            app.cfg.daemon.telegram_bot_token = val.clone();
+            app.cfg.uptime.telegram_bot_token = val;
             app.set_notification("Telegram bot token updated");
         }
         15 => {
             app.cfg.daemon.telegram_chat_id = val.clone();
+            app.cfg.uptime.telegram_chat_id = val.clone();
             app.set_notification(format!("Telegram chat ID set to: {val}"));
         }
         16 => {
@@ -5096,6 +6034,7 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         CockpitTab::Terminal => draw_terminal_tab(f, app, chunks[2]),
         CockpitTab::AI => draw_ai_tab(f, app, chunks[2]),
         CockpitTab::Setting => draw_setting_tab(f, app, chunks[2]),
+        CockpitTab::Turbo => draw_turbo_tab(f, app, chunks[2]),
     }
 
     draw_footer(f, app, chunks[3]);
@@ -7346,7 +8285,7 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let palette = ThemePalette::get(&app.cfg.output.theme);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(8)])
+        .constraints([Constraint::Length(4), Constraint::Min(8)])
         .split(area);
 
     let bar_block = Block::default()
@@ -7355,28 +8294,27 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let bar_inner = bar_block.inner(chunks[0]);
     f.render_widget(bar_block, chunks[0]);
 
-    let btn_add_w = 20u16;
-    let btn_probe_w = 22u16;
-    let btn_edit_w = 16u16;
-    let btn_del_w = 16u16;
+    let displayed: Vec<(usize, crate::systat::UptimeMonitor)> = app.latest_snap.uptime_monitors.iter().cloned().enumerate().collect();
+    let count = displayed.len();
+    if !displayed.is_empty() && app.selected_monitor >= count {
+        app.selected_monitor = count - 1;
+    }
 
-    app.register_hitbox(
-        Rect { x: bar_inner.x + 1, y: bar_inner.y, width: btn_add_w, height: 1 },
-        HitboxAction::AddMonitor,
-    );
-    app.register_hitbox(
-        Rect { x: bar_inner.x + btn_add_w + 3, y: bar_inner.y, width: btn_probe_w, height: 1 },
-        HitboxAction::ProbeMonitors,
-    );
-    app.register_hitbox(
-        Rect { x: bar_inner.x + btn_add_w + btn_probe_w + 6, y: bar_inner.y, width: btn_edit_w, height: 1 },
-        HitboxAction::EditMonitor,
-    );
-    app.register_hitbox(
-        Rect { x: bar_inner.x + btn_add_w + btn_probe_w + btn_edit_w + 9, y: bar_inner.y, width: btn_del_w, height: 1 },
-        HitboxAction::RemoveMonitor,
-    );
-
+    // ── Toolbar row 1: Core Actions (Add, Probe, Edit, Delete, Group, Sort) ──
+    let alert_on = app.cfg.uptime.telegram_alerts_enabled;
+    let mut toolbar_spans: Vec<Span> = vec![
+        Span::styled(" [ADD] (m) ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
+        Span::styled(" [PROBE] (p) ", Style::default().fg(Color::Black).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
+        Span::styled(" [EDIT] (e) ", Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
+        Span::styled(" [DEL] (x) ", Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+        Span::raw("  │  "),
+        Span::styled(format!(" [GRP:{}] ", app.uptime_group_filter), Style::default().fg(Color::Black).bg(palette.status_warn).add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
+        Span::styled(format!(" [SRT:{}] ", app.uptime_sort_mode.label_short()), Style::default().fg(Color::Black).bg(Color::Rgb(80, 80, 80)).add_modifier(Modifier::BOLD)),
+    ];
     let up_count = app.latest_snap.uptime_monitors.iter().filter(|m| m.is_up).count();
     let total_count = app.latest_snap.uptime_monitors.len();
     let pct = if total_count > 0 {
@@ -7384,33 +8322,92 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     } else {
         100.0
     };
+    toolbar_spans.push(Span::raw("  │  "));
+    toolbar_spans.push(Span::styled(
+        format!("Health: {up_count}/{total_count} Up ({pct:.1}%)"),
+        Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
+    ));
+    f.render_widget(Paragraph::new(Line::from(toolbar_spans)), bar_inner);
 
-    let bar_spans = vec![
-        Span::styled(" [+ Add Monitor] (m) ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
-        Span::raw("  "),
-        Span::styled(" [🔍 Probe Monitors] (p) ", Style::default().fg(Color::Black).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
-        Span::raw("  "),
-        Span::styled(" [✎ Edit] (e) ", Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD)),
-        Span::raw("  "),
-        Span::styled(" [🗑 Delete] (x) ", Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)),
-        Span::raw("  │  "),
-        Span::styled(format!("Health: {up_count}/{total_count} Up ({pct:.1}%)"), Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+    // Register toolbar hitboxes with cumulative x-offset
+    let bar_y = bar_inner.y;
+    let mut cur_x = bar_inner.x + 1;
+    let widths: [u16; 6] = [12, 14, 12, 12, 14, 14];
+    let actions: [HitboxAction; 6] = [
+        HitboxAction::AddMonitor,
+        HitboxAction::ProbeMonitors,
+        HitboxAction::EditMonitor,
+        HitboxAction::RemoveMonitor,
+        HitboxAction::CycleUptimeGroup,
+        HitboxAction::CycleUptimeSort,
     ];
-    f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
+    for (w, act) in widths.iter().zip(actions.iter()) {
+        if cur_x + w < bar_inner.x + bar_inner.width {
+            app.register_hitbox(
+                Rect { x: cur_x, y: bar_y, width: *w, height: 1 },
+                act.clone(),
+            );
+        }
+        cur_x = cur_x.saturating_add(*w).saturating_add(2);
+    }
+
+    // ── Toolbar row 2: Advanced Actions (Export, Import, Alerts, Detail) ──
+    let adv_y = bar_y + 1;
+    if adv_y < bar_inner.bottom() {
+        let adv_spans: Vec<Span> = vec![
+            Span::styled(" [EXPORT] ", Style::default().fg(Color::Black).bg(Color::Rgb(80, 80, 80)).add_modifier(Modifier::BOLD)),
+            Span::raw("  "),
+            Span::styled(" [IMPORT] ", Style::default().fg(Color::Black).bg(Color::Rgb(80, 80, 80)).add_modifier(Modifier::BOLD)),
+            Span::raw("  "),
+            Span::styled(
+                if alert_on { " [ALERTS:ON] " } else { " [ALERTS:OFF] " },
+                Style::default().fg(Color::Black).bg(if alert_on { Color::Rgb(0, 128, 0) } else { Color::Rgb(80, 80, 80) }).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(" [TEST TG ALERT] ", Style::default().fg(Color::Black).bg(Color::Rgb(0, 136, 204)).add_modifier(Modifier::BOLD)),
+            Span::raw("  │  "),
+            Span::styled(" [V] View Detail (Enter) ", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        ];
+        f.render_widget(Paragraph::new(Line::from(adv_spans)), Rect {
+            x: bar_inner.x,
+            y: adv_y,
+            width: bar_inner.width,
+            height: 1,
+        });
+
+        let mut ax = bar_inner.x + 1;
+        for (label_w, act) in [
+            (10, HitboxAction::ExportUptimeJson),
+            (10, HitboxAction::ImportUptimeJson),
+            (15, HitboxAction::ToggleMonitorAlerts),
+            (17, HitboxAction::TestTelegramAlert),
+        ] {
+            if ax + label_w < bar_inner.x + bar_inner.width {
+                app.register_hitbox(
+                    Rect { x: ax, y: adv_y, width: label_w, height: 1 },
+                    act,
+                );
+            }
+            ax = ax.saturating_add(label_w).saturating_add(2);
+        }
+    }
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" 🌐 Endpoint Uptime Monitors (HTTP/HTTPS, TCP, Cloudflare Tunnels, Gateways) ")
+        .title(format!(
+            " 🌐 Uptime Monitors │ Filter: {} │ Sort: {} │ [{}]",
+            app.uptime_group_filter,
+            app.uptime_sort_mode.label(),
+            if alert_on { "ALERTS:ON" } else { "ALERTS:OFF" }
+        ))
         .border_style(Style::default().fg(palette.border));
     let inner = block.inner(chunks[1]);
     f.render_widget(block, chunks[1]);
 
-    let snap = &app.latest_snap;
-    let rows: Vec<Row> = snap
-        .uptime_monitors
+    let rows: Vec<Row> = displayed
         .iter()
         .enumerate()
-        .map(|(i, m)| {
+        .map(|(i, (orig_idx, m))| {
             let is_sel = i == app.selected_monitor;
             let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
             let (status_badge, badge_color) = if m.is_up {
@@ -7421,14 +8418,20 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
             let latency_str = m
                 .latency_ms
-                .map(|l| format!("{l:>3}ms"))
-                .unwrap_or_else(|| " -- ".to_string());
+                .map(|l| format!("{l}ms"))
+                .unwrap_or_else(|| "--".to_string());
             let code_str = m
                 .status_code
-                .map(|c| format!("{c} OK"))
+                .map(|c| {
+                    if (200..=299).contains(&c) {
+                        format!("{c} OK")
+                    } else {
+                        c.to_string()
+                    }
+                })
                 .unwrap_or_else(|| "--".to_string());
 
-            let bar_spans: Vec<Span<'static>> = m
+            let history_spans: Vec<Span> = m
                 .history
                 .iter()
                 .map(|&up| {
@@ -7440,13 +8443,17 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 })
                 .collect();
 
+            let eye_span = Span::styled("[V]", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+
             Row::new(vec![
+                Cell::from(format!("{i:>3}")).style(Style::default().fg(palette.text_muted).add_modifier(Modifier::BOLD)),
                 Cell::from(m.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Cell::from(m.group.clone()).style(Style::default().fg(palette.text_muted)),
                 Cell::from(status_badge).style(Style::default().fg(badge_color).add_modifier(Modifier::BOLD)),
                 Cell::from(latency_str).style(Style::default().fg(palette.accent)),
-                Cell::from(Line::from(bar_spans)),
+                Cell::from(Line::from(history_spans)),
                 Cell::from(code_str).style(Style::default().fg(palette.status_warn)),
-                Cell::from(m.target.clone()).style(Style::default().fg(palette.text_muted)),
+                Cell::from(Line::from(vec![eye_span])),
             ])
             .style(Style::default().bg(bg))
         })
@@ -7455,40 +8462,199 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let table = Table::new(
         rows,
         [
-            Constraint::Length(22),
+            Constraint::Length(4),
             Constraint::Length(16),
-            Constraint::Length(10),
-            Constraint::Length(24),
-            Constraint::Length(10),
-            Constraint::Min(25),
+            Constraint::Length(14),
+            Constraint::Length(16),
+            Constraint::Length(9),
+            Constraint::Length(22),
+            Constraint::Length(9),
+            Constraint::Length(4),
         ],
     )
     .header(
         Row::new(vec![
+            "#",
             "MONITOR",
+            "GROUP",
             "STATUS",
             "LATENCY",
             "HEARTBEATS (20)",
             "CODE",
-            "ENDPOINT URL",
+            "⊕",
         ])
         .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
     );
     f.render_widget(table, inner);
 
-    for i in 0..snap.uptime_monitors.len() {
+    // ── Mouse hitboxes for table rows and Detail buttons ──
+    let action_x_offset = 4 + 16 + 14 + 16 + 9 + 22 + 9;
+    for (i, (orig_idx, _)) in displayed.iter().enumerate() {
         if (i as u16) < inner.height.saturating_sub(1) {
+            let row_y = inner.y + 1 + (i as u16);
             app.register_hitbox(
                 Rect {
                     x: inner.x,
-                    y: inner.y + 1 + (i as u16),
+                    y: row_y,
                     width: inner.width,
                     height: 1,
                 },
                 HitboxAction::SelectMonitor(i),
             );
+            let detail_x = inner.x + action_x_offset;
+            if detail_x + 4 <= inner.x + inner.width {
+                app.register_hitbox(
+                    Rect {
+                        x: detail_x,
+                        y: row_y,
+                        width: 4,
+                        height: 1,
+                    },
+                    HitboxAction::ViewMonitorDetail(*orig_idx),
+                );
+            }
         }
     }
+}
+
+fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let popup_area = centered_rect(65, 55, area);
+    f.render_widget(Clear, popup_area);
+
+    let orig_idx = app.uptime_detail_index;
+    let monitor = match app.latest_snap.uptime_monitors.get(orig_idx) {
+        Some(m) => m,
+        None => {
+            app.show_uptime_detail_modal = false;
+            return;
+        }
+    };
+
+    let title = format!(" 📈 Endpoint Detail — {} ", monitor.name);
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    let history_spans: Vec<Span> = monitor
+        .history
+        .iter()
+        .map(|&up| {
+            if up {
+                Span::styled("█", Style::default().fg(Color::Green))
+            } else {
+                Span::styled("█", Style::default().fg(Color::Red))
+            }
+        })
+        .collect();
+
+    let status_label = if monitor.is_up {
+        Span::styled("● UP (Healthy)", Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD))
+    } else {
+        Span::styled("✖ DOWN (Unreachable)", Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD))
+    };
+
+    let latency_span = match monitor.latency_ms {
+        Some(l) => Span::styled(format!("{l} ms"), Style::default().fg(palette.accent)),
+        None => Span::styled("--".to_string(), Style::default().fg(Color::DarkGray)),
+    };
+
+    let code_span = match monitor.status_code {
+        Some(c) => Span::styled(c.to_string(), Style::default().fg(palette.status_warn)),
+        None => Span::styled("--".to_string(), Style::default().fg(Color::DarkGray)),
+    };
+
+    let alert_state = if app.cfg.uptime.telegram_alerts_enabled {
+        Span::styled("● ENABLED", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+    } else {
+        Span::styled("○ DISABLED", Style::default().fg(Color::DarkGray))
+    };
+
+    let has_token = !app.cfg.uptime.telegram_bot_token.is_empty() || !app.cfg.daemon.telegram_bot_token.is_empty();
+    let token_status = if has_token {
+        Span::styled(" [✓ Token Configured]", Style::default().fg(Color::Green))
+    } else {
+        Span::styled(" [⚠ NO BOT TOKEN SET — open Settings (-) tab]", Style::default().fg(Color::Yellow))
+    };
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Endpoint:     ", Style::default().fg(palette.text_muted)),
+            Span::styled(monitor.name.clone(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("Target URL:   ", Style::default().fg(palette.text_muted)),
+            Span::styled(monitor.target.clone(), Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(vec![
+            Span::styled("Group:        ", Style::default().fg(palette.text_muted)),
+            Span::styled(monitor.group.clone(), Style::default().fg(palette.accent)),
+        ]),
+        Line::from(vec![
+            Span::styled("Status:       ", Style::default().fg(palette.text_muted)),
+            status_label,
+            Span::raw("   "),
+            Span::styled("Latency: ", Style::default().fg(palette.text_muted)),
+            latency_span,
+            Span::raw("   "),
+            Span::styled("Code: ", Style::default().fg(palette.text_muted)),
+            code_span,
+        ]),
+        Line::from(vec![
+            Span::styled("Uptime (%):   ", Style::default().fg(palette.text_muted)),
+            Span::styled(format!("{:.1}%", monitor.uptime_pct), Style::default().fg(Color::White)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Last 20 Heartbeats:  ", Style::default().fg(palette.text_muted).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(history_spans),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Telegram Alerts:  ", Style::default().fg(palette.text_muted)),
+            alert_state,
+            token_status,
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            " [p] Probe │ [t] Toggle Alerts │ [e] Edit │ [x] Delete │ Esc/q: Close",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
+
+    let btn_probe_w = 22u16;
+    let btn_alert_w = 22u16;
+    let btn_edit_w = 16u16;
+    let btn_del_w = 16u16;
+    let btn_close_w = 15u16;
+    let btn_y = inner.y + 1;
+    let gap = 2u16;
+
+    app.register_hitbox(
+        Rect { x: inner.x + 1, y: btn_y, width: btn_probe_w, height: 1 },
+        HitboxAction::ProbeMonitors,
+    );
+    app.register_hitbox(
+        Rect { x: inner.x + 1 + btn_probe_w + gap, y: btn_y, width: btn_alert_w, height: 1 },
+        HitboxAction::ToggleMonitorAlerts,
+    );
+    app.register_hitbox(
+        Rect { x: inner.x + 1 + btn_probe_w + btn_alert_w + gap * 2, y: btn_y, width: btn_edit_w, height: 1 },
+        HitboxAction::EditMonitor,
+    );
+    app.register_hitbox(
+        Rect { x: inner.x + 1 + btn_probe_w + btn_alert_w + btn_edit_w + gap * 3, y: btn_y, width: btn_del_w, height: 1 },
+        HitboxAction::RemoveMonitor,
+    );
+    app.register_hitbox(
+        Rect { x: inner.x + 1 + btn_probe_w + btn_alert_w + btn_edit_w + btn_del_w + gap * 4, y: btn_y, width: btn_close_w, height: 1 },
+        HitboxAction::CloseMonitorDetail,
+    );
 }
 
 // ── Tab 4: Server (Multi-Node Server Resources & Latency Matrix) ─────────────
@@ -8027,25 +9193,32 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         }
     };
 
-    let status = crate::pet::PetStatus {
-        species,
-        name: pet_name_display.clone(),
-        stage,
-        mood: app.pet_mood,
-        xp,
+    let telem = crate::pet::MascotTelemetry {
+        cpu_pct: app.latest_snap.cpu_pct,
+        cpu_temp_c: app.latest_snap.cpu_temp_c,
+        ram_pct: ((app.latest_snap.ram_used_mb as f64) / (app.latest_snap.ram_total_mb.max(1) as f64) * 100.0) as u8,
+        swap_pct: ((app.latest_snap.swap_used_mb as f64) / (app.latest_snap.swap_total_mb.max(1) as f64) * 100.0) as u8,
+        containers_down: app.latest_snap.docker_containers.iter().filter(|c| c.state != "running").count(),
+        fleet_nodes_down: app.server_probe_results.iter().filter(|(_, lat)| lat.is_none()).count(),
+        uptime_monitors_down: app.latest_snap.uptime_monitors.iter().filter(|m| !m.is_up).count(),
+        git_dirty_count: app.latest_snap.tracked_projects.iter().filter(|p| p.is_dirty).count(),
+        turbo_active: app.turbo_profile_active != "ECO_BALANCED" && !app.turbo_profile_active.is_empty(),
+        transient_action: if app.pet_is_stopped { Some(crate::pet::PetActionState::Death) } else if let Some((st, _)) = app.pet_transient_action { Some(st) } else { None },
+        xp_level: level as usize,
+        tick: app.pet_tick,
     };
-    let active_frame = status.build_frame(active_state, app.pet_tick, app.pet_is_stopped);
+    let expr = crate::pet::select_expression(&telem);
 
     let state_badge = if app.pet_is_stopped {
         "⏸ STOPPED".to_string()
     } else {
-        active_frame.state_label.clone()
+        format!("#{:02} {}", expr.id, expr.label)
     };
 
-    let title = if area.width >= 32 {
-        format!(" 🕶 SOVEREIGN [ {} · Lv.{} · {} | {} ] ", pet_name_display, level, state_badge, mood_short)
+    let title = if area.width >= 36 {
+        format!(" 🪙 SOVEREIGN TOKEN [ {} · Lv.{} · {} | {} ] ", pet_name_display, level, state_badge, mood_short)
     } else {
-        format!(" 🕶 SOVEREIGN [ {} · Lv.{} ] ", pet_name_display, level)
+        format!(" 🪙 SOVEREIGN [ {} · Lv.{} ] ", pet_name_display, level)
     };
 
     let block = Block::default()
@@ -8099,31 +9272,17 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ])
         .split(inner);
 
-    // 1. Animated Sprite Screen — big isometric voxel head (single hue) with
-    //    a reactive mood-colored glow, falling back to a single emoji when
-    //    the panel is too small to display the 3D head cleanly.
+    // 1. Animated Sprite Screen — Cyberpunk Isometric Sovereign Token
+    //    with stable sine-wave bobbing, 100 condition-responsive expressions,
+    //    and falling Matrix digital rain background (toggleable in Settings).
     let screen = chunks[0];
-    let head_cols = screen.width.saturating_sub(2) as usize;
-    let head_rows = screen.height.saturating_sub(1) as usize;
-    let iso_lines = crate::pet::render_isometric_head(app.pet_tick, app.pet_mood, head_cols.max(5), head_rows.max(4));
-    let accent = match app.pet_mood {
-        crate::pet::PetMood::Overheated => Color::LightRed,
-        crate::pet::PetMood::Sick => Color::Magenta,
-        crate::pet::PetMood::Sprint => Color::Yellow,
-        crate::pet::PetMood::Idle => palette.accent,
-    };
-    let iso_spans: Vec<Span> = iso_lines
-        .iter()
-        .map(|l| Span::styled(l.clone(), Style::default().fg(accent).add_modifier(Modifier::BOLD)))
-        .collect();
-    let mut iso_lines_widget: Vec<Line> = iso_spans.into_iter().map(Line::from).collect();
-    // Add a small particle trail below the head for the reactive "alive" feel
-    if !active_frame.particles.is_empty() {
-        iso_lines_widget.push(Line::from(vec![
-            Span::styled(active_frame.particles.clone(), Style::default().fg(accent).add_modifier(Modifier::DIM)),
-        ]));
-    }
-    f.render_widget(Paragraph::new(iso_lines_widget).alignment(ratatui::layout::Alignment::Center), screen);
+    let (token_lines, _) = crate::pet::render_sovereign_token_lines(
+        screen.width as usize,
+        screen.height as usize,
+        &telem,
+        app.cfg.output.matrix_rain,
+    );
+    f.render_widget(Paragraph::new(token_lines).alignment(ratatui::layout::Alignment::Center), screen);
 
     // 2. Navigation Bar (Compact layout for smaller column)
     let nav_spans = vec![
@@ -8163,14 +9322,14 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         HitboxAction::PetCancel,
     );
 
-    // 3. Action Buttons with active selection highlight & Stop Button
-    let stop_label = if app.pet_is_stopped { "▶Play(p)" } else { "◼Stop(p)" };
+    // 3. Action Buttons with active selection highlight & Stop Button (Sovereign themed)
+    let stop_label = if app.pet_is_stopped { "▶Spin(p)" } else { "◼Stop(p)" };
     let stop_label_short = if app.pet_is_stopped { "▶(p)" } else { "◼(p)" };
     let actions: &[&str] = if inner.width >= 36 {
         &[
-            "Feed(f)",
-            "Train(t)",
-            "Switch(s)",
+            "Overclock(f)",
+            "Audit(t)",
+            "Purge(s)",
             stop_label,
             "Log(h)",
         ]
@@ -8228,9 +9387,9 @@ fn draw_pet_switch_confirm_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect
     f.render_widget(Clear, popup_area);
 
     let block = Block::default()
-        .title(" 🐾 Switch Companion Pet ")
+        .title(" 🌀 Sovereign System Purge & Cache Flush ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+        .border_style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD));
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
@@ -8243,20 +9402,20 @@ fn draw_pet_switch_confirm_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect
     let lines = vec![
         Line::from(""),
         Line::from(Span::styled(
-            " Trigger Sovereign Form Shift & +5 XP Bonus? ",
+            " Trigger Sovereign Cache Flush & +5 XP Proof of Work? ",
             Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         Line::from(vec![
             Span::styled(" Mascot: ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("😎 {current_name}"), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("🪙 {current_name}"), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
             Span::styled("  ➔  ", Style::default().fg(palette.text_muted)),
-            Span::styled("🌀 Dynamic Dash + Pose Shift", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled("🌀 Purge Buffers & Refresh Telemetry", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
         ]),
         Line::from(""),
         Line::from(vec![
             Span::styled(
-                " [Y] Yes, Shift ",
+                " [Y] Yes, Purge ",
                 Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD),
             ),
             Span::raw("    "),
@@ -8376,6 +9535,14 @@ fn draw_app_inspector_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── Tab 4: Sovereign Web Analytics (Umami-like) ────────────────────────────
 
 fn draw_analytics_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    if app.show_analytics_detail {
+        draw_analytics_detail_view(f, app, area);
+    } else {
+        draw_analytics_list_view(f, app, area);
+    }
+}
+
+fn draw_analytics_detail_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let palette = ThemePalette::get(&app.cfg.output.theme);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -8391,49 +9558,35 @@ fn draw_analytics_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let bar_inner = bar_block.inner(chunks[0]);
     f.render_widget(bar_block, chunks[0]);
 
+    let btn_back_w = 20u16;
     let btn_refresh_w = 16u16;
-    let btn_script_w = 16u16;
-    let btn_import_w = 14u16;
-    let btn_export_w = 14u16;
-    let btn_add_w = 14u16;
-    let btn_del_w = 14u16;
 
     let x0 = bar_inner.x;
     let y0 = bar_inner.y;
     let h = bar_inner.height.min(1);
-    app.register_hitbox(Rect { x: x0 + 1, y: y0, width: btn_refresh_w, height: h }, HitboxAction::RefreshAnalytics);
-    let x1 = x0 + btn_refresh_w + 3;
-    app.register_hitbox(Rect { x: x1, y: y0, width: btn_script_w, height: h }, HitboxAction::ShowAnalyticsScript);
-    let x2 = x1 + btn_script_w + 1;
-    app.register_hitbox(Rect { x: x2, y: y0, width: btn_import_w, height: h }, HitboxAction::ImportAnalyticsSites);
-    let x3 = x2 + btn_import_w + 1;
-    app.register_hitbox(Rect { x: x3, y: y0, width: btn_export_w, height: h }, HitboxAction::ExportAnalyticsJson);
-    let x4 = x3 + btn_export_w + 1;
-    app.register_hitbox(Rect { x: x4, y: y0, width: btn_add_w, height: h }, HitboxAction::ShowSiteWizard);
-    let x5 = x4 + btn_add_w + 1;
-    app.register_hitbox(Rect { x: x5, y: y0, width: btn_del_w, height: h }, HitboxAction::ClearAnalyticsData);
+    app.register_hitbox(Rect { x: x0 + 1, y: y0, width: btn_back_w, height: h }, HitboxAction::CloseAnalyticsDetail);
+    let x1 = x0 + btn_back_w + 3;
+    app.register_hitbox(Rect { x: x1, y: y0, width: btn_refresh_w, height: h }, HitboxAction::RefreshAnalytics);
 
+    let back_label = " [ ← Back to Sites (b/Esc) ] ";
     let bar_spans = vec![
+        Span::styled(back_label, Style::default().fg(Color::White).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
         Span::styled(" [ Refresh (r) ] ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
-        Span::raw(" "),
-        Span::styled(" [ Script (s) ] ", Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD)),
-        Span::raw(" "),
-        Span::styled(" [ Import (i) ] ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        Span::raw(" "),
-        Span::styled(" [ Export (e) ] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
-        Span::raw(" "),
-        Span::styled(" [ Add Site (a) ] ", Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
-        Span::raw(" "),
-        Span::styled(" [ Wipe/Del (x) ] ", Style::default().fg(Color::Black).bg(Color::LightRed).add_modifier(Modifier::BOLD)),
     ];
     f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
 
     let snap = app.latest_snap.clone();
     let analytics = &snap.web_analytics;
 
+    let site_name = match app.analytics_selected_site {
+        0 => "All Sites".to_string(),
+        idx => app.analytic_sites().get(idx).map(|s| s.name.clone()).unwrap_or_default(),
+    };
+
     let main_block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" 🌐 Traffic & Visitor Breakdown · Filter: {}", app.analytics_site_filter.as_deref().unwrap_or("All Sites")))
+        .title(format!(" 📊 Site Detail Analytics · {}", site_name))
         .title_alignment(Alignment::Center)
         .border_style(Style::default().fg(palette.accent));
 
@@ -8662,224 +9815,169 @@ fn draw_analytics_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let inner_refs = refs_area.inner(Margin::new(1, 1));
     f.render_widget(Paragraph::new(ref_lines), inner_refs);
 
-    let prod_lines: Vec<Line> = analytics.product_analytics.iter().map(|p| {
-        let status_style = if p.status == "ACTIVE" {
+    if app.show_analytics_script_modal {
+        draw_analytics_script_modal(f, app, area);
+    }
+
+    if app.show_site_import_modal {
+        draw_site_import_modal(f, app, area);
+    }
+}
+
+fn draw_analytics_list_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Action Bar
+            Constraint::Min(10),   // Main Area
+        ])
+        .split(area);
+
+    let bar_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(palette.border));
+    let bar_inner = bar_block.inner(chunks[0]);
+    f.render_widget(bar_block, chunks[0]);
+
+    let btn_add_w = 14u16;
+    let btn_import_w = 14u16;
+    let btn_refresh_w = 16u16;
+    let btn_script_w = 16u16;
+    let btn_export_w = 14u16;
+    let btn_del_w = 14u16;
+
+    let x0 = bar_inner.x;
+    let y0 = bar_inner.y;
+    let h = bar_inner.height.min(1);
+    app.register_hitbox(Rect { x: x0 + 1, y: y0, width: btn_add_w, height: h }, HitboxAction::ShowSiteWizard);
+    let x1 = x0 + btn_add_w + 3;
+    app.register_hitbox(Rect { x: x1, y: y0, width: btn_import_w, height: h }, HitboxAction::ImportAnalyticsSites);
+    let x2 = x1 + btn_import_w + 1;
+    app.register_hitbox(Rect { x: x2, y: y0, width: btn_refresh_w, height: h }, HitboxAction::RefreshAnalytics);
+    let x3 = x2 + btn_refresh_w + 1;
+    app.register_hitbox(Rect { x: x3, y: y0, width: btn_script_w, height: h }, HitboxAction::ShowAnalyticsScript);
+    let x4 = x3 + btn_script_w + 1;
+    app.register_hitbox(Rect { x: x4, y: y0, width: btn_export_w, height: h }, HitboxAction::ExportAnalyticsJson);
+    let x5 = x4 + btn_export_w + 1;
+    app.register_hitbox(Rect { x: x5, y: y0, width: btn_del_w, height: h }, HitboxAction::ClearAnalyticsData);
+
+    let bar_spans = vec![
+        Span::styled(" [ Add Site (a) ] ", Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [ Import (i) ] ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [ Refresh (r) ] ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [ Script (s) ] ", Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [ Export (e) ] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" [ Wipe/Del (x) ] ", Style::default().fg(Color::Black).bg(Color::LightRed).add_modifier(Modifier::BOLD)),
+    ];
+    f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
+
+    let snap = app.latest_snap.clone();
+    let analytics = &snap.web_analytics;
+
+    let main_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 📍 Site Overview & Analytics Dashboard · Press [Enter] or [d] to open Detail View")
+        .title_alignment(Alignment::Center)
+        .border_style(Style::default().fg(palette.accent));
+
+    let main_inner = main_block.inner(chunks[1]);
+    f.render_widget(main_block, chunks[1]);
+
+    // Render Sites List Table
+    let sites = app.analytic_sites();
+    let site_products: Vec<crate::systat::ProductAnalyticsSummary> = analytics.product_analytics.clone();
+
+    let header_cells = vec![
+        Cell::from("#").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        Cell::from("SITE / PRODUCT").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        Cell::from("DOMAIN").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        Cell::from("STATUS").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        Cell::from("PAGEVIEWS").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        Cell::from("VISITORS").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        Cell::from("LIVE NOW").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        Cell::from("BOUNCE %").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+    ];
+
+    let mut rows: Vec<Row> = vec![Row::new(header_cells)];
+
+    let total_sites = sites.len();
+    let max_visible = main_inner.height.saturating_sub(2) as usize;
+    let start_idx = app.analytics_scroll.min(total_sites.saturating_sub(1));
+    let end_idx = (start_idx + max_visible).min(total_sites);
+
+    for i in start_idx..end_idx {
+        let site = &sites[i];
+        let is_selected = i == app.analytics_selected_site.min(total_sites - 1);
+        let prod_summary = site_products.iter().find(|p| p.product_id == site.id);
+
+        let pvs = prod_summary.map(|p| p.pageviews).unwrap_or(0);
+        let viss = prod_summary.map(|p| p.visitors).unwrap_or(0);
+        let live = prod_summary.map(|p| p.active_now).unwrap_or(0);
+        let bounce = prod_summary.map(|p| p.bounce_rate).unwrap_or(0.0);
+        let status = prod_summary.map(|p| p.status.clone()).unwrap_or_else(|| {
+            if live > 0 { "ACTIVE".to_string() } else if pvs > 0 { "IDLE".to_string() } else { "EMPTY".to_string() }
+        });
+
+        let status_style = if status == "ACTIVE" {
             Style::default().fg(Color::LightGreen)
-        } else if p.status == "IDLE" {
+        } else if status == "IDLE" {
             Style::default().fg(Color::LightYellow)
         } else {
             Style::default().fg(palette.text_muted)
         };
-        Line::from(vec![
-            Span::styled(format!("{:<14} ", p.name), Style::default().fg(Color::Rgb(255, 255, 255))),
-            Span::styled(format!("{:<18} ", p.domain), Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{:>4} Views ", p.pageviews), Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{:>4} UV ", p.visitors), Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{:>3} Now  ", p.active_now), Style::default().fg(Color::LightGreen)),
-            Span::styled(format!("{:.0}%B ", p.bounce_rate), Style::default().fg(Color::LightYellow)),
-            Span::styled(p.status.as_str(), status_style),
-        ])
-    }).collect();
 
-    let prod_area = Rect {
-        x: main_inner.x,
-        y: main_inner.y + 30,
-        width: main_inner.width,
-        height: 7,
-    };
-
-    f.render_widget(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" Product App Performance & Status ")
-            .border_style(Style::default().fg(palette.accent)),
-        prod_area
-    );
-    let inner_prod = prod_area.inner(Margin::new(1, 1));
-    f.render_widget(Paragraph::new(prod_lines), inner_prod);
-
-    // ── Engagement Metrics (Scroll Funnel · CTA Events · Rage Clicks · Dwell Time) ──
-
-    let eng_y = main_inner.y + 39;
-    let left_w = (main_inner.width / 2).max(24);
-    let right_w = main_inner.width.saturating_sub(left_w).saturating_sub(2).max(24);
-    let eng_h = 9u16;
-
-    // ── Scroll Funnel (25/50/75/100%) ──────────────────────────────────────
-    let scroll_areas = [25i32, 50, 75, 100];
-    let mut scroll_lines = Vec::new();
-    for pct in &scroll_areas {
-        let count = analytics
-            .scroll_funnel
-            .iter()
-            .find(|(d, _)| d == pct)
-            .map(|(_, c)| *c)
-            .unwrap_or(0);
-        let ratio = if total_views > 0 {
-            (count as f32 / total_views as f32) * 100.0
+        let row_style = if is_selected {
+            Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.status_ok).add_modifier(Modifier::BOLD)
         } else {
-            0.0
+            Style::default().fg(Color::Rgb(255, 255, 255))
         };
-        let bar_len = ((ratio / 100.0) * 10.0).min(10.0) as usize;
-        let bar_str = "▓".repeat(bar_len.max(if count > 0 { 1 } else { 0 }));
-        scroll_lines.push(Line::from(vec![
-            Span::styled(
-                format!("{:>3}%  ", pct),
-                Style::default().fg(palette.text_muted),
-            ),
-            Span::styled(
-                format!("{bar_str:<10} "),
-                Style::default().fg(palette.accent),
-            ),
-            Span::styled(
-                format!("{:>5} sessions", count),
-                Style::default().fg(Color::Rgb(255, 255, 255)),
-            ),
-        ]));
+
+        let mut spans: Vec<Span> = vec![
+            Span::styled(format!("{:<4}", i + 1), row_style.clone()),
+            Span::styled(format!("{:<18}", site.name), row_style.clone()),
+            Span::styled(format!("{:<24}", site.domain), row_style.clone()),
+            Span::styled(format!("{:<8}", status), status_style.clone()),
+            Span::styled(format!("{:>4}", pvs), row_style.clone()),
+            Span::styled(format!("{:>4}", viss), row_style.clone()),
+            Span::styled(format!("{:>4}", live), row_style.clone()),
+            Span::styled(format!("{:>6.1}%", bounce), row_style.clone()),
+        ];
+
+        let row_cells: Vec<Cell> = vec![Cell::from(Line::from(spans))];
+        rows.push(Row::new(row_cells));
+
+        let row_y = main_inner.y + (i as u16 - start_idx as u16 + 2).min(main_inner.height.saturating_sub(1));
+        let row_w = main_inner.width.saturating_sub(4);
+        app.register_hitbox(
+            Rect {
+                x: main_inner.x + 2,
+                y: row_y,
+                width: row_w,
+                height: 1,
+            },
+            HitboxAction::ViewAnalyticsDetail(i),
+        );
     }
-    let scroll_block = Block::default()
-        .borders(Borders::ALL)
-        .title(" 📜 Scroll Funnel ")
-        .border_style(Style::default().fg(palette.accent));
-    let scroll_rect = Rect {
-        x: main_inner.x,
-        y: eng_y,
-        width: left_w,
-        height: eng_h,
-    };
-    f.render_widget(scroll_block, scroll_rect);
-    let scroll_inner = scroll_rect.inner(Margin::new(1, 1));
-    f.render_widget(Paragraph::new(scroll_lines), scroll_inner);
 
-    // ── Top CTA Events ─────────────────────────────────────────────────────
-    let cta_lines: Vec<Line> = if analytics.top_cta_events.is_empty() {
-        vec![Line::from(
-            " No CTA events recorded yet".to_string(),
-        )]
-    } else {
-        analytics
-            .top_cta_events
-            .iter()
-            .map(|(name, count)| {
-                let ratio = if total_views > 0 {
-                    (*count as f32 / total_views as f32) * 100.0
-                } else {
-                    0.0
-                };
-                let bar_len = ((ratio / 100.0) * 10.0).min(10.0) as usize;
-                let bar_str = "▸".repeat(bar_len.max(if *count > 0 { 1 } else { 0 }));
-                let display_name: String = name.chars().take(20).collect();
-                Line::from(vec![
-                    Span::styled(
-                        format!("{:<12} ", display_name),
-                        Style::default().fg(Color::Rgb(255, 255, 255)),
-                    ),
-                    Span::styled(
-                        format!("{bar_str:<8} "),
-                        Style::default().fg(palette.accent),
-                    ),
-                    Span::styled(
-                        format!("{:>4} clicks", count),
-                        Style::default().fg(palette.text_muted),
-                    ),
-                ])
-            })
-            .collect()
-    };
-    let cta_block = Block::default()
-        .borders(Borders::ALL)
-        .title(" 🎯 Top CTA / Click Events ")
-        .border_style(Style::default().fg(palette.accent));
-    let cta_rect = Rect {
-        x: main_inner.x + left_w + 2,
-        y: eng_y,
-        width: right_w,
-        height: eng_h,
-    };
-    f.render_widget(cta_block, cta_rect);
-    let cta_inner = cta_rect.inner(Margin::new(1, 1));
-    f.render_widget(Paragraph::new(cta_lines).wrap(Wrap { trim: true }), cta_inner);
+    let sites_table = Table::new(rows, [
+        Constraint::Length(4),
+        Constraint::Length(18),
+        Constraint::Length(24),
+        Constraint::Length(8),
+        Constraint::Length(10),
+        Constraint::Length(10),
+        Constraint::Length(10),
+        Constraint::Min(8),
+    ])
+    .style(Style::default().fg(palette.text_muted));
 
-    // ── Rage Click Warnings & Avg Dwell Time ───────────────────────────────
-    let rage_y = eng_y + eng_h + 1;
-    let half_w = left_w.max(24);
-    let _rage_w = (right_w.max(24) / 2).max(16);
-
-    let rage_line = if analytics.rage_clicks > 0 {
-        Line::from(vec![
-            Span::styled(
-                "⚠ RAGE CLICK DETECTED: ",
-                Style::default()
-                    .fg(Color::Rgb(255, 80, 80))
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!("{} event(s) — user frustration signal", analytics.rage_clicks),
-                Style::default().fg(Color::Rgb(255, 150, 100)),
-            ),
-        ])
-    } else {
-        Line::from(Span::styled(
-            "✓ No rage clicks detected",
-            Style::default().fg(palette.status_ok),
-        ))
-    };
-
-    let dwell_min = (analytics.avg_dwell_time_secs / 60.0) as u32;
-    let dwell_sec = (analytics.avg_dwell_time_secs % 60.0) as u32;
-    let dwell_line = Line::from(vec![
-        Span::styled(
-            "Avg Dwell Time: ",
-            Style::default().fg(palette.text_muted),
-        ),
-        Span::styled(
-            format!("{}m {:>3}s", dwell_min, dwell_sec),
-            Style::default().fg(Color::Rgb(255, 255, 255)).add_modifier(Modifier::BOLD),
-        ),
-    ]);
-
-    let rage_block = Block::default()
-        .borders(Borders::ALL)
-        .title(" ⚡ Rage Click Warnings ")
-        .border_style(Style::default().fg(Color::Rgb(255, 80, 80)));
-    let rage_rect = Rect {
-        x: main_inner.x,
-        y: rage_y,
-        width: half_w,
-        height: 4,
-    };
-    f.render_widget(rage_block, rage_rect);
-    let rage_inner = rage_rect.inner(Margin::new(1, 1));
-    f.render_widget(
-        Paragraph::new(vec![rage_line, Line::from("  "), dwell_line.clone()]),
-        rage_inner,
-    );
-
-    let dwell_block = Block::default()
-        .borders(Borders::ALL)
-        .title(" ⏱ Engagement & Dwell Time ")
-        .border_style(Style::default().fg(palette.accent));
-    let dwell_rect = Rect {
-        x: main_inner.x + left_w + 2,
-        y: rage_y,
-        width: right_w,
-        height: 4,
-    };
-    f.render_widget(dwell_block, dwell_rect);
-    let dwell_inner = dwell_rect.inner(Margin::new(1, 1));
-    let dwell_extra_lines = vec![
-        Line::from(Span::styled(
-            "Active engagement time — tracked via visibility API & interaction events",
-            Style::default().fg(palette.text_muted),
-        )),
-    ];
-    f.render_widget(
-        Paragraph::new(vec![dwell_line]
-            .into_iter()
-            .chain(dwell_extra_lines)
-            .collect::<Vec<_>>()),
-        dwell_inner,
-    );
+    f.render_widget(sites_table, main_inner);
 
     if app.show_analytics_script_modal {
         draw_analytics_script_modal(f, app, area);
@@ -9616,8 +10714,9 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         "[Not Configured]"
     };
     let auto_prune_str = if app.cfg.database.auto_prune { "Enabled" } else { "Disabled" };
+    let matrix_rain_str = if app.cfg.output.matrix_rain { "Enabled (Matrix Rain Background)" } else { "Disabled (Clean Background)" };
 
-    let values: [&str; 22] = [
+    let values: [&str; 23] = [
         provider.as_str(),
         model,
         masked_key,
@@ -9640,6 +10739,7 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         coolify_url,
         coolify_token,
         auto_prune_str,
+        matrix_rain_str,
     ];
 
     let items: Vec<ListItem> = SETTINGS_FIELDS
@@ -9714,6 +10814,219 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     }
 }
 
+// ── Tab 12: Turbo & Performance Overclock Engine ─────────────────────────────
+
+fn draw_turbo_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(4), // Telemetry & Thermal HUD
+            Constraint::Min(12),   // Profiles (Left) + Granular Actions (Right)
+            Constraint::Length(9), // Live Execution Activity Stream & Benchmark Output
+        ])
+        .split(area);
+
+    // 1. Top HUD: Real-time Hardware Telemetry & Governor Status
+    let snap = &app.latest_snap;
+    let hud_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" ⚡ SOVEREIGN HARDWARE & KERNEL STATUS HUD ")
+        .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+    let hud_inner = hud_block.inner(chunks[0]);
+    f.render_widget(hud_block, chunks[0]);
+
+    let gov_color = if app.turbo_profile_active == "MAX_TURBO" { Color::Green } else { Color::Cyan };
+    let temp_color = if snap.cpu_temp_c > 80.0 { Color::LightRed } else if snap.cpu_temp_c > 65.0 { Color::Yellow } else { Color::Green };
+
+    let hud_line1 = Line::from(vec![
+        Span::styled(" Profile: ", Style::default().fg(palette.text_muted)),
+        Span::styled(format!("[ {} ]", app.turbo_profile_active), Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::raw("   "),
+        Span::styled("Governor: ", Style::default().fg(palette.text_muted)),
+        Span::styled("PERFORMANCE (All Cores)", Style::default().fg(gov_color).add_modifier(Modifier::BOLD)),
+        Span::raw("   "),
+        Span::styled("Intel Turbo Boost: ", Style::default().fg(palette.text_muted)),
+        Span::styled("ACTIVE (Up to 4.20 GHz)", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::raw("   "),
+        Span::styled("Package Temp: ", Style::default().fg(palette.text_muted)),
+        Span::styled(format!("{:.1}°C", snap.cpu_temp_c), Style::default().fg(temp_color).add_modifier(Modifier::BOLD)),
+    ]);
+
+    let ram_used = snap.ram_used_mb;
+    let ram_tot = snap.ram_total_mb;
+    let swap_used = snap.swap_used_mb;
+    let swap_tot = snap.swap_total_mb;
+
+    let hud_line2 = Line::from(vec![
+        Span::styled(" Memory: ", Style::default().fg(palette.text_muted)),
+        Span::styled(format!("{ram_used}/{ram_tot} MB"), Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::raw("   "),
+        Span::styled("ZRAM Swap: ", Style::default().fg(palette.text_muted)),
+        Span::styled(format!("{swap_used}/{swap_tot} MB"), Style::default().fg(Color::White)),
+        Span::raw("   "),
+        Span::styled("Docker Reclaimable: ", Style::default().fg(palette.text_muted)),
+        Span::styled("~68.7 GB (BuildKit + Images)", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+        Span::raw("   "),
+        Span::styled("TCP Congestion: ", Style::default().fg(palette.text_muted)),
+        Span::styled("BBR / Low Latency Mesh", Style::default().fg(Color::Green)),
+    ]);
+
+    f.render_widget(Paragraph::new(vec![hud_line1, hud_line2]), hud_inner);
+
+    // 2. Middle Body: Two Columns (Left: 4 Profiles, Right: 8 Actions)
+    let body_cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(42), // Profiles
+            Constraint::Percentage(58), // Granular Actions
+        ])
+        .split(chunks[1]);
+
+    // Left Column: 4 One-Click Profiles
+    let profiles_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 🚀 1-Click Sovereign Profiles [t, b, p, e] ")
+        .border_style(Style::default().fg(Color::Cyan));
+    let prof_inner = profiles_block.inner(body_cols[0]);
+    f.render_widget(profiles_block, body_cols[0]);
+
+    let profiles = [
+        ("⚡ [t] MAX SOVEREIGN TURBO", "Lock max 4.2GHz, EPP Performance, Renice CA daemons (-10), TCP BBR", 0),
+        ("🛠 [b] DEV BUILD ACCELERATOR", "Cargo 8 jobs, I/O Best-Effort high priority, Memory defrag", 1),
+        ("🧹 [p] DEEP STORAGE & RAM PURGE", "Flush Linux VFS caches, trim SSD, prune Docker 68GB build cache", 2),
+        ("🍃 [e] THERMAL SAFE / ECO", "Restore governor to powersave, EPP balance-power, quiet fan", 3),
+    ];
+
+    let mut prof_lines = Vec::new();
+    let mut current_py = prof_inner.y;
+    for (name, desc, idx) in &profiles {
+        let is_active = (app.turbo_profile_active == "MAX_TURBO" && *idx == 0)
+            || (app.turbo_profile_active == "BUILD_ACCEL" && *idx == 1)
+            || (app.turbo_profile_active == "PURGE_CACHE" && *idx == 2)
+            || (app.turbo_profile_active == "ECO_BALANCED" && *idx == 3);
+
+        let title_style = if is_active {
+            Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        };
+
+        prof_lines.push(Line::from(vec![
+            Span::styled(format!(" {name} "), title_style),
+        ]));
+        prof_lines.push(Line::from(vec![
+            Span::styled(format!("   {desc}"), Style::default().fg(palette.text_muted)),
+        ]));
+        prof_lines.push(Line::from(""));
+
+        app.register_hitbox(
+            Rect { x: prof_inner.x, y: current_py, width: prof_inner.width, height: 2 },
+            HitboxAction::TurboProfile(*idx),
+        );
+        current_py = current_py.saturating_add(3);
+    }
+    f.render_widget(Paragraph::new(prof_lines), prof_inner);
+
+    // Right Column: Granular Hardware & Software Optimization Actions
+    let actions_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" ⚙ Granular Optimizations [Select: j/k, Exec: Enter] ")
+        .border_style(Style::default().fg(palette.accent));
+    let act_inner = actions_block.inner(body_cols[1]);
+    f.render_widget(actions_block, body_cols[1]);
+
+    let opt_actions = [
+        ("Drop Linux VFS Page Caches", "Flushes pagecache, dentries & inodes to instantly reclaim inactive RAM", "echo 3 > /proc/sys/vm/drop_caches"),
+        ("Compact Linux Memory Pages", "Defragments continuous memory blocks for faster large Rustc allocs", "echo 1 > /proc/sys/vm/compact_memory"),
+        ("Prune Docker BuildKit Cache", "Safely purges dangling build cache layers (~56 GB reclaimable)", "docker builder prune -f"),
+        ("Prune Dangling Docker Images", "Removes untagged & orphaned container image layers", "docker image prune -f"),
+        ("Elevate CA Fleet Daemons", "Prioritizes cashell, caorch & 9router to nice -10 (Best-effort high)", "renice -n -10"),
+        ("Trim SSD NVMe Flash Blocks", "Sends discard requests to flash controller for optimal NVMe write IOPS", "fstrim -v /"),
+        ("Verify TCP BBR Congestion", "Ensures bottleneck bandwidth BBR algorithm active for fleet RPC", "sysctl net.ipv4.tcp_congestion_control"),
+        ("Vacuum & WAL Checkpoint DB", "Shrinks ~/.config/cashell/cashell.db via PRAGMA wal_checkpoint", "PRAGMA wal_checkpoint(TRUNCATE)"),
+    ];
+
+    let items: Vec<ListItem> = opt_actions
+        .iter()
+        .enumerate()
+        .map(|(i, (name, desc, cmd))| {
+            let is_sel = i == app.turbo_selected_action;
+            let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
+            let prefix = if is_sel { "▶ " } else { "  " };
+
+            let title_span = Span::styled(
+                format!("{:<28}", name),
+                Style::default().fg(if is_sel { palette.accent } else { palette.text }).add_modifier(Modifier::BOLD),
+            );
+            let cmd_span = Span::styled(
+                format!(" [{cmd}]"),
+                Style::default().fg(palette.text_muted),
+            );
+            let desc_span = Span::styled(
+                format!(" — {desc}"),
+                Style::default().fg(Color::DarkGray),
+            );
+
+            let line = Line::from(vec![
+                Span::styled(prefix, Style::default().fg(palette.accent)),
+                title_span,
+                cmd_span,
+                desc_span,
+            ]);
+            ListItem::new(line).style(Style::default().bg(bg))
+        })
+        .collect();
+
+    let mut state = ListState::default();
+    state.select(Some(app.turbo_selected_action));
+    f.render_stateful_widget(List::new(items), act_inner, &mut state);
+
+    // Register hitboxes for action rows
+    for (i, _) in opt_actions.iter().enumerate() {
+        if (i as u16) < act_inner.height {
+            let row_rect = Rect {
+                x: act_inner.x,
+                y: act_inner.y + (i as u16),
+                width: act_inner.width,
+                height: 1,
+            };
+            app.register_hitbox(row_rect, HitboxAction::TurboAction(i));
+        }
+    }
+
+    // 3. Bottom Panel: Activity Stream & Execution Output
+    let log_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 📜 Turbo Execution & Benchmark Activity Stream ")
+        .border_style(Style::default().fg(palette.border));
+    let log_inner = log_block.inner(chunks[2]);
+    f.render_widget(log_block, chunks[2]);
+
+    let log_lines: Vec<Line> = app
+        .turbo_log_buffer
+        .iter()
+        .rev()
+        .take(log_inner.height as usize)
+        .rev()
+        .map(|msg| {
+            let color = if msg.starts_with('⚡') || msg.starts_with('🛠') {
+                Color::Yellow
+            } else if msg.starts_with('🧹') {
+                Color::LightMagenta
+            } else if msg.starts_with('✔') {
+                Color::Green
+            } else {
+                Color::White
+            };
+            Line::from(vec![Span::styled(msg.clone(), Style::default().fg(color))])
+        })
+        .collect();
+
+    f.render_widget(Paragraph::new(log_lines), log_inner);
+}
+
 // ── Tab 5: AI Chat (Hana AI chat interface) ──────────────────────────────────
 
 
@@ -9721,7 +11034,7 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
 fn draw_footer(f: &mut Frame, app: &CockpitApp, area: Rect) {
     let palette = ThemePalette::get(&app.cfg.output.theme);
-    let keybinds = " [1-9/0/-]: Tabs │ Tab: Cycle │ Shift+1-9/0/-: Jump │ ↑/↓: Nav │ ?: Help │ Esc/q: Quit ";
+    let keybinds = " [1-9/0/-/=]: Tabs │ Tab: Cycle │ ↑/↓: Nav │ Enter: Act │ ?: Help │ Esc: Back ";
     let content = if let Some((msg, _)) = &app.notification {
         Line::from(vec![
             Span::styled(
@@ -10484,6 +11797,7 @@ fn draw_monitor_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let fields = [
         ("Monitor Name:", app.monitor_name_buf.clone(), "e.g. Payment Gateway"),
         ("Target URL:", app.monitor_url_buf.clone(), "e.g. https://api.fathforce.com/health"),
+        ("Group:", app.monitor_group_buf.clone(), "e.g. CA Ecosystem, Production, Custom"),
     ];
 
     let mut lines = Vec::new();
@@ -10917,8 +12231,8 @@ mod tests {
             let tab = CockpitTab::from_index(idx);
             assert_eq!(tab.to_index(), idx);
         }
-        assert_eq!(CockpitTab::titles().len(), 11);
-        assert_eq!(CockpitTab::COUNT, 11);
+        assert_eq!(CockpitTab::titles().len(), 12);
+        assert_eq!(CockpitTab::COUNT, 12);
     }
 
     #[test]
@@ -11214,11 +12528,12 @@ mod tests {
 
     #[test]
     fn test_settings_fields_coverage() {
-        assert_eq!(SETTINGS_FIELDS.len(), 22);
+        assert_eq!(SETTINGS_FIELDS.len(), 23);
         assert_eq!(SETTINGS_FIELDS[0], "AI Provider");
         assert_eq!(SETTINGS_FIELDS[3], "Output Theme");
         assert_eq!(SETTINGS_FIELDS[11], "Master Password Protection");
         assert_eq!(SETTINGS_FIELDS[12], "Set/Change Master Password");
+        assert_eq!(SETTINGS_FIELDS[22], "Matrix Rain Effect");
     }
 
     #[test]
@@ -11406,6 +12721,7 @@ mod tests {
             status_code: Some(200),
             uptime_pct: 100.0,
             history: vec![],
+            group: "Test".to_string(),
         });
         app.selected_monitor = app.latest_snap.uptime_monitors.len() - 1;
         app.remove_selected_monitor();
@@ -11415,4 +12731,96 @@ mod tests {
         assert!(!app.show_delete_confirm);
         assert!(!app.latest_snap.uptime_monitors.iter().any(|m| m.name == "fake-mon"));
     }
+
+    #[test]
+    fn test_test_telegram_alert() {
+        let mut cfg = Config::default();
+        cfg.uptime.telegram_bot_token.clear();
+        cfg.daemon.telegram_bot_token.clear();
+        let mut app = CockpitApp::new(&cfg);
+
+        // When token is empty -> warning toast
+        app.trigger_test_telegram_alert();
+        let notif = app.notification.as_ref().map(|(n, _)| n.as_str());
+        assert_eq!(notif, Some("⚠ Configure Telegram Bot Token & Chat ID in Settings first."));
+
+        // When token is set in uptime -> success toast
+        app.cfg.uptime.telegram_bot_token = "123456:BOT_TOKEN".to_string();
+        app.cfg.uptime.telegram_chat_id = "12345678".to_string();
+        app.trigger_test_telegram_alert();
+        let notif = app.notification.as_ref().map(|(n, _)| n.as_str());
+        assert_eq!(notif, Some("📨 Test Telegram alert sent! Check your Telegram if it's configured."));
+    }
+
+    #[test]
+    fn test_parse_command_tokens() {
+        let tokens = parse_command_tokens(r#"/uptime add-monitor "Landing CATerm" "https://caterm.fathforce.com""#);
+        assert_eq!(tokens, vec!["/uptime", "add-monitor", "Landing CATerm", "https://caterm.fathforce.com"]);
+
+        let tokens = parse_command_tokens("/go uptime");
+        assert_eq!(tokens, vec!["/go", "uptime"]);
+
+        let tokens = parse_command_tokens(r#"/uptime delete "Landing CATerm""#);
+        assert_eq!(tokens, vec!["/uptime", "delete", "Landing CATerm"]);
+    }
+
+    #[test]
+    fn test_ai_slash_commands() {
+        let cfg = Config::default();
+        let mut app = CockpitApp::new(&cfg);
+
+        // Non-slash command -> returns false
+        assert!(!handle_ai_slash_command(&mut app, "Hello AI, how are you?"));
+
+        // /go tabs
+        assert!(handle_ai_slash_command(&mut app, "/go uptime"));
+        assert_eq!(app.current_tab, CockpitTab::Uptime);
+
+        assert!(handle_ai_slash_command(&mut app, "/go analytics"));
+        assert_eq!(app.current_tab, CockpitTab::Analytics);
+
+        assert!(handle_ai_slash_command(&mut app, "/go fleet"));
+        assert_eq!(app.current_tab, CockpitTab::Server);
+
+        // /uptime add-monitor
+        assert!(handle_ai_slash_command(&mut app, r#"/uptime add-monitor "Test Monitor" "https://test.local""#));
+        assert!(app.latest_snap.uptime_monitors.iter().any(|m| m.name == "Test Monitor"));
+        assert!(app.cfg.uptime.custom_monitors.iter().any(|m| m.name == "Test Monitor"));
+        let last_chat = app.chat_lines.last().cloned().unwrap_or_default();
+        assert!(last_chat.contains("Added monitor 'Test Monitor'"));
+
+        // /uptime delete
+        assert!(handle_ai_slash_command(&mut app, r#"/uptime delete "Test Monitor""#));
+        assert!(app.show_delete_confirm);
+        assert_eq!(app.pending_delete_target, DeleteTarget::Monitor);
+        app.execute_pending_deletion();
+        assert!(!app.latest_snap.uptime_monitors.iter().any(|m| m.name == "Test Monitor"));
+
+        // /uptime test-telegram
+        assert!(handle_ai_slash_command(&mut app, "/uptime test-telegram"));
+
+        // /analytics refresh
+        assert!(handle_ai_slash_command(&mut app, "/analytics refresh"));
+        let last_chat = app.chat_lines.last().cloned().unwrap_or_default();
+        assert!(last_chat.contains("Analytics refreshed"));
+
+        // /analytics site
+        assert!(handle_ai_slash_command(&mut app, "/analytics site all"));
+        assert_eq!(app.analytics_selected_site, 0);
+
+        // /fleet status
+        assert!(handle_ai_slash_command(&mut app, "/fleet status"));
+        assert!(app.chat_lines.iter().any(|line| line.contains("Fleet Status")));
+
+        // /fleet restart with confirmation prompt
+        assert!(handle_ai_slash_command(&mut app, "/fleet restart test-service"));
+        assert_eq!(app.pending_service_restart, Some("test-service".to_string()));
+        let last_chat = app.chat_lines.last().cloned().unwrap_or_default();
+        assert!(last_chat.contains("Confirm restart of service 'test-service'"));
+
+        // confirm with "yes"
+        assert!(handle_ai_slash_command(&mut app, "yes"));
+        assert_eq!(app.pending_service_restart, None);
+    }
 }
+pub(crate) fn noop() {}

@@ -1286,14 +1286,13 @@ impl Database {
         let mut product_analytics: Vec<crate::systat::ProductAnalyticsSummary> = Vec::new();
         for site in &canonical_products {
             let pid = site.id.clone();
-            let pid_filter: Option<&str> = if ref_val.is_none() { Some(pid.as_str()) } else { ref_val };
-            let site_val = pid_filter.unwrap_or("default");
+            let domain = site.domain.clone();
 
             let p_pvs = self
                 .conn
                 .query_row(
-                    "SELECT COUNT(*) FROM analytics_events WHERE website_id = ?1",
-                    params![site_val],
+                    "SELECT COUNT(*) FROM analytics_events WHERE website_id = ?1 OR website_id = ?2",
+                    params![pid, domain],
                     |row| row.get(0),
                 )
                 .unwrap_or(0);
@@ -1301,8 +1300,8 @@ impl Database {
             let p_viss = self
                 .conn
                 .query_row(
-                    "SELECT COUNT(DISTINCT visitor_hash) FROM analytics_events WHERE website_id = ?1",
-                    params![site_val],
+                    "SELECT COUNT(DISTINCT visitor_hash) FROM analytics_events WHERE website_id = ?1 OR website_id = ?2",
+                    params![pid, domain],
                     |row| row.get(0),
                 )
                 .unwrap_or(0);
@@ -1310,8 +1309,8 @@ impl Database {
             let p_actives = self
                 .conn
                 .query_row(
-                    "SELECT COUNT(DISTINCT visitor_hash) FROM analytics_events WHERE website_id = ?1 AND created_at >= datetime('now', '-5 minutes')",
-                    params![site_val],
+                    "SELECT COUNT(DISTINCT visitor_hash) FROM analytics_events WHERE (website_id = ?1 OR website_id = ?2) AND created_at >= datetime('now', '-5 minutes')",
+                    params![pid, domain],
                     |row| row.get(0),
                 )
                 .unwrap_or(0);
@@ -1320,8 +1319,8 @@ impl Database {
                 .conn
                 .query_row(
                     "SELECT COALESCE(SUM(CASE WHEN pv = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 0.0)
-                     FROM (SELECT session_id, COUNT(*) as pv FROM analytics_events WHERE website_id = ?1 GROUP BY session_id)",
-                    params![site_val],
+                     FROM (SELECT session_id, COUNT(*) as pv FROM analytics_events WHERE website_id = ?1 OR website_id = ?2 GROUP BY session_id)",
+                    params![pid, domain],
                     |row| row.get(0),
                 )
                 .unwrap_or(0.0);

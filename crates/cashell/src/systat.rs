@@ -188,6 +188,8 @@ pub struct UptimeMonitor {
     pub uptime_pct: f32,
     /// Last 20 probe results (true = up, false = down), newest last.
     pub history: Vec<bool>,
+    /// Group label (e.g. "Ecosystem", "Production", "Custom") used by the cockpit Uptime tab.
+    pub group: String,
 }
 
 /// Breakdown of traffic and landing stats for a specific CA product.
@@ -1264,44 +1266,71 @@ fn commit_compose_service(
 // ── Uptime Kuma Style Endpoint Monitors ──────────────────────────────────────
 
 static UPTIME_HISTORY_STORE: Mutex<Option<std::collections::HashMap<String, Vec<bool>>>> = Mutex::new(None);
+static PREV_UPTIME_STATE: Mutex<Option<std::collections::HashMap<String, bool>>> = Mutex::new(None);
 
-type ProbeResult = (String, String, bool, Option<u64>, Option<u16>);
+type ProbeResult = (String, String, bool, Option<u64>, Option<u16>, String);
+
+pub fn send_telegram_alert(token: &str, chat_id: &str, message: &str) {
+    let token = token.to_string();
+    let chat_id = chat_id.to_string();
+    let message = message.to_string();
+    std::thread::spawn(move || {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build();
+        if let Ok(c) = client {
+            let url = format!("https://api.telegram.org/bot{token}/sendMessage");
+            let body = serde_json::json!({
+                "chat_id": chat_id,
+                "text": message,
+                "parse_mode": "Markdown"
+            });
+            let _ = c.post(&url).json(&body).send();
+        }
+    });
+}
 
 pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
     use rayon::prelude::*;
 
-    let default_targets = [
-        ("Landing CATerm", "https://caterm.fathforce.com/"),
-        ("CAMark Studio", "https://camark.fathforce.com/"),
-        ("CAFramework Hub", "https://caframework.fathforce.com/"),
-        ("CAShell Portal", "https://cashell.fathforce.com/"),
-        ("CAOrch Web", "https://caorch.fathforce.com/"),
-        ("CAUI Design System", "https://caui.fathforce.com/"),
-        ("CAStudio Studio", "https://castudio.fathforce.com/"),
-        ("CACash Finance", "https://cacash.fathforce.com/"),
-        ("Fathforce Blog", "https://blog.fathforce.com/"),
-        ("Fathforce Docs", "https://docs.fathforce.com/"),
-        ("Cecep Azhar Portal", "https://cecepazhar.com/"),
-        ("Fathforce Master", "https://fathforce.com/"),
-        ("FathStore Engine", "https://fathstore.com/"),
-        ("Tencent Traefik :80", "http://100.96.8.82/"),
-        ("Tencent CAOrch :8091", "http://100.96.8.82:8091/"),
-        ("Dokploy YPC Host", "http://100.127.232.32:3000"),
-        ("Hostinger Gateway", "https://100.76.150.46:8443"),
-        ("9router AI Gateway", "http://127.0.0.1:20128/health"),
-        ("CAShell Local Daemon", "http://127.0.0.1:8090/api/health"),
+    let default_targets: &[(&str, &str, &str)] = &[
+        ("Landing CATerm", "https://caterm.fathforce.com/", "CA Ecosystem"),
+        ("CAMark Studio", "https://camark.fathforce.com/", "CA Ecosystem"),
+        ("CAFramework Hub", "https://caframework.fathforce.com/", "CA Ecosystem"),
+        ("CAShell Portal", "https://cashell.fathforce.com/", "CA Ecosystem"),
+        ("CAOrch Web", "https://caorch.fathforce.com/", "CA Ecosystem"),
+        ("CAUI Design System", "https://caui.fathforce.com/", "CA Ecosystem"),
+        ("CAStudio Studio", "https://castudio.fathforce.com/", "CA Ecosystem"),
+        ("CACash Finance", "https://cacash.fathforce.com/", "CA Ecosystem"),
+        ("Fathforce Blog", "https://blog.fathforce.com/", "CA Ecosystem"),
+        ("Fathforce Docs", "https://docs.fathforce.com/", "CA Ecosystem"),
+        ("Cecep Azhar Portal", "https://cecepazhar.com/", "CA Ecosystem"),
+        ("Fathforce Master", "https://fathforce.com/", "CA Ecosystem"),
+        ("FathStore Engine", "https://fathstore.com/", "CA Ecosystem"),
+        ("Tencent Traefik :80", "http://100.96.8.82/", "Fleet Nodes"),
+        ("Tencent CAOrch :8091", "http://100.96.8.82:8091/", "Fleet Nodes"),
+        ("Dokploy YPC Host", "http://100.127.232.32:3000", "Fleet Nodes"),
+        ("Hostinger Gateway", "https://100.76.150.46:8443", "Fleet Nodes"),
+        ("9router AI Gateway", "http://127.0.0.1:20128/health", "Localhost"),
+        ("CAShell Local Daemon", "http://127.0.0.1:8090/api/health", "Localhost"),
     ];
 
-    let mut targets: Vec<(String, String)> = default_targets
+    let mut targets: Vec<(String, String, String)> = default_targets
         .iter()
-        .map(|&(n, u)| (n.to_string(), u.to_string()))
+        .map(|&(n, u, g)| (n.to_string(), u.to_string(), g.to_string()))
         .collect();
 
-    // Load custom monitors from config
-    if let Ok(cfg) = crate::config::Config::load(None) {
-        for m in cfg.uptime.custom_monitors {
-            if !targets.iter().any(|(_, u)| u == &m.target) {
-                targets.push((m.name, m.target));
+    let cfg_opt = crate::config::Config::load(None).ok();
+
+    // Filter out disabled monitors from default targets
+    if let Some(ref cfg) = cfg_opt {
+        targets.retain(|(name, _, _)| !cfg.uptime.disabled_monitors.contains(name));
+
+        // Load custom monitors from config
+        for m in &cfg.uptime.custom_monitors {
+            if !cfg.uptime.disabled_monitors.contains(&m.name) && !targets.iter().any(|(_, u, _)| u == &m.target) {
+                let grp = if m.group.trim().is_empty() { "Custom".to_string() } else { m.group.clone() };
+                targets.push((m.name.clone(), m.target.clone(), grp));
             }
         }
     }
@@ -1309,9 +1338,11 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
     // Load custom monitors from SQLite
     if let Ok(db) = crate::db::Database::open() {
         if let Ok(db_monitors) = db.get_uptime_monitors() {
+            let disabled = cfg_opt.as_ref().map(|c| &c.uptime.disabled_monitors);
             for (name, url) in db_monitors {
-                if !targets.iter().any(|(_, u)| u == &url) {
-                    targets.push((name, url));
+                let is_disabled = disabled.map(|d| d.contains(&name)).unwrap_or(false);
+                if !is_disabled && !targets.iter().any(|(_, u, _)| u == &url) {
+                    targets.push((name, url, "Custom".to_string()));
                 }
             }
         }
@@ -1319,7 +1350,7 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
 
     let probe_results: Vec<ProbeResult> = targets
         .par_iter()
-        .map(|(name, url)| {
+        .map(|(name, url, group)| {
             let start = Instant::now();
             if url.starts_with("http://") || url.starts_with("https://") {
                 let client = reqwest::blocking::Client::builder()
@@ -1332,22 +1363,70 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
                         let lat = start.elapsed().as_millis() as u64;
                         let code = res.status().as_u16();
                         let is_up = res.status().is_success() || res.status().is_redirection() || code == 404 || code == 401;
-                        return (name.to_string(), url.to_string(), is_up, Some(lat), Some(code));
+                        return (name.to_string(), url.to_string(), is_up, Some(lat), Some(code), group.to_string());
                     }
                 }
-                (name.to_string(), url.to_string(), false, None, None)
+                (name.to_string(), url.to_string(), false, None, None, group.to_string())
             } else {
-                (name.to_string(), url.to_string(), false, None, None)
+                (name.to_string(), url.to_string(), false, None, None, group.to_string())
             }
         })
         .collect();
+
+    // Check state transitions for Telegram alerts
+    if let Some(ref cfg) = cfg_opt {
+        if cfg.uptime.telegram_alerts_enabled {
+            let bot_token = if !cfg.uptime.telegram_bot_token.is_empty() {
+                Some(cfg.uptime.telegram_bot_token.clone())
+            } else if !cfg.daemon.telegram_bot_token.is_empty() {
+                Some(cfg.daemon.telegram_bot_token.clone())
+            } else {
+                None
+            };
+            let chat_id = if !cfg.uptime.telegram_chat_id.is_empty() {
+                Some(cfg.uptime.telegram_chat_id.clone())
+            } else if !cfg.daemon.telegram_chat_id.is_empty() {
+                Some(cfg.daemon.telegram_chat_id.clone())
+            } else {
+                None
+            };
+
+            if let (Some(token), Some(chat)) = (bot_token, chat_id) {
+                let mut state_guard = PREV_UPTIME_STATE.lock().unwrap();
+                let prev_map = state_guard.get_or_insert_with(std::collections::HashMap::new);
+
+                for (name, url, is_up, latency_ms, status_code, _) in &probe_results {
+                    if let Some(&prev_up) = prev_map.get(name) {
+                        if prev_up && !*is_up {
+                            let code_str = status_code.map(|c| c.to_string()).unwrap_or_else(|| "Connection Error / Timeout".to_string());
+                            let time_str = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                            let msg = format!(
+                                "🚨 *[CASHELL UPTIME ALERT]*\n❌ *Endpoint DOWN*: `{}`\n• URL: {}\n• Code: {}\n• Time: `{}`",
+                                name, url, code_str, time_str
+                            );
+                            send_telegram_alert(&token, &chat, &msg);
+                        } else if !prev_up && *is_up {
+                            let lat_str = latency_ms.map(|l| format!("{l}ms")).unwrap_or_else(|| "--".to_string());
+                            let time_str = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                            let msg = format!(
+                                "✅ *[CASHELL UPTIME RECOVERY]*\n🟢 *Endpoint RECOVERED*: `{}`\n• URL: {}\n• Latency: {}\n• Time: `{}`",
+                                name, url, lat_str, time_str
+                            );
+                            send_telegram_alert(&token, &chat, &msg);
+                        }
+                    }
+                    prev_map.insert(name.clone(), *is_up);
+                }
+            }
+        }
+    }
 
     // Update historical 20-heartbeat ring in global store
     let mut store_guard = UPTIME_HISTORY_STORE.lock().unwrap();
     let store = store_guard.get_or_insert_with(std::collections::HashMap::new);
 
     let mut monitors = Vec::new();
-    for (name, url, is_up, latency_ms, status_code) in probe_results {
+    for (name, url, is_up, latency_ms, status_code, group) in probe_results {
         let hist = store.entry(name.clone()).or_insert_with(|| vec![true; 19]);
         hist.push(is_up);
         if hist.len() > 20 {
@@ -1365,6 +1444,7 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
             status_code,
             uptime_pct,
             history: hist.clone(),
+            group,
         });
     }
 

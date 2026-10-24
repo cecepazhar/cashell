@@ -1,6 +1,6 @@
 [package]
 name = "caorch"
-version = "0.3.7"
+version = "1.0.1"
 edition = "2021"
 description = "CAOrch — Lightweight Fleet Agent Daemon for CA Ecosystem"
 authors = ["Cecep Saeful Azhar Hidayat, ST"]

@@ -254,14 +254,21 @@ pub const PRESET_THEMES: &[&str] = &[
 pub struct OutputConfig {
     #[serde(default = "default_theme")]
     pub theme: String,
+    #[serde(default = "default_matrix_rain")]
+    pub matrix_rain: bool,
 }
 
 impl Default for OutputConfig {
     fn default() -> Self {
         Self {
             theme: default_theme(),
+            matrix_rain: default_matrix_rain(),
         }
     }
+}
+
+pub fn default_matrix_rain() -> bool {
+    true
 }
 
 fn default_theme() -> String {
@@ -368,11 +375,39 @@ fn default_ignore_patterns() -> Vec<String> {
 }
 
 /// Uptime Kuma endpoint monitor configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UptimeConfig {
     /// Custom Uptime Kuma endpoint monitors added via the cockpit wizard.
     #[serde(default)]
     pub custom_monitors: Vec<UptimeMonitorConfig>,
+    /// List of monitor names that have been deleted or disabled by the user.
+    #[serde(default)]
+    pub disabled_monitors: Vec<String>,
+    /// Telegram bot token for uptime state-change alerts.
+    #[serde(default)]
+    pub telegram_bot_token: String,
+    /// Telegram chat ID for uptime state-change alerts.
+    #[serde(default)]
+    pub telegram_chat_id: String,
+    /// Whether Telegram notifications are enabled on status change.
+    #[serde(default = "default_telegram_alerts_enabled")]
+    pub telegram_alerts_enabled: bool,
+}
+
+impl Default for UptimeConfig {
+    fn default() -> Self {
+        Self {
+            custom_monitors: Vec::new(),
+            disabled_monitors: Vec::new(),
+            telegram_bot_token: String::new(),
+            telegram_chat_id: String::new(),
+            telegram_alerts_enabled: default_telegram_alerts_enabled(),
+        }
+    }
+}
+
+fn default_telegram_alerts_enabled() -> bool {
+    true
 }
 
 /// A custom Uptime Kuma style endpoint monitor definition.
@@ -380,6 +415,12 @@ pub struct UptimeConfig {
 pub struct UptimeMonitorConfig {
     pub name: String,
     pub target: String,
+    #[serde(default = "default_monitor_group")]
+    pub group: String,
+}
+
+pub fn default_monitor_group() -> String {
+    "Custom".to_string()
 }
 
 /// Docker container runtime configuration.
@@ -735,5 +776,30 @@ mod tests {
         assert_eq!(cfg.pro.api_base, "https://api.fathforce.com");
         assert!(cfg.pro.auto_sync);
         assert!(cfg.pro.sync_on_startup);
+    }
+
+    #[test]
+    fn test_uptime_config_defaults_and_deserialize() {
+        let uptime = UptimeConfig::default();
+        assert_eq!(uptime.telegram_bot_token, "");
+        assert_eq!(uptime.telegram_chat_id, "");
+        assert!(uptime.telegram_alerts_enabled);
+
+        let toml_str = r#"
+            [uptime]
+            telegram_bot_token = "123456:ABC-DEF"
+            telegram_chat_id = "987654321"
+        "#;
+        let cfg: Config = toml::from_str(toml_str).expect("deserialize failed");
+        assert_eq!(cfg.uptime.telegram_bot_token, "123456:ABC-DEF");
+        assert_eq!(cfg.uptime.telegram_chat_id, "987654321");
+        assert!(cfg.uptime.telegram_alerts_enabled);
+
+        let toml_empty = r#"
+            [uptime]
+        "#;
+        let cfg_empty: Config = toml::from_str(toml_empty).expect("deserialize failed");
+        assert_eq!(cfg_empty.uptime.telegram_bot_token, "");
+        assert_eq!(cfg_empty.uptime.telegram_chat_id, "");
     }
 }
