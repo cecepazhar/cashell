@@ -313,7 +313,7 @@ async fn collect_cors_preflight() -> impl IntoResponse {
 
 // ── Sovereign Web Analytics / Umami-like Endpoints ──────────────────────────
 
-/// Serve the 2KB lightweight JavaScript tracking script for sovereign web analytics.
+/// Serve the lightweight JavaScript tracking script for sovereign web analytics.
 async fn tracker_js_handler() -> impl axum::response::IntoResponse {
     (
         [
@@ -324,8 +324,18 @@ async fn tracker_js_handler() -> impl axum::response::IntoResponse {
 (function(){
   var host = document.currentScript && document.currentScript.src ? document.currentScript.src.split('/').slice(0, 3).join('/') : (location.protocol + '//' + location.hostname + ':8090');
   var siteId = (document.currentScript && document.currentScript.getAttribute('data-site')) || 'default';
-  function send(){
-    var data = {
+  function beacon(data){
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(host + '/api/collect', new Blob([JSON.stringify(data)], {type: 'application/json'}));
+    } else if (XMLHttpRequest) {
+      var x = new XMLHttpRequest();
+      x.open('POST', host + '/api/collect', true);
+      x.setRequestHeader('Content-Type', 'application/json');
+      x.send(JSON.stringify(data));
+    }
+  }
+  function base(){
+    return {
       website_id: siteId,
       url: location.href,
       referrer: document.referrer,
@@ -339,23 +349,150 @@ async fn tracker_js_handler() -> impl axum::response::IntoResponse {
         } catch(e){ return 's_fallback_' + Math.floor(Math.random()*999999); }
       })()
     };
-    if (navigator.sendBeacon) {
-      navigator.sendBeacon(host + '/api/collect', new Blob([JSON.stringify(data)], {type: 'application/json'}));
-    } else if (XMLHttpRequest) {
-      var x = new XMLHttpRequest();
-      x.open('POST', host + '/api/collect', true);
-      x.setRequestHeader('Content-Type', 'application/json');
-      x.send(JSON.stringify(data));
+  }
+  // ── Pageview ──────────────────────────────────────────────────────────
+  function sendPageview(){
+    var d = base();
+    d.event_type = 'pageview';
+    beacon(d);
+  }
+
+  // ── Scroll Depth ─────────────────────────────────────────────────────
+  var scrollMilestones = [25, 50, 75, 90, 100];
+  var scrollSent = {};
+  function onScroll(){
+    if (document.documentElement.scrollHeight <= document.documentElement.clientHeight) return;
+    var pct = Math.min(100, Math.round(
+      (document.documentElement.scrollTop + document.documentElement.clientHeight) /
+      document.documentElement.scrollHeight * 100
+    ));
+    var sent = false;
+    for (var i = 0; i < scrollMilestones.length; i++) {
+      var m = scrollMilestones[i];
+      if (pct >= m && !scrollSent[m]) {
+        scrollSent[m] = true;
+        var d = base();
+        d.event_type = 'scroll_depth';
+        d.scroll_depth = m;
+        beacon(d);
+        sent = true;
+      }
     }
   }
-  if(document.readyState === 'complete') send();
-  else window.addEventListener('load', send);
+  window.addEventListener('scroll', onScroll, { passive: true });
+
+  // ── Click & CTA Tracking + Rage Click Detection ─────────────────────
+  var clickLog = {};
+  function elementKey(el){
+    if (!el) return 'unknown';
+    if (el.dataset && el.dataset.cashellEvent) return el.dataset.cashellEvent;
+    if (el.tagName) return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '');
+    return 'unknown';
+  }
+  function relativeCoords(clientX, clientY){
+    var docW = Math.max(document.documentElement.scrollWidth, document.body ? document.body.scrollWidth : 0);
+    var docH = Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0);
+    var px = 0, py = 0;
+    var docEl = document.documentElement;
+    var body = document.body;
+    if (docEl && body) {
+      var docTop = window.pageYOffset || document.documentElement.scrollTop;
+      var docLeft = window.pageXOffset || document.documentElement.scrollLeft;
+      var clientRect = docEl.getClientRects && docEl.getClientRects()[0];
+      px = clientX - (docLeft - (clientRect ? clientRect.left : 0));
+      py = clientY - (docTop - (clientRect ? clientRect.top : 0));
+    } else {
+      px = clientX; py = clientY;
+    }
+    return {
+      click_x: docW > 0 ? Math.min(100, Math.max(0, px / docW * 100)) : 0,
+      click_y: docH > 0 ? Math.min(100, Math.max(0, py / docH * 100)) : 0
+    };
+  }
+  function onClick(e){
+    var target = e.target || e.srcElement;
+    while (target && target !== document.body && target !== document.documentElement) {
+      if (target.dataset && target.dataset.cashellEvent) break;
+      if (target.tagName === 'BUTTON' || target.tagName === 'A') break;
+      target = target.parentElement;
+    }
+    if (!target || target === document.body || target === document.documentElement) return;
+
+    var isCta = (target.dataset && target.dataset.cashellEvent) ? true :
+                (target.tagName === 'BUTTON' || target.tagName === 'A');
+    if (!isCta) return;
+
+    var key = elementKey(target);
+    var now = Date.now();
+    clickLog[key] = clickLog[key] || [];
+    clickLog[key] = clickLog[key].filter(function(t){ return now - t < 1000; });
+    clickLog[key].push(now);
+
+    var coords = relativeCoords(e.clientX || 0, e.clientY || 0);
+    var event_name = (target.dataset && target.dataset.cashellEvent) ?
+                     target.dataset.cashellEvent : key;
+    var event_data = (target.dataset && target.dataset.cashellVal) ?
+                     target.dataset.cashellVal : null;
+
+    if (clickLog[key].length > 3) {
+      var d = base();
+      d.event_type = 'rage_click';
+      d.event_name = event_name;
+      d.event_data = event_data ? JSON.stringify({ val: event_data, clicks: clickLog[key].length }) : null;
+      d.click_x = coords.click_x;
+      d.click_y = coords.click_y;
+      beacon(d);
+    } else {
+      var d2 = base();
+      d2.event_type = 'click';
+      d2.event_name = event_name;
+      d2.event_data = event_data ? JSON.stringify({ val: event_data }) : null;
+      d2.click_x = coords.click_x;
+      d2.click_y = coords.click_y;
+      beacon(d2);
+    }
+  }
+  document.addEventListener('click', onClick, { passive: true, capture: true });
+
+  // ── Active Dwell Time ─────────────────────────────────────────────────
+  var dwellStart = null;
+  var activeDwellMs = 0;
+  var lastInteraction = Date.now();
+  function userInteracted(){ lastInteraction = Date.now(); }
+  ['mousemove', 'keydown', 'scroll'].forEach(function(evt){
+    document.addEventListener(evt, userInteracted, { passive: true });
+  });
+  function onVisibilityChange(){
+    if (document.visibilityState === 'visible') {
+      dwellStart = Date.now();
+    } else {
+      flushDwell();
+    }
+  }
+  function flushDwell(){
+    if (dwellStart !== null && document.visibilityState === 'visible') {
+      activeDwellMs += Date.now() - dwellStart;
+      dwellStart = null;
+    }
+    if (activeDwellMs > 0) {
+      var durSecs = Math.round(activeDwellMs / 1000);
+      var d = base();
+      d.event_type = 'dwell_time';
+      d.duration_secs = durSecs;
+      beacon(d);
+    }
+  }
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  window.addEventListener('beforeunload', function(){ flushDwell(); });
+
+  if (document.readyState === 'complete') sendPageview();
+  else window.addEventListener('load', sendPageview);
 })();
 "#,
     )
 }
 
-/// Receive and persist a web pageview event to the sovereign SQLite analytics database.
+/// Receive and persist a web analytics event to the sovereign SQLite analytics database.
 async fn collect_analytics_handler(
     headers: axum::http::HeaderMap,
     Json(payload): Json<serde_json::Value>,
@@ -379,9 +516,31 @@ async fn collect_analytics_handler(
     let hash_input = format!("{client_ip}_{today_str}");
     let visitor_hash = hex_sha256(&hash_input);
 
+    // ── Advanced event fields ────────────────────────────────────────────
+    let event_type = payload
+        .get("event_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("pageview")
+        .to_string();
+    let event_name = payload.get("event_name").and_then(|v| v.as_str()).map(String::from);
+    let event_data = payload.get("event_data").and_then(|v| match v {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
+            Some(v.to_string())
+        }
+        _ => None,
+    });
+    let click_x = payload.get("click_x").and_then(|v| v.as_f64());
+    let click_y = payload.get("click_y").and_then(|v| v.as_f64());
+    let scroll_depth = payload
+        .get("scroll_depth")
+        .and_then(|v| v.as_i64())
+        .map(|v| v as i32);
+    let duration_secs = payload.get("duration_secs").and_then(|v| v.as_i64());
+
     let db = crate::db::Database::open();
     let result = db.map(|d| {
-        d.record_pageview(
+        d.record_analytics_event(
             &website_id,
             &session_id,
             &url,
@@ -392,6 +551,13 @@ async fn collect_analytics_handler(
             &device,
             "",
             &visitor_hash,
+            &event_type,
+            event_name.as_deref(),
+            event_data.as_deref(),
+            click_x,
+            click_y,
+            scroll_depth,
+            duration_secs,
         )
     });
 
@@ -402,7 +568,7 @@ async fn collect_analytics_handler(
                 [
                     ("access-control-allow-origin", "*"),
                     ("access-control-allow-methods", "POST, GET, OPTIONS"),
-                    ("access-control-allow-headers", "content-type"),
+                    ("access-control-allow-headers", "*"),
                 ],
                 Json(serde_json::json!({"status": "ok"})),
             )
@@ -414,7 +580,7 @@ async fn collect_analytics_handler(
                 [
                     ("access-control-allow-origin", "*"),
                     ("access-control-allow-methods", "POST, GET, OPTIONS"),
-                    ("access-control-allow-headers", "content-type"),
+                    ("access-control-allow-headers", "*"),
                 ],
                 Json(serde_json::json!({"error": "db_write_failure"})),
             )
@@ -443,8 +609,20 @@ async fn analytics_summary_handler() -> impl IntoResponse {
                     "country_breakdown": summary.country_breakdown,
                     "daily_traffic": summary.daily_traffic,
                     "product_analytics": summary.product_analytics,
+                    "scroll_funnel": summary.scroll_funnel,
+                    "top_cta_events": summary.top_cta_events,
+                    "rage_clicks": summary.rage_clicks,
+                    "avg_dwell_time_secs": summary.avg_dwell_time_secs,
                 });
-                (StatusCode::OK, Json(json_val)).into_response()
+                (
+                    StatusCode::OK,
+                    [
+                        ("access-control-allow-origin", "*"),
+                        ("access-control-allow-methods", "GET, OPTIONS"),
+                    ],
+                    Json(json_val),
+                )
+                    .into_response()
             }
             Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "db_error").into_response(),
         },

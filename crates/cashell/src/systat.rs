@@ -235,6 +235,14 @@ pub struct AnalyticsSummary {
     pub country_breakdown: Vec<AnalyticsBreakdown>,
     pub daily_traffic: Vec<(String, u64)>,
     pub product_analytics: Vec<ProductAnalyticsSummary>,
+    /// Scroll depth funnel: list of (threshold_pct, session_count_reached_it).
+    pub scroll_funnel: Vec<(i32, u64)>,
+    /// Top CTA / click events: list of (event_name, click_count).
+    pub top_cta_events: Vec<(String, u64)>,
+    /// Total rage-click events detected.
+    pub rage_clicks: u64,
+    /// Average active dwell time in seconds.
+    pub avg_dwell_time_secs: f64,
 }
 
 #[derive(Debug, Clone, Default)]

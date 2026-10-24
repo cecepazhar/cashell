@@ -8681,6 +8681,189 @@ fn draw_analytics_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let inner_prod = prod_area.inner(Margin::new(1, 1));
     f.render_widget(Paragraph::new(prod_lines), inner_prod);
 
+    // ── Engagement Metrics (Scroll Funnel · CTA Events · Rage Clicks · Dwell Time) ──
+
+    let eng_y = main_inner.y + 39;
+    let left_w = (main_inner.width / 2).max(24);
+    let right_w = main_inner.width.saturating_sub(left_w).saturating_sub(2).max(24);
+    let eng_h = 9u16;
+
+    // ── Scroll Funnel (25/50/75/100%) ──────────────────────────────────────
+    let scroll_areas = [25i32, 50, 75, 100];
+    let mut scroll_lines = Vec::new();
+    for pct in &scroll_areas {
+        let count = analytics
+            .scroll_funnel
+            .iter()
+            .find(|(d, _)| d == pct)
+            .map(|(_, c)| *c)
+            .unwrap_or(0);
+        let ratio = if total_views > 0 {
+            (count as f32 / total_views as f32) * 100.0
+        } else {
+            0.0
+        };
+        let bar_len = ((ratio / 100.0) * 10.0).min(10.0) as usize;
+        let bar_str = "▓".repeat(bar_len.max(if count > 0 { 1 } else { 0 }));
+        scroll_lines.push(Line::from(vec![
+            Span::styled(
+                format!("{:>3}%  ", pct),
+                Style::default().fg(palette.text_muted),
+            ),
+            Span::styled(
+                format!("{bar_str:<10} "),
+                Style::default().fg(palette.accent),
+            ),
+            Span::styled(
+                format!("{:>5} sessions", count),
+                Style::default().fg(Color::Rgb(255, 255, 255)),
+            ),
+        ]));
+    }
+    let scroll_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 📜 Scroll Funnel ")
+        .border_style(Style::default().fg(palette.accent));
+    let scroll_rect = Rect {
+        x: main_inner.x,
+        y: eng_y,
+        width: left_w,
+        height: eng_h,
+    };
+    f.render_widget(scroll_block, scroll_rect);
+    let scroll_inner = scroll_rect.inner(Margin::new(1, 1));
+    f.render_widget(Paragraph::new(scroll_lines), scroll_inner);
+
+    // ── Top CTA Events ─────────────────────────────────────────────────────
+    let cta_lines: Vec<Line> = if analytics.top_cta_events.is_empty() {
+        vec![Line::from(
+            " No CTA events recorded yet".to_string(),
+        )]
+    } else {
+        analytics
+            .top_cta_events
+            .iter()
+            .map(|(name, count)| {
+                let ratio = if total_views > 0 {
+                    (*count as f32 / total_views as f32) * 100.0
+                } else {
+                    0.0
+                };
+                let bar_len = ((ratio / 100.0) * 10.0).min(10.0) as usize;
+                let bar_str = "▸".repeat(bar_len.max(if *count > 0 { 1 } else { 0 }));
+                let display_name: String = name.chars().take(20).collect();
+                Line::from(vec![
+                    Span::styled(
+                        format!("{:<12} ", display_name),
+                        Style::default().fg(Color::Rgb(255, 255, 255)),
+                    ),
+                    Span::styled(
+                        format!("{bar_str:<8} "),
+                        Style::default().fg(palette.accent),
+                    ),
+                    Span::styled(
+                        format!("{:>4} clicks", count),
+                        Style::default().fg(palette.text_muted),
+                    ),
+                ])
+            })
+            .collect()
+    };
+    let cta_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 🎯 Top CTA / Click Events ")
+        .border_style(Style::default().fg(palette.accent));
+    let cta_rect = Rect {
+        x: main_inner.x + left_w + 2,
+        y: eng_y,
+        width: right_w,
+        height: eng_h,
+    };
+    f.render_widget(cta_block, cta_rect);
+    let cta_inner = cta_rect.inner(Margin::new(1, 1));
+    f.render_widget(Paragraph::new(cta_lines).wrap(Wrap { trim: true }), cta_inner);
+
+    // ── Rage Click Warnings & Avg Dwell Time ───────────────────────────────
+    let rage_y = eng_y + eng_h + 1;
+    let half_w = left_w.max(24);
+    let _rage_w = (right_w.max(24) / 2).max(16);
+
+    let rage_line = if analytics.rage_clicks > 0 {
+        Line::from(vec![
+            Span::styled(
+                "⚠ RAGE CLICK DETECTED: ",
+                Style::default()
+                    .fg(Color::Rgb(255, 80, 80))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{} event(s) — user frustration signal", analytics.rage_clicks),
+                Style::default().fg(Color::Rgb(255, 150, 100)),
+            ),
+        ])
+    } else {
+        Line::from(Span::styled(
+            "✓ No rage clicks detected",
+            Style::default().fg(palette.status_ok),
+        ))
+    };
+
+    let dwell_min = (analytics.avg_dwell_time_secs / 60.0) as u32;
+    let dwell_sec = (analytics.avg_dwell_time_secs % 60.0) as u32;
+    let dwell_line = Line::from(vec![
+        Span::styled(
+            "Avg Dwell Time: ",
+            Style::default().fg(palette.text_muted),
+        ),
+        Span::styled(
+            format!("{}m {:>3}s", dwell_min, dwell_sec),
+            Style::default().fg(Color::Rgb(255, 255, 255)).add_modifier(Modifier::BOLD),
+        ),
+    ]);
+
+    let rage_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" ⚡ Rage Click Warnings ")
+        .border_style(Style::default().fg(Color::Rgb(255, 80, 80)));
+    let rage_rect = Rect {
+        x: main_inner.x,
+        y: rage_y,
+        width: half_w,
+        height: 4,
+    };
+    f.render_widget(rage_block, rage_rect);
+    let rage_inner = rage_rect.inner(Margin::new(1, 1));
+    f.render_widget(
+        Paragraph::new(vec![rage_line, Line::from("  "), dwell_line.clone()]),
+        rage_inner,
+    );
+
+    let dwell_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" ⏱ Engagement & Dwell Time ")
+        .border_style(Style::default().fg(palette.accent));
+    let dwell_rect = Rect {
+        x: main_inner.x + left_w + 2,
+        y: rage_y,
+        width: right_w,
+        height: 4,
+    };
+    f.render_widget(dwell_block, dwell_rect);
+    let dwell_inner = dwell_rect.inner(Margin::new(1, 1));
+    let dwell_extra_lines = vec![
+        Line::from(Span::styled(
+            "Active engagement time — tracked via visibility API & interaction events",
+            Style::default().fg(palette.text_muted),
+        )),
+    ];
+    f.render_widget(
+        Paragraph::new(vec![dwell_line]
+            .into_iter()
+            .chain(dwell_extra_lines)
+            .collect::<Vec<_>>()),
+        dwell_inner,
+    );
+
     if app.show_analytics_script_modal {
         draw_analytics_script_modal(f, app, area);
     }
@@ -9049,7 +9232,14 @@ fn draw_analytics_script_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) 
             Style::default().fg(Color::Cyan),
         )),
         Line::from(""),
-        Line::from(Span::styled("📌 Note: For public production, replace 'http://127.0.0.1:8090' with your public domain or CF Tunnel (e.g. 'https://cashell.cecepazhar.com').", Style::default().fg(palette.text_muted))),
+        Line::from(Span::styled("⚡ 5. Custom CTA Tracking (data attributes):", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            "   <button data-cashell-event=\"signup_cta\" data-cashell-val=\"pro_annual\">Get Pro</button>",
+            Style::default().fg(Color::Cyan),
+        )),
+        Line::from(""),
+        Line::from(Span::styled("📌 Note: Auto-tracks Scroll Depth (25/50/75/90/100%), Clicks (% coords), Rage Clicks (>3/sec), and Dwell Time.", Style::default().fg(palette.text_muted))),
+        Line::from(Span::styled("📌 Replace 'http://127.0.0.1:8090' with your public domain or CF Tunnel (e.g. 'https://cashell.cecepazhar.com').", Style::default().fg(palette.text_muted))),
         Line::from(""),
         Line::from(Span::styled(" [ Press Esc to Close ] ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD))),
     ];

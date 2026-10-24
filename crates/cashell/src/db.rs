@@ -266,6 +266,13 @@ impl Database {
                  device TEXT,
                  country TEXT,
                  visitor_hash TEXT NOT NULL,
+                 event_type TEXT NOT NULL DEFAULT 'pageview',
+                 event_name TEXT,
+                 event_data TEXT,
+                 click_x REAL,
+                 click_y REAL,
+                 scroll_depth INTEGER,
+                 duration_secs INTEGER,
                  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
              );
              CREATE TABLE IF NOT EXISTS analytics_websites (
@@ -294,6 +301,35 @@ impl Database {
              );
              CREATE INDEX IF NOT EXISTS idx_pro_sync_metadata_state ON pro_sync_metadata(sync_state);",
         )?;
+
+        // Ensure backwards compatibility for analytics_events table
+        let mut col_stmt = self.conn.prepare("PRAGMA table_info(analytics_events)")?;
+        let existing_cols: Vec<String> = col_stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let migrations = [
+            ("event_type", "ALTER TABLE analytics_events ADD COLUMN event_type TEXT NOT NULL DEFAULT 'pageview'"),
+            ("event_name", "ALTER TABLE analytics_events ADD COLUMN event_name TEXT"),
+            ("event_data", "ALTER TABLE analytics_events ADD COLUMN event_data TEXT"),
+            ("click_x", "ALTER TABLE analytics_events ADD COLUMN click_x REAL"),
+            ("click_y", "ALTER TABLE analytics_events ADD COLUMN click_y REAL"),
+            ("scroll_depth", "ALTER TABLE analytics_events ADD COLUMN scroll_depth INTEGER"),
+            ("duration_secs", "ALTER TABLE analytics_events ADD COLUMN duration_secs INTEGER"),
+        ];
+
+        for (col, sql) in migrations {
+            if !existing_cols.contains(&col.to_string()) {
+                let _ = self.conn.execute(sql, []);
+            }
+        }
+
+        let _ = self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_analytics_events_type ON analytics_events(website_id, event_type)",
+            [],
+        );
+
         Ok(())
     }
 
@@ -970,9 +1006,54 @@ impl Database {
         country: &str,
         visitor_hash: &str,
     ) -> Result<()> {
+        self.record_analytics_event(
+            website_id,
+            session_id,
+            url,
+            referrer,
+            page_title,
+            browser,
+            os,
+            device,
+            country,
+            visitor_hash,
+            "pageview",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
+    /// Record a custom analytics event with all fields in the `analytics_events` table.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_analytics_event(
+        &self,
+        website_id: &str,
+        session_id: &str,
+        url: &str,
+        referrer: &str,
+        page_title: &str,
+        browser: &str,
+        os: &str,
+        device: &str,
+        country: &str,
+        visitor_hash: &str,
+        event_type: &str,
+        event_name: Option<&str>,
+        event_data: Option<&str>,
+        click_x: Option<f64>,
+        click_y: Option<f64>,
+        scroll_depth: Option<i32>,
+        duration_secs: Option<i64>,
+    ) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO analytics_events (website_id, session_id, url, referrer, page_title, browser, os, device, country, visitor_hash)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO analytics_events
+             (website_id, session_id, url, referrer, page_title, browser, os, device, country, visitor_hash,
+              event_type, event_name, event_data, click_x, click_y, scroll_depth, duration_secs)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 website_id,
                 session_id,
@@ -983,13 +1064,84 @@ impl Database {
                 os,
                 device,
                 country,
-                visitor_hash
+                visitor_hash,
+                event_type,
+                event_name,
+                event_data,
+                click_x,
+                click_y,
+                scroll_depth,
+                duration_secs,
             ],
         )?;
         Ok(())
     }
 
-    /// Retrieve overall web analytics summary for a specific website or `None` for global stats.
+    /// Query scroll depth distribution: for each threshold, how many sessions reached it.
+    pub fn get_scroll_depth_distribution(&self, website_id: Option<&str>) -> Result<Vec<(i32, u64)>> {
+        let ref_val = website_id;
+        let mut stmt = self.conn.prepare(
+            "SELECT scroll_depth, COUNT(*) as c FROM analytics_events
+             WHERE (?1 IS NULL OR website_id = ?1) AND event_type = 'scroll_depth' AND scroll_depth IS NOT NULL
+             GROUP BY scroll_depth ORDER BY scroll_depth ASC",
+        )?;
+        let rows = stmt.query_map(params![ref_val], |row| Ok((row.get::<_, i32>(0)?, row.get::<_, u64>(1)?)))?;
+        let mut result = Vec::new();
+        for row in rows {
+            let (depth, count) = row?;
+            result.push((depth, count));
+        }
+        Ok(result)
+    }
+
+    /// Query the top CTA / click events by event_name frequency.
+    pub fn get_top_cta_events(&self, website_id: Option<&str>, limit: i64) -> Result<Vec<(String, u64)>> {
+        let ref_val = website_id;
+        let mut stmt = self.conn.prepare(
+            "SELECT COALESCE(event_name, 'unknown') as name, COUNT(*) as c
+             FROM analytics_events
+             WHERE (?1 IS NULL OR website_id = ?1) AND event_type IN ('click','cta','rage_click') AND event_name IS NOT NULL
+             GROUP BY name ORDER BY c DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![ref_val, limit], |row| Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?)))?;
+        let mut result = Vec::new();
+        for row in rows {
+            let (name, count) = row?;
+            result.push((name, count));
+        }
+        Ok(result)
+    }
+
+    /// Count total rage-click events.
+    pub fn count_rage_clicks(&self, website_id: Option<&str>) -> Result<u64> {
+        let ref_val = website_id;
+        let val: u64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) AND event_type = 'rage_click'",
+                params![ref_val],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        Ok(val)
+    }
+
+    /// Compute average dwell time in seconds from `dwell_time` events.
+    pub fn avg_dwell_time_secs(&self, website_id: Option<&str>) -> Result<f64> {
+        let ref_val = website_id;
+        let val: f64 = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(AVG(duration_secs), 0.0) FROM analytics_events
+                 WHERE (?1 IS NULL OR website_id = ?1) AND event_type = 'dwell_time' AND duration_secs IS NOT NULL",
+                params![ref_val],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
+        Ok(val)
+    }
+
+    /// Fetch overall web analytics summary for a specific website or `None` for global stats.
     pub fn get_analytics_summary(&self, website_id: Option<&str>) -> Result<crate::systat::AnalyticsSummary> {
         let target = website_id.map(|id| id.to_string());
         let ref_val = target.as_deref();
@@ -1208,6 +1360,10 @@ impl Database {
             country_breakdown,
             daily_traffic,
             product_analytics,
+            scroll_funnel: self.get_scroll_depth_distribution(ref_val).unwrap_or_default(),
+            top_cta_events: self.get_top_cta_events(ref_val, 5).unwrap_or_default(),
+            rage_clicks: self.count_rage_clicks(ref_val).unwrap_or(0),
+            avg_dwell_time_secs: self.avg_dwell_time_secs(ref_val).unwrap_or(0.0),
         })
     }
 
@@ -1531,6 +1687,125 @@ mod tests {
         assert_eq!(summary.top_pages.len(), 2);
         assert!(summary.top_referrers.iter().any(|(r, _)| r == "https://google.com"));
         assert!(summary.top_referrers.iter().any(|(r, _)| r == "Direct"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_db_advanced_analytics_events() -> Result<()> {
+        let db = Database::open_in_memory()?;
+
+        // Record a scroll_depth event
+        db.record_analytics_event(
+            "caterm",
+            "sess_scroll",
+            "/pricing",
+            "https://google.com",
+            "CATerm Pricing",
+            "Chrome",
+            "Linux",
+            "Desktop",
+            "ID",
+            "hash_scroll",
+            "scroll_depth",
+            None,
+            None,
+            None,
+            None,
+            Some(50),
+            None,
+        )?;
+
+        // Record a click CTA event
+        db.record_analytics_event(
+            "caterm",
+            "sess_cta",
+            "/",
+            "Direct",
+            "CATerm Home",
+            "Firefox",
+            "Windows",
+            "Desktop",
+            "ID",
+            "hash_cta",
+            "click",
+            Some("click_buy_now"),
+            Some(r#"{"val":"pricing"}"#),
+            Some(45.2),
+            Some(78.0),
+            None,
+            None,
+        )?;
+
+        // Record a rage_click event
+        db.record_analytics_event(
+            "caterm",
+            "sess_rage",
+            "/checkout",
+            "https://x.com",
+            "Checkout",
+            "Safari",
+            "iOS",
+            "Mobile",
+            "ID",
+            "hash_rage",
+            "rage_click",
+            Some("btn_submit_form"),
+            None,
+            Some(52.0),
+            Some(30.0),
+            None,
+            None,
+        )?;
+
+        // Record a dwell_time event
+        db.record_analytics_event(
+            "caterm",
+            "sess_dwell",
+            "/docs",
+            "Direct",
+            "Docs",
+            "Chrome",
+            "Linux",
+            "Desktop",
+            "ID",
+            "hash_dwell",
+            "dwell_time",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(42),
+        )?;
+
+        // Verify scroll depth distribution
+        let scroll_dist = db.get_scroll_depth_distribution(Some("caterm"))?;
+        assert_eq!(scroll_dist.len(), 1);
+        assert_eq!(scroll_dist[0].0, 50);
+        assert_eq!(scroll_dist[0].1, 1);
+
+        // Verify top CTA events
+        let cta_events = db.get_top_cta_events(Some("caterm"), 5)?;
+        assert_eq!(cta_events.len(), 2);
+        // click and rage_click both counted (event_type IN ('click','cta','rage_click'))
+        let names: Vec<&str> = cta_events.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"click_buy_now"));
+        assert!(names.contains(&"btn_submit_form"));
+
+        // Verify rage click count
+        let rage_count = db.count_rage_clicks(Some("caterm"))?;
+        assert_eq!(rage_count, 1);
+
+        // Verify avg dwell time
+        let dwell = db.avg_dwell_time_secs(Some("caterm"))?;
+        assert!((dwell - 42.0).abs() < 0.001);
+
+        // Verify summary aggregates the new fields
+        let summary = db.get_analytics_summary(Some("caterm"))?;
+        assert_eq!(summary.rage_clicks, 1);
+        assert!((summary.avg_dwell_time_secs - 42.0).abs() < 0.001);
+        assert!(!summary.scroll_funnel.is_empty());
+        assert!(!summary.top_cta_events.is_empty());
         Ok(())
     }
 
