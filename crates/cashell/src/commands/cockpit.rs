@@ -1484,10 +1484,17 @@ impl CockpitApp {
         let idx = self.selected_monitor.min(self.latest_snap.uptime_monitors.len() - 1);
         let monitor_name = self.latest_snap.uptime_monitors[idx].name.clone();
 
+        // Permanently record the deletion so the probe engine (systat.rs)
+        // will not re-create this monitor from default_targets on the next tick.
+        if !self.cfg.uptime.disabled_monitors.iter().any(|d| *d == monitor_name) {
+            self.cfg.uptime.disabled_monitors.push(monitor_name.clone());
+        }
+
         if let Some(pos) = self.cfg.uptime.custom_monitors.iter().position(|m| m.name == monitor_name) {
             self.cfg.uptime.custom_monitors.remove(pos);
-            self.save_config_silent();
         }
+        self.save_config_silent();
+
         if let Some(ref d) = self.db {
             let _ = d.delete_uptime_monitor(&monitor_name);
         }
@@ -6819,7 +6826,7 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         return;
     }
 
-    let title = " CAShell v0.3.7 · Isometric Cockpit ";
+    let title = format!(" CAShell v{} · Isometric Cockpit ", env!("CARGO_PKG_VERSION"));
     let time_str = chrono::Local::now().format("%H:%M:%S").to_string();
 
     let router_badge = if app.is_9router_online {
@@ -12120,7 +12127,7 @@ fn draw_compact_fallback(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let snap = &app.latest_snap;
     let lines = vec![
         Line::from(Span::styled(
-            "CAShell v0.3.7 · Isometric Cockpit (Compact Mode)",
+            format!("CAShell v{} · Isometric Cockpit (Compact Mode)", env!("CARGO_PKG_VERSION")),
             Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
         )),
         Line::from(format!(
