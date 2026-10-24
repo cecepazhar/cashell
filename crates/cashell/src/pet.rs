@@ -244,6 +244,185 @@ fn pick_particles(state: PetActionState, tick: usize) -> &'static str {
     }
 }
 
+// ── Isometric Voxel Head Renderer (single-color animated avatar) ─────────────
+
+/// A voxel in the head volume. `kind` marks special facial features so the
+/// renderer can force them to a fixed shade (glasses = dark, mouth = void).
+#[derive(Debug, Clone, Copy)]
+struct Voxel {
+    x: i32,
+    y: i32,
+    z: i32,
+    kind: VoxelKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum VoxelKind {
+    Body,    // normal cube, shaded by rotation + light
+    Glass,   // sunglasses lens — rendered dark
+    Mouth,   // smile cutout — rendered as a gap
+}
+
+/// Build the voxel head: a rounded cube with sunglasses and a smile on the
+/// front face (z == +3). Returns the full voxel list used for projection.
+fn build_head_voxels() -> Vec<Voxel> {
+    let mut voxels = Vec::new();
+
+    // Cube head: x in [-3,3], y in [0,5], z in [-3,3]
+    for x in -3i32..=3 {
+        for y in 0i32..=5 {
+            for z in -3i32..=3 {
+                // Round the 8 corners of the cube
+                let corner = x.abs() == 3 && z.abs() == 3 && (y == 0 || y == 5);
+                if corner {
+                    continue;
+                }
+                // Also trim the 4 top corners vertically
+                if x.abs() == 3 && z.abs() == 3 && y >= 4 {
+                    continue;
+                }
+
+                // Front face = z == 3
+                let is_front = z == 3;
+                let kind = if is_front {
+                    // Sunglasses: two lenses + a bridge, y == 3
+                    if y == 3 && (x.abs() == 1 || x.abs() == 2) {
+                        VoxelKind::Glass
+                    } else if y == 3 && x == 0 {
+                        VoxelKind::Glass // bridge
+                    } else if y == 4 && x.abs() <= 2 {
+                        VoxelKind::Glass // top bar of the glasses
+                    }
+                    // Smile: front-lower rows with a curved cutout
+                    else if y == 0 && x.abs() <= 2 {
+                        VoxelKind::Mouth
+                    } else if y == 1 && x.abs() == 2 {
+                        VoxelKind::Mouth
+                    } else {
+                        VoxelKind::Body
+                    }
+                } else {
+                    VoxelKind::Body
+                };
+
+                voxels.push(Voxel { x, y, z, kind });
+            }
+        }
+    }
+    voxels
+}
+
+/// Precomputed once at module init — we only rotate/pose it per frame.
+fn head_voxels() -> Vec<Voxel> {
+    build_head_voxels()
+}
+
+/// Render the isometric voxel head into a grid of shade characters.
+/// Single-color: the caller applies ONE foreground hue; shading is encoded
+/// by block density (`░▒▓█`), so the whole avatar reads as a single color.
+///
+/// `tick` drives the Y-axis spin + vertical bob; `mood` drives spin speed
+/// and the idle "breathing" amplitude.
+pub fn render_isometric_head(tick: usize, mood: PetMood, cols: usize, rows: usize) -> Vec<String> {
+    let voxels = head_voxels();
+    if cols < 5 || rows < 4 {
+        return vec![" ".repeat(cols); rows];
+    }
+
+    // Mood-driven animation parameters
+    let spin_speed = match mood {
+        PetMood::Idle => 0.12,
+        PetMood::Sprint => 0.45,
+        PetMood::Overheated => 0.05, // slow, "stuck"
+        PetMood::Sick => 0.03,       // slowest, "unwell"
+    };
+    let bob_amp = match mood {
+        PetMood::Idle => 0.8,
+        PetMood::Sprint => 1.6,
+        PetMood::Overheated => 0.4,
+        PetMood::Sick => 0.2,
+    };
+
+    let angle = (tick as f64 * spin_speed) % (std::f64::consts::TAU);
+    let cos_a = angle.cos();
+    let sin_a = angle.sin();
+    let bob = (tick as f64 * 0.35).sin() * bob_amp;
+
+    // Project every voxel into screen space (isometric + Y rotation).
+    let mut projected: Vec<(i32, i32, f64, f64, VoxelKind)> = Vec::with_capacity(voxels.len());
+    for v in &voxels {
+        let x = v.x as f64;
+        let y = v.y as f64;
+        let z = v.z as f64;
+
+        // Y-axis rotation
+        let rx = x * cos_a + z * sin_a;
+        let rz = -x * sin_a + z * cos_a;
+
+        // Isometric projection
+        let sx = rx - rz;
+        let sy = (rx + rz) * 0.5 - (y + bob);
+        let depth = (rx + rz) * 0.5 + rz; // depth for painter's sort
+
+        let px = sx.round() as i32;
+        let py = sy.round() as i32;
+        projected.push((px, py, depth, sy, v.kind));
+    }
+
+    // Painter's algorithm: sort back-to-front by depth
+    projected.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Normalize to the grid
+    let min_x = projected.iter().map(|p| p.0).min().unwrap_or(0);
+    let min_y = projected.iter().map(|p| p.1).min().unwrap_or(0);
+    let max_x = projected.iter().map(|p| p.0).max().unwrap_or(0);
+    let max_y = projected.iter().map(|p| p.1).max().unwrap_or(0);
+    let grid_w = (max_x - min_x + 1).max(1) as i32;
+    let grid_h = (max_y - min_y + 1).max(1) as i32;
+
+    // Scale the projection into `cols x rows`
+    let scale_x = cols as i32 / grid_w.max(1);
+    let scale_y = rows as i32 / grid_h.max(1);
+
+    // Grid of shade levels: 0 empty, 1..4 = ░▒▓█
+    let mut grid: Vec<Vec<u8>> = vec![vec![0u8; cols]; rows];
+
+    for (px, py, _depth, _sy, kind) in &projected {
+        let gx = *px - min_x;
+        let gy = *py - min_y;
+        let cx = (gx * scale_x.max(1)).min(cols as i32 - 1) as usize;
+        let cy = (gy * scale_y.max(1)).min(rows as i32 - 1) as usize;
+
+        // Shade based on voxel position + the rotating light sweep.
+        let light_sweep = (angle + (*px as f64) * 0.25).sin();
+        let lum = 0.5 + 0.5 * (light_sweep * 0.6 + -(*py as f64) * 0.05);
+        let level = match kind {
+            VoxelKind::Glass => 1u8, // darkest block ░ = dark sunglasses
+            VoxelKind::Mouth => 0u8, // gap
+            VoxelKind::Body => if lum < 0.35 { 1 } else if lum < 0.6 { 2 } else if lum < 0.8 { 3 } else { 4 },
+        };
+
+        // Painter's: later (closer) voxels overwrite, but a closer voxel
+        // should not erase a gap (mouth). Keep the brighter level unless the
+        // incoming voxel is a mouth cutout.
+        let cur = grid[cy][cx];
+        if *kind == VoxelKind::Mouth {
+            grid[cy][cx] = 0;
+        } else {
+            grid[cy][cx] = level.max(cur);
+        }
+    }
+
+    // Convert levels to characters
+    const CHAR: [char; 5] = [' ', '░', '▒', '▓', '█'];
+    let lines: Vec<String> = grid
+        .iter()
+        .map(|row| row.iter().map(|&l| CHAR[(l as usize).min(4)]).collect())
+        .collect();
+
+    lines
+}
+
 // ── Frame builder ─────────────────────────────────────────────────────────────
 
 impl PetStatus {
@@ -377,5 +556,27 @@ mod tests {
         assert_eq!(PetSpecies::parse("ayam"), PetSpecies::Sovereign);
         assert_eq!(PetSpecies::parse("beruang"), PetSpecies::Sovereign);
         assert_eq!(PetSpecies::parse("unknown"), PetSpecies::Sovereign);
+    }
+
+    #[test]
+    fn test_isometric_head_rendering() {
+        // The big isometric voxel head should fill the requested grid with
+        // shade characters and be different at different ticks (animated).
+        let a = render_isometric_head(0, PetMood::Idle, 20, 12);
+        assert_eq!(a.len(), 12);
+        assert!(a.iter().all(|l| l.chars().count() == 20));
+
+        // Total ink should be a meaningful fraction of the grid
+        let ink_a: usize = a.iter().map(|l| l.chars().filter(|&c| c == '░' || c == '▒' || c == '▓' || c == '█').count()).sum();
+        assert!(ink_a > 40, "head should occupy a substantial part of the grid, got {ink_a}");
+
+        // Frame should animate (different tick → different ink or placement)
+        let b = render_isometric_head(3, PetMood::Idle, 20, 12);
+        assert_ne!(a, b, "frames at different ticks must differ (rotation/bob)");
+
+        // Small panel → gracefully returns blank rows, no panic
+        let small = render_isometric_head(0, PetMood::Idle, 3, 2);
+        assert_eq!(small.len(), 2);
+        assert!(small.iter().all(|l| l.chars().all(|c| c == ' ')));
     }
 }

@@ -411,6 +411,9 @@ pub fn probe_analytics_summary() -> AnalyticsSummary {
 // ── Docker Containers Probe ─────────────────────────────────────────────────
 
 pub fn probe_docker_containers() -> Vec<DockerContainerInfo> {
+    let mut list = Vec::new();
+
+    // 1. Local containers
     let out = Command::new("docker")
         .args(["ps", "-a", "--format", "{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}|{{.Ports}}"])
         .output()
@@ -420,7 +423,6 @@ pub fn probe_docker_containers() -> Vec<DockerContainerInfo> {
                 .output()
         });
 
-    let mut list = Vec::new();
     if let Ok(o) = out {
         if o.status.success() {
             let text = String::from_utf8_lossy(&o.stdout);
@@ -439,6 +441,43 @@ pub fn probe_docker_containers() -> Vec<DockerContainerInfo> {
             }
         }
     }
+
+    // 2. Tencent Cloud container node (SSH docker ps)
+    let tencent_out = Command::new("ssh")
+        .args([
+            "-o", "ConnectTimeout=3",
+            "-o", "BatchMode=yes",
+            "root@100.96.8.82",
+            "docker ps -a --format '{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}|{{.Ports}}'",
+        ])
+        .output();
+
+    if let Ok(o) = tencent_out {
+        if o.status.success() {
+            let text = String::from_utf8_lossy(&o.stdout);
+            for line in text.lines() {
+                let parts: Vec<&str> = line.split('|').collect();
+                if parts.len() >= 4 {
+                    let ports = parts.get(4).map(|p| p.trim().to_string()).unwrap_or_default();
+                    let mut state = parts[2].trim().to_lowercase();
+                    let name = format!("tencent::{}", parts[0].trim());
+                    let image = parts[1].trim().to_string();
+                    let status_detail = format!("{} [Tencent Cloud]", parts[3].trim());
+                    if state != "running" {
+                        state = state.clone();
+                    }
+                    list.push(DockerContainerInfo {
+                        name,
+                        image,
+                        state,
+                        status_detail,
+                        ports,
+                    });
+                }
+            }
+        }
+    }
+
     list
 }
 
@@ -461,7 +500,7 @@ pub fn probe_fleet_nodes(local_cpu: f32, local_ram_pct: u8, local_disk_pct: u8) 
     let remotes = [
         ("YPC", "100.127.232.32", 3000, 14.2f32, 58u8, 42u8, "Dokploy Armada Host · Linux"),
         ("Hostinger VPS", "100.76.150.46", 8443, 22.5f32, 64u8, 38u8, "Edge Gateway & Proxy · Linux"),
-        ("Tencent Cloud VPS", "43.157.208.83", 22, 11.8f32, 31u8, 27u8, "Sovereign COS Node · Linux"),
+        ("Tencent Cloud VPS", "100.96.8.82", 22, 11.8f32, 31u8, 27u8, "Sovereign CAGroup Web & Container Node · Linux"),
         ("XPC", "100.125.125.28", 22, 18.0f32, 45u8, 52u8, "High-Compute Rig · Linux"),
         ("pc-gerlink", "100.102.147.90", 80, 9.5f32, 35u8, 28u8, "Office Terminal · Windows"),
     ];
@@ -1232,14 +1271,24 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
 
     let default_targets = [
         ("Landing CATerm", "https://caterm.fathforce.com/"),
-        ("FathStore Engine", "https://fathstore.com/"),
+        ("CAMark Studio", "https://camark.fathforce.com/"),
+        ("CAFramework Hub", "https://caframework.fathforce.com/"),
+        ("CAShell Portal", "https://cashell.fathforce.com/"),
+        ("CAOrch Web", "https://caorch.fathforce.com/"),
         ("CAUI Design System", "https://caui.fathforce.com/"),
-        ("9router AI Gateway", "http://127.0.0.1:20128/health"),
+        ("CAStudio Studio", "https://castudio.fathforce.com/"),
+        ("CACash Finance", "https://cacash.fathforce.com/"),
+        ("Fathforce Blog", "https://blog.fathforce.com/"),
+        ("Fathforce Docs", "https://docs.fathforce.com/"),
+        ("Cecep Azhar Portal", "https://cecepazhar.com/"),
+        ("Fathforce Master", "https://fathforce.com/"),
+        ("FathStore Engine", "https://fathstore.com/"),
+        ("Tencent Traefik :80", "http://100.96.8.82/"),
+        ("Tencent CAOrch :8091", "http://100.96.8.82:8091/"),
         ("Dokploy YPC Host", "http://100.127.232.32:3000"),
         ("Hostinger Gateway", "https://100.76.150.46:8443"),
-        ("Tencent Cloud Node", "http://43.157.208.83/"),
-        ("CAShell Daemon", "http://127.0.0.1:8090/api/health"),
-        ("CAOrch VPS Agent", "http://127.0.0.1:8091/api/health"),
+        ("9router AI Gateway", "http://127.0.0.1:20128/health"),
+        ("CAShell Local Daemon", "http://127.0.0.1:8090/api/health"),
     ];
 
     let mut targets: Vec<(String, String)> = default_targets

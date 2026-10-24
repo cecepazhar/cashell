@@ -8043,9 +8043,9 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     };
 
     let title = if area.width >= 32 {
-        format!(" 🐾 PET [ {} · Lv.{} · {} | {} ] ", pet_name_display, level, state_badge, mood_short)
+        format!(" 🕶 SOVEREIGN [ {} · Lv.{} · {} | {} ] ", pet_name_display, level, state_badge, mood_short)
     } else {
-        format!(" 🐾 PET [ {} · Lv.{} ] ", pet_name_display, level)
+        format!(" 🕶 SOVEREIGN [ {} · Lv.{} ] ", pet_name_display, level)
     };
 
     let block = Block::default()
@@ -8099,14 +8099,31 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ])
         .split(inner);
 
-    // 1. Animated Sprite Screen - Render single reactive Emoji
-    let line1 = if !active_frame.particles.is_empty() && active_frame.y_offset == 0 {
-        format!("{} {} {}", active_frame.particles, active_frame.core, active_frame.particles)
-    } else {
-        format!("{} {}", active_frame.core, active_frame.particles)
+    // 1. Animated Sprite Screen — big isometric voxel head (single hue) with
+    //    a reactive mood-colored glow, falling back to a single emoji when
+    //    the panel is too small to display the 3D head cleanly.
+    let screen = chunks[0];
+    let head_cols = screen.width.saturating_sub(2) as usize;
+    let head_rows = screen.height.saturating_sub(1) as usize;
+    let iso_lines = crate::pet::render_isometric_head(app.pet_tick, app.pet_mood, head_cols.max(5), head_rows.max(4));
+    let accent = match app.pet_mood {
+        crate::pet::PetMood::Overheated => Color::LightRed,
+        crate::pet::PetMood::Sick => Color::Magenta,
+        crate::pet::PetMood::Sprint => Color::Yellow,
+        crate::pet::PetMood::Idle => palette.accent,
     };
-    let emoji_spans = vec![Span::styled(line1, Style::default().add_modifier(Modifier::BOLD))];
-    f.render_widget(Paragraph::new(Line::from(emoji_spans)).alignment(ratatui::layout::Alignment::Center), chunks[0]);
+    let iso_spans: Vec<Span> = iso_lines
+        .iter()
+        .map(|l| Span::styled(l.clone(), Style::default().fg(accent).add_modifier(Modifier::BOLD)))
+        .collect();
+    let mut iso_lines_widget: Vec<Line> = iso_spans.into_iter().map(Line::from).collect();
+    // Add a small particle trail below the head for the reactive "alive" feel
+    if !active_frame.particles.is_empty() {
+        iso_lines_widget.push(Line::from(vec![
+            Span::styled(active_frame.particles.clone(), Style::default().fg(accent).add_modifier(Modifier::DIM)),
+        ]));
+    }
+    f.render_widget(Paragraph::new(iso_lines_widget).alignment(ratatui::layout::Alignment::Center), screen);
 
     // 2. Navigation Bar (Compact layout for smaller column)
     let nav_spans = vec![
