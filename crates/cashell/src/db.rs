@@ -94,6 +94,25 @@ pub struct ProSyncMetadataRecord {
     pub last_synced_at: Option<String>,
 }
 
+/// An audit report record stored in `audit_reports` table per project/folder.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AuditReportRecord {
+    pub id: i64,
+    pub repo_path: String,
+    pub project_name: String,
+    pub score: i32,
+    pub critical_count: i64,
+    pub high_count: i64,
+    pub medium_count: i64,
+    pub low_count: i64,
+    pub info_count: i64,
+    pub report_path: String,
+    pub user_prompt: String,
+    pub tuned_prompt: String,
+    pub report_markdown: String,
+    pub created_at: String,
+}
+
 /// Primary SQLite persistence manager for cashell.
 pub struct Database {
     conn: Connection,
@@ -327,6 +346,35 @@ impl Database {
 
         let _ = self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_analytics_events_type ON analytics_events(website_id, event_type)",
+            [],
+        );
+
+        // Ensure backwards compatibility for audit_reports table
+        let mut audit_col_stmt = self.conn.prepare("PRAGMA table_info(audit_reports)")?;
+        let existing_audit_cols: Vec<String> = audit_col_stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let audit_migrations = [
+            ("project_name", "ALTER TABLE audit_reports ADD COLUMN project_name TEXT DEFAULT ''"),
+            ("score", "ALTER TABLE audit_reports ADD COLUMN score INTEGER DEFAULT 100"),
+            ("medium_count", "ALTER TABLE audit_reports ADD COLUMN medium_count INTEGER DEFAULT 0"),
+            ("low_count", "ALTER TABLE audit_reports ADD COLUMN low_count INTEGER DEFAULT 0"),
+            ("info_count", "ALTER TABLE audit_reports ADD COLUMN info_count INTEGER DEFAULT 0"),
+            ("user_prompt", "ALTER TABLE audit_reports ADD COLUMN user_prompt TEXT DEFAULT ''"),
+            ("tuned_prompt", "ALTER TABLE audit_reports ADD COLUMN tuned_prompt TEXT DEFAULT ''"),
+            ("report_markdown", "ALTER TABLE audit_reports ADD COLUMN report_markdown TEXT DEFAULT ''"),
+        ];
+
+        for (col, sql) in audit_migrations {
+            if !existing_audit_cols.contains(&col.to_string()) {
+                let _ = self.conn.execute(sql, []);
+            }
+        }
+
+        let _ = self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_reports_repo ON audit_reports(repo_path, created_at)",
             [],
         );
 
@@ -866,6 +914,137 @@ impl Database {
     /// Remove a registered node from the `registered_nodes` table.
     pub fn delete_registered_node(&self, node_id: &str) -> Result<usize> {
         let n = self.conn.execute("DELETE FROM registered_nodes WHERE node_id = ?1", params![node_id])?;
+        Ok(n)
+    }
+
+    // ── Per-Project Audit Reports Persistence ────────────────────────────────
+
+    /// Save an audit report to SQLite. Returns the new record ID.
+    pub fn save_audit_report(&self, rec: &AuditReportRecord) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO audit_reports (
+                repo_path, project_name, score, critical_count, high_count,
+                medium_count, low_count, info_count, report_path, user_prompt,
+                tuned_prompt, report_markdown, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, CURRENT_TIMESTAMP)",
+            params![
+                rec.repo_path,
+                rec.project_name,
+                rec.score,
+                rec.critical_count,
+                rec.high_count,
+                rec.medium_count,
+                rec.low_count,
+                rec.info_count,
+                rec.report_path,
+                rec.user_prompt,
+                rec.tuned_prompt,
+                rec.report_markdown,
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Retrieve audit reports for a specific project repository path, newest first.
+    pub fn get_audit_reports_for_repo(&self, repo_path: &str, limit: usize) -> Result<Vec<AuditReportRecord>> {
+        let canonical = std::fs::canonicalize(repo_path)
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| repo_path.to_string());
+
+        let mut stmt = self.conn.prepare(
+            "SELECT id, repo_path, COALESCE(project_name, ''), COALESCE(score, 100),
+                    COALESCE(critical_count, 0), COALESCE(high_count, 0),
+                    COALESCE(medium_count, 0), COALESCE(low_count, 0), COALESCE(info_count, 0),
+                    COALESCE(report_path, ''), COALESCE(user_prompt, ''),
+                    COALESCE(tuned_prompt, ''), COALESCE(report_markdown, ''),
+                    COALESCE(created_at, '')
+             FROM audit_reports
+             WHERE repo_path = ?1 OR repo_path = ?2
+             ORDER BY id DESC LIMIT ?3"
+        )?;
+        let rows = stmt.query_map(params![repo_path, canonical, limit as i64], |row| {
+            Ok(AuditReportRecord {
+                id: row.get(0)?,
+                repo_path: row.get(1)?,
+                project_name: row.get(2)?,
+                score: row.get(3)?,
+                critical_count: row.get(4)?,
+                high_count: row.get(5)?,
+                medium_count: row.get(6)?,
+                low_count: row.get(7)?,
+                info_count: row.get(8)?,
+                report_path: row.get(9)?,
+                user_prompt: row.get(10)?,
+                tuned_prompt: row.get(11)?,
+                report_markdown: row.get(12)?,
+                created_at: row.get(13)?,
+            })
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    /// Retrieve all audit reports across all projects, newest first.
+    pub fn get_all_audit_reports(&self, limit: usize) -> Result<Vec<AuditReportRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, repo_path, COALESCE(project_name, ''), COALESCE(score, 100),
+                    COALESCE(critical_count, 0), COALESCE(high_count, 0),
+                    COALESCE(medium_count, 0), COALESCE(low_count, 0), COALESCE(info_count, 0),
+                    COALESCE(report_path, ''), COALESCE(user_prompt, ''),
+                    COALESCE(tuned_prompt, ''), COALESCE(report_markdown, ''),
+                    COALESCE(created_at, '')
+             FROM audit_reports
+             ORDER BY id DESC LIMIT ?1"
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(AuditReportRecord {
+                id: row.get(0)?,
+                repo_path: row.get(1)?,
+                project_name: row.get(2)?,
+                score: row.get(3)?,
+                critical_count: row.get(4)?,
+                high_count: row.get(5)?,
+                medium_count: row.get(6)?,
+                low_count: row.get(7)?,
+                info_count: row.get(8)?,
+                report_path: row.get(9)?,
+                user_prompt: row.get(10)?,
+                tuned_prompt: row.get(11)?,
+                report_markdown: row.get(12)?,
+                created_at: row.get(13)?,
+            })
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    /// Get distinct audited projects summary: (repo_path, project_name, latest_score, audit_count, last_audit_date).
+    pub fn get_audit_project_summaries(&self) -> Result<Vec<(String, String, i32, i64, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT repo_path, COALESCE(project_name, ''), COALESCE(score, 100), count(*), COALESCE(max(created_at), '')
+             FROM audit_reports
+             GROUP BY repo_path
+             ORDER BY max(created_at) DESC"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    /// Delete a single audit report record by ID.
+    pub fn delete_audit_report(&self, id: i64) -> Result<usize> {
+        let n = self.conn.execute("DELETE FROM audit_reports WHERE id = ?1", params![id])?;
         Ok(n)
     }
 
@@ -1833,6 +2012,51 @@ mod tests {
         };
         assert!(tables.contains(&"pro_state".to_string()), "pro_state table missing");
         assert!(tables.contains(&"pro_sync_metadata".to_string()), "pro_sync_metadata table missing");
+        Ok(())
+    }
+
+    #[test]
+    fn test_db_audit_reports_crud() -> Result<()> {
+        let db = Database::open_in_memory()?;
+
+        let rec = AuditReportRecord {
+            id: 0,
+            repo_path: "/home/cecepazhar/Product/catable".to_string(),
+            project_name: "catable".to_string(),
+            score: 95,
+            critical_count: 0,
+            high_count: 0,
+            medium_count: 1,
+            low_count: 2,
+            info_count: 3,
+            report_path: "/home/cecepazhar/Product/catable/audit/Audit_2026-10-24.md".to_string(),
+            user_prompt: "cek security auth dan performa query database".to_string(),
+            tuned_prompt: "# AUDIT DIRECTIVE: Targeted Inspection".to_string(),
+            report_markdown: "# Audit Report for catable\n\nNo critical findings.".to_string(),
+            created_at: String::new(),
+        };
+
+        let row_id = db.save_audit_report(&rec)?;
+        assert!(row_id > 0);
+
+        let reports = db.get_audit_reports_for_repo("/home/cecepazhar/Product/catable", 10)?;
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].score, 95);
+        assert_eq!(reports[0].project_name, "catable");
+        assert_eq!(reports[0].user_prompt, "cek security auth dan performa query database");
+        assert_eq!(reports[0].medium_count, 1);
+
+        let summaries = db.get_audit_project_summaries()?;
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].0, "/home/cecepazhar/Product/catable");
+        assert_eq!(summaries[0].1, "catable");
+        assert_eq!(summaries[0].2, 95); // score
+        assert_eq!(summaries[0].3, 1);  // count
+
+        db.delete_audit_report(reports[0].id)?;
+        let reports_after = db.get_audit_reports_for_repo("/home/cecepazhar/Product/catable", 10)?;
+        assert_eq!(reports_after.len(), 0);
+
         Ok(())
     }
 }

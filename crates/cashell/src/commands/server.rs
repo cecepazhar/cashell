@@ -19,6 +19,9 @@ pub enum ServerAction {
     /// Print CPU, RAM, disk, and network stats
     Stats,
 
+    /// SSD / NVMe storage SMART health & CrystalDisk diagnostic
+    Disk,
+
     /// Database operations: install, status, backup, restore
     Db {
         #[command(subcommand)]
@@ -80,6 +83,7 @@ pub enum DbAction {
 pub fn run(cmd: &ServerCommand, cfg: &Config) -> Result<()> {
     match &cmd.action {
         ServerAction::Stats => run_stats(),
+        ServerAction::Disk => run_disk_health(),
         ServerAction::Db { action } => run_db(action),
         ServerAction::Firewall { action, port } => run_firewall(action, *port),
         ServerAction::Docker { action, name } => run_docker(action, name.as_deref()),
@@ -159,6 +163,80 @@ fn run_stats() -> Result<()> {
         fmt_bytes(rx_total),
         fmt_bytes(tx_total)
     );
+    Ok(())
+}
+
+// ── Disk Health ───────────────────────────────────────────────────────────────
+
+fn run_disk_health() -> Result<()> {
+    use crate::systat::probe_storage_health;
+
+    let disks = probe_storage_health();
+
+    println!("{}", "── CrystalDisk SSD / NVMe SMART Health ─────────────────────".bold());
+    if disks.is_empty() {
+        println!(
+            "  {}",
+            "No physical drives detected (SMART permissions unavailable).".yellow()
+        );
+        return Ok(());
+    }
+
+    for d in &disks {
+        let health_color = if d.health_status.contains("CRITICAL") {
+            d.health_status.red().to_string()
+        } else if d.health_status.contains("WARNING") {
+            d.health_status.yellow().to_string()
+        } else {
+            d.health_status.green().to_string()
+        };
+
+        let temp_color = if d.temperature_c <= 0.0 {
+            "N/A".normal().to_string()
+        } else if d.temperature_c >= 75.0 {
+            format!("{:.1}°C", d.temperature_c).red().to_string()
+        } else if d.temperature_c >= 60.0 {
+            format!("{:.1}°C", d.temperature_c).yellow().to_string()
+        } else {
+            format!("{:.1}°C", d.temperature_c).green().to_string()
+        };
+
+        let bar_len = 16usize;
+        let filled = ((d.wear_level_pct as usize * bar_len) / 100).min(bar_len);
+        let bar = "█".repeat(filled) + &"░".repeat(bar_len - filled);
+        let bar_color = if d.wear_level_pct >= 80 {
+            bar.red().to_string()
+        } else if d.wear_level_pct >= 50 {
+            bar.yellow().to_string()
+        } else {
+            bar.green().to_string()
+        };
+
+        println!(
+            "\n  {}  [{} · {}]  ⏚ {}",
+            d.device.cyan().bold(),
+            health_color,
+            temp_color,
+            d.model
+        );
+        println!(
+            "      Wear: {} [{}] {}% │ TBW: {:.2} TB │ Read: {:.2} TB",
+            "●".cyan(),
+            bar_color,
+            d.wear_level_pct,
+            d.written_bytes_tb,
+            d.read_bytes_tb
+        );
+        println!(
+            "      Power On: {}h (~{}d) │ Cycles: {} │ Unsafe Shutdowns: {} │ Warnings: {}",
+            d.power_on_hours,
+            d.power_on_hours / 24,
+            d.power_cycles,
+            d.unsafe_shutdowns,
+            d.critical_warnings
+        );
+    }
+
     Ok(())
 }
 

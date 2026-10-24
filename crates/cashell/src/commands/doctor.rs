@@ -238,6 +238,28 @@ fn check_storage(mounts: &[String]) -> Vec<CheckResult> {
             )),
         }
     }
+
+    // SMART / SSD Health checks
+    let disks = crate::systat::probe_storage_health();
+    for d in disks {
+        if d.critical_warnings > 0 {
+            results.push(CheckResult::fail(
+                &format!("SSD SMART {}", d.device),
+                format!("{} ({}): {} critical warnings, temp {:.1}°C", d.model, d.health_status, d.critical_warnings, d.temperature_c),
+            ));
+        } else if d.wear_level_pct >= 90 || d.temperature_c >= 75.0 {
+            results.push(CheckResult::warn(
+                &format!("SSD SMART {}", d.device),
+                format!("{} ({}): {}% wear, temp {:.1}°C", d.model, d.health_status, d.wear_level_pct, d.temperature_c),
+            ));
+        } else {
+            results.push(CheckResult::ok(&format!(
+                "SSD SMART {} ({}) — {}, {:.1}°C, {:.2} TBW",
+                d.device, d.model, d.health_status, d.temperature_c, d.written_bytes_tb
+            )));
+        }
+    }
+
     results
 }
 

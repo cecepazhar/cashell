@@ -504,6 +504,10 @@ pub struct AiConfig {
     pub fallback_chain: Vec<String>,
     #[serde(default = "default_providers")]
     pub providers: std::collections::HashMap<String, AiProviderConfig>,
+    #[serde(default = "default_audit_max_context_kb")]
+    pub audit_max_context_kb: usize,
+    #[serde(default = "default_audit_context_limit_tokens")]
+    pub audit_context_limit_tokens: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -527,6 +531,12 @@ fn default_ai_max_retries() -> u32 {
 }
 fn default_fallback_chain() -> Vec<String> {
     vec!["9router".to_string()]
+}
+pub fn default_audit_max_context_kb() -> usize {
+    32
+}
+pub fn default_audit_context_limit_tokens() -> usize {
+    8000
 }
 fn default_providers() -> std::collections::HashMap<String, AiProviderConfig> {
     let mut m = std::collections::HashMap::new();
@@ -574,6 +584,8 @@ impl Default for AiConfig {
             max_retries: default_ai_max_retries(),
             fallback_chain: default_fallback_chain(),
             providers: default_providers(),
+            audit_max_context_kb: default_audit_max_context_kb(),
+            audit_context_limit_tokens: default_audit_context_limit_tokens(),
         }
     }
 }
@@ -847,6 +859,22 @@ mod tests {
         "#;
         let cfg_empty: Config = toml::from_str(toml_empty).expect("deserialize failed");
         assert_eq!(cfg_empty.uptime.telegram_bot_token, "");
-        assert_eq!(cfg_empty.uptime.telegram_chat_id, "");
+        assert_eq!(cfg.uptime.telegram_chat_id, "987654321");
+    }
+
+    #[test]
+    fn test_ai_config_audit_context_limit() {
+        let ai = AiConfig::default();
+        assert_eq!(ai.audit_max_context_kb, 32);
+        assert_eq!(ai.audit_context_limit_tokens, 8000);
+
+        let toml_str = r#"
+            [ai]
+            audit_max_context_kb = 64
+            audit_context_limit_tokens = 16000
+        "#;
+        let cfg: Config = toml::from_str(toml_str).expect("deserialize failed");
+        assert_eq!(cfg.ai.audit_max_context_kb, 64);
+        assert_eq!(cfg.ai.audit_context_limit_tokens, 16000);
     }
 }

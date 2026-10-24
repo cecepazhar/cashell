@@ -412,6 +412,10 @@ pub struct AuditCommand {
     /// available CPUs)
     #[arg(long)]
     pub jobs: Option<usize>,
+
+    /// Custom natural prompt or tuned audit directive
+    #[arg(long)]
+    pub prompt: Option<String>,
 }
 
 #[derive(Parser, Debug, Clone)]

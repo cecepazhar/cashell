@@ -1837,20 +1837,22 @@ fn probe_sysfs_disk_health(dev_name: &str) -> Option<DiskHealthInfo> {
             }
         }
     }
-    if let Ok(entries) = std::fs::read_dir(format!("/sys/class/nvme/{ctrl_name}")) {
-        for entry in entries.flatten() {
-            let n = entry.file_name().to_string_lossy().to_string();
-            if n.starts_with("hwmon") {
-                temp_paths.push(format!("/sys/class/nvme/{ctrl_name}/{n}/temp1_input"));
+    if dev_name.starts_with("nvme") {
+        if let Ok(entries) = std::fs::read_dir(format!("/sys/class/nvme/{ctrl_name}")) {
+            for entry in entries.flatten() {
+                let n = entry.file_name().to_string_lossy().to_string();
+                if n.starts_with("hwmon") {
+                    temp_paths.push(format!("/sys/class/nvme/{ctrl_name}/{n}/temp1_input"));
+                }
             }
         }
-    }
-    if let Ok(entries) = std::fs::read_dir("/sys/class/hwmon") {
-        for entry in entries.flatten() {
-            let hw_path = entry.path();
-            if let Ok(name) = std::fs::read_to_string(hw_path.join("name")) {
-                if name.trim() == "nvme" {
-                    temp_paths.push(hw_path.join("temp1_input").to_string_lossy().to_string());
+        if let Ok(entries) = std::fs::read_dir("/sys/class/hwmon") {
+            for entry in entries.flatten() {
+                let hw_path = entry.path();
+                if let Ok(name) = std::fs::read_to_string(hw_path.join("name")) {
+                    if name.trim() == "nvme" {
+                        temp_paths.push(hw_path.join("temp1_input").to_string_lossy().to_string());
+                    }
                 }
             }
         }

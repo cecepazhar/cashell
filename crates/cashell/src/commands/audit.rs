@@ -410,6 +410,7 @@ struct AuditTask<'a> {
     progress: Option<&'a Sender<crate::audit_tui::Ev>>,
     worker: usize,
     cancel: Option<&'a AtomicBool>,
+    custom_prompt: Option<&'a str>,
 }
 
 /// Audit one file.
@@ -490,9 +491,12 @@ fn audit_file_body(
             return (None, false);
         }
     };
-    if meta.len() > MAX_FILE_BYTES {
+    // Context limiter check (audit_max_context_kb from config, e.g. 16KB, 32KB, 64KB, 128KB)
+    let max_kb = task.audit_cfg.ai.audit_max_context_kb.max(16);
+    let max_bytes = (max_kb as u64) * 1024;
+    if meta.len() > max_bytes {
         if show {
-            eprintln!("  [skip: >200KB]");
+            eprintln!("  [skip: >{}KB context limit]", max_kb);
         }
         return (None, false);
     }
@@ -506,7 +510,25 @@ fn audit_file_body(
         }
     };
 
+    let content = if content.len() > max_bytes as usize {
+        let mut end = max_bytes as usize;
+        while end > 0 && !content.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}\n// ... [TRUNCATED to {}KB context limit] ...", &content[..end], max_kb)
+    } else {
+        content
+    };
+
     let prompt = format!("File: {rel_str}\n```\n{content}\n```");
+
+    let custom_sys_prompt;
+    let effective_system_prompt = if let Some(cp) = task.custom_prompt {
+        custom_sys_prompt = format!("{AUDIT_SYSTEM_PROMPT}\n\n[USER AUDIT DIRECTIVE & QUALITY GATES]:\n{cp}");
+        custom_sys_prompt.as_str()
+    } else {
+        AUDIT_SYSTEM_PROMPT
+    };
 
     // Throttle only bounds the in-flight AI call, not the file read above.
     let raw = {
@@ -514,7 +536,7 @@ fn audit_file_body(
         match crate::ai::query_buffered_with(
             task.client,
             task.audit_cfg,
-            Some(AUDIT_SYSTEM_PROMPT),
+            Some(effective_system_prompt),
             &prompt,
         ) {
             Ok(r) => r,
@@ -629,6 +651,7 @@ pub fn run(cmd: &AuditCommand, cfg: &Config, quiet: bool) -> Result<i32> {
                     progress: tx_opt.as_ref(),
                     worker: (n - 1) % jobs,
                     cancel: cancel_ref,
+                    custom_prompt: cmd.prompt.as_deref(),
                 })
             })
             .collect();
@@ -652,6 +675,7 @@ pub fn run(cmd: &AuditCommand, cfg: &Config, quiet: bool) -> Result<i32> {
                 progress: tx_opt.as_ref(),
                 worker: 0,
                 cancel: cancel_ref,
+                custom_prompt: cmd.prompt.as_deref(),
             }) {
                 Some(item) => items.push(item),
                 None => skipped += 1,
