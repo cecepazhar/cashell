@@ -3257,6 +3257,8 @@ impl CockpitApp {
         // Auto-probe: refresh apps and probe ports
         self.apps = Self::init_apps(&self.cfg);
         self.probe_all_ports();
+        self.probe_servers();
+        self.save_config_silent();
 
         let action = if self.server_wizard_is_edit { "updated" } else { "added" };
         self.set_notification(format!(
@@ -3282,11 +3284,7 @@ impl CockpitApp {
         let idx = self.selected_server.min(self.server_probe_results.len() - 1);
         let server_name = self.server_probe_results[idx].0.clone();
 
-        if server_name.starts_with("ThinkPad X1") || server_name.starts_with("Local") {
-            self.set_notification("System local node cannot be edited or renamed.");
-            return;
-        }
-
+        // Allow editing any server, including built‑in presets.
         if let Some(cfg_node) = self.cfg.daemon.nodes.get(&server_name) {
             let services_str = cfg_node
                 .services
@@ -3308,10 +3306,28 @@ impl CockpitApp {
             self.show_server_wizard = true;
             self.set_notification(format!("✎ Editing fleet server '{}'", server_name));
         } else {
-            self.set_notification(format!(
-                "Fleet server '{}' is a built-in preset and cannot be edited.",
-                server_name
-            ));
+            // Built‑in preset not in config – construct from known preset or probe data.
+            let (ip, user, svcs) = if server_name.starts_with("ThinkPad X1") || server_name.starts_with("Local") {
+                ("127.0.0.1".to_string(), "cecepazhar".to_string(), "http:80,ssh:22".to_string())
+            } else {
+                match server_name.as_str() {
+                    "YPC" => ("100.127.232.32".to_string(), "root".to_string(), "web:3000,ssh:22".to_string()),
+                    "Hostinger VPS" => ("100.76.150.46".to_string(), "root".to_string(), "http:80,ssh:22".to_string()),
+                    "Tencent Cloud VPS" => ("43.157.208.83".to_string(), "root".to_string(), "ssh:22,http:80".to_string()),
+                    "XPC" => ("100.125.125.28".to_string(), "root".to_string(), "ssh:22".to_string()),
+                    "pc-gerlink" => ("100.102.147.90".to_string(), "root".to_string(), "http:80,ssh:22".to_string()),
+                    _ => ("100.x.y.z".to_string(), "root".to_string(), "http:80,ssh:22".to_string()),
+                }
+            };
+            self.server_name_buf = server_name.clone();
+            self.server_ip_buf = ip;
+            self.server_user_buf = user;
+            self.server_services_buf = svcs;
+            self.server_wizard_is_edit = true;
+            self.server_wizard_orig_name = server_name.clone();
+            self.server_wizard_field = 0;
+            self.show_server_wizard = true;
+            self.set_notification(format!("✎ Editing fleet server '{}'", server_name));
         }
     }
 
