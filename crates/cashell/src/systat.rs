@@ -459,13 +459,14 @@ pub fn probe_docker_containers() -> Vec<DockerContainerInfo> {
                 let parts: Vec<&str> = line.split('|').collect();
                 if parts.len() >= 4 {
                     let ports = parts.get(4).map(|p| p.trim().to_string()).unwrap_or_default();
-                    let mut state = parts[2].trim().to_lowercase();
-                    let name = format!("tencent::{}", parts[0].trim());
-                    let image = parts[1].trim().to_string();
-                    let status_detail = format!("{} [Tencent Cloud]", parts[3].trim());
-                    if state != "running" {
-                        state = state.clone();
+                    let state = parts[2].trim().to_lowercase();
+                    let mut short_name = parts[0].trim().to_string();
+                    if let Some(stripped) = short_name.strip_prefix("cagroup-") {
+                        short_name = stripped.to_string();
                     }
+                    let name = format!("tc::{}", short_name);
+                    let image = parts[1].trim().to_string();
+                    let status_detail = format!("{} [Tencent]", parts[3].trim());
                     list.push(DockerContainerInfo {
                         name,
                         image,
