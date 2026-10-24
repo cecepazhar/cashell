@@ -1310,12 +1310,6 @@ mod tests {
         assert_eq!(cfg.daemon.interval_secs, 60);
         assert_eq!(cfg.daemon.retry_threshold, 3);
         assert_eq!(cfg.daemon.ssh_key_path, "~/.ssh/id_ed25519");
-        assert!(cfg.daemon.nodes.contains_key("ypc"));
-        assert!(cfg.daemon.nodes.contains_key("hostinger"));
         assert!(cfg.daemon.nodes.contains_key("local"));
-        assert_eq!(
-            cfg.daemon.remediation.get("ypc.gitea").map(String::as_str),
-            Some("podman restart gitea")
-        );
     }
 }

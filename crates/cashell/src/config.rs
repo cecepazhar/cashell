@@ -155,44 +155,6 @@ fn default_protocol() -> String {
 fn default_nodes() -> std::collections::HashMap<String, NodeConfig> {
     let mut m = std::collections::HashMap::new();
     m.insert(
-        "ypc".to_string(),
-        NodeConfig {
-            ip: "100.127.232.32".to_string(),
-            user: "cecep".to_string(),
-            services: vec![
-                ServiceConfig {
-                    name: "gitea".to_string(),
-                    port: 3000,
-                    protocol: "http".to_string(),
-                },
-                ServiceConfig {
-                    name: "nextcloud".to_string(),
-                    port: 443,
-                    protocol: "https".to_string(),
-                },
-                ServiceConfig {
-                    name: "tailscaled".to_string(),
-                    port: 22,
-                    protocol: "tcp".to_string(),
-                },
-            ],
-            active: true,
-        },
-    );
-    m.insert(
-        "hostinger".to_string(),
-        NodeConfig {
-            ip: "100.76.150.46".to_string(),
-            user: "root".to_string(),
-            services: vec![ServiceConfig {
-                name: "tailscale-funnel".to_string(),
-                port: 8443,
-                protocol: "https".to_string(),
-            }],
-            active: true,
-        },
-    );
-    m.insert(
         "local".to_string(),
         NodeConfig {
             ip: "127.0.0.1".to_string(),
@@ -205,37 +167,11 @@ fn default_nodes() -> std::collections::HashMap<String, NodeConfig> {
             active: true,
         },
     );
-    m.insert(
-        "tencent".to_string(),
-        NodeConfig {
-            ip: "100.96.8.82".to_string(),
-            user: "root".to_string(),
-            services: vec![
-                ServiceConfig {
-                    name: "caorch-agent".to_string(),
-                    port: 8091,
-                    protocol: "http".to_string(),
-                },
-                ServiceConfig {
-                    name: "tailscaled".to_string(),
-                    port: 22,
-                    protocol: "tcp".to_string(),
-                },
-            ],
-            active: true,
-        },
-    );
     m
 }
 
 fn default_remediation() -> std::collections::HashMap<String, String> {
-    let mut m = std::collections::HashMap::new();
-    m.insert("ypc.gitea".to_string(), "podman restart gitea".to_string());
-    m.insert(
-        "hostinger.tailscale-funnel".to_string(),
-        "systemctl restart cloudflared".to_string(),
-    );
-    m
+    std::collections::HashMap::new()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

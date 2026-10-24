@@ -537,17 +537,34 @@ pub fn probe_fleet_nodes(local_cpu: f32, local_ram_pct: u8, local_disk_pct: u8) 
         role: "Armada Control Plane / Local".to_string(),
     };
 
-    let remotes = [
-        ("YPC", "100.127.232.32", 3000, 14.2f32, 58u8, 42u8, "Dokploy Armada Host · Linux"),
-        ("Hostinger VPS", "100.76.150.46", 8443, 22.5f32, 64u8, 38u8, "Edge Gateway & Proxy · Linux"),
-        ("Tencent Cloud VPS", "100.96.8.82", 22, 11.8f32, 31u8, 27u8, "Sovereign CAGroup Web & Container Node · Linux"),
-        ("XPC", "100.125.125.28", 22, 18.0f32, 45u8, 52u8, "High-Compute Rig · Linux"),
-        ("pc-gerlink", "100.102.147.90", 80, 9.5f32, 35u8, 28u8, "Office Terminal · Windows"),
-    ];
+    // ZERO TRUST: remote nodes are sourced exclusively from the user's
+    // `cfg.daemon.nodes` map. Fresh installs only see the local node,
+    // and any Tailscale mesh node is only probed if the user has
+    // registered it in their personal configuration. This prevents
+    // leaking internal VPS IPs to the public.
+    let nodes_cfg: std::collections::HashMap<String, crate::config::NodeConfig> = {
+        crate::config::Config::load(None)
+            .ok()
+            .map(|c| c.daemon.nodes)
+            .unwrap_or_default()
+    };
+
+    let remotes: Vec<(&String, &str, u16)> = nodes_cfg
+        .iter()
+        .filter(|(name, _)| name.as_str() != "local")
+        .map(|(name, node)| {
+            let port = node
+                .services
+                .first()
+                .map(|s| s.port)
+                .unwrap_or(22);
+            (name, node.ip.as_str(), port)
+        })
+        .collect();
 
     let probed_remotes: Vec<FleetNodeResume> = remotes
-        .into_par_iter()
-        .map(|(name, ip, fallback_port, def_cpu, def_ram, def_disk, role)| {
+        .par_iter()
+        .map(|(name, ip, port)| {
             let mut latency = None;
             let mut is_online = false;
 
@@ -576,7 +593,7 @@ pub fn probe_fleet_nodes(local_cpu: f32, local_ram_pct: u8, local_disk_pct: u8) 
 
             // 2. Fallback to TCP connect
             if !is_online {
-                let addr_str = format!("{}:{}", ip, fallback_port);
+                let addr_str = format!("{}:{}", ip, port);
                 if let Ok(addr) = addr_str.parse::<SocketAddr>() {
                     let start = Instant::now();
                     if TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok() {
@@ -586,27 +603,29 @@ pub fn probe_fleet_nodes(local_cpu: f32, local_ram_pct: u8, local_disk_pct: u8) 
                 }
             }
 
+            let node_name = name.to_string();
+            let node_ip = ip.to_string();
             if is_online {
                 FleetNodeResume {
-                    name: name.to_string(),
-                    ip: ip.to_string(),
+                    name: node_name,
+                    ip: node_ip,
                     status: "ONLINE".to_string(),
                     latency_ms: latency,
-                    cpu_pct: Some(def_cpu),
-                    ram_pct: Some(def_ram),
-                    disk_pct: Some(def_disk),
-                    role: role.to_string(),
+                    cpu_pct: Some(15.0),
+                    ram_pct: Some(40),
+                    disk_pct: Some(35),
+                    role: "Registered Fleet Node".to_string(),
                 }
             } else {
                 FleetNodeResume {
-                    name: name.to_string(),
-                    ip: ip.to_string(),
+                    name: node_name,
+                    ip: node_ip,
                     status: "OFFLINE".to_string(),
                     latency_ms: None,
                     cpu_pct: None,
                     ram_pct: None,
                     disk_pct: None,
-                    role: role.to_string(),
+                    role: "Registered Fleet Node".to_string(),
                 }
             }
         })
@@ -1330,44 +1349,22 @@ pub fn send_telegram_alert(token: &str, chat_id: &str, message: &str) {
 pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
     use rayon::prelude::*;
 
-    let default_targets: &[(&str, &str, &str)] = &[
-        ("Landing CATerm", "https://caterm.fathforce.com/", "CA Ecosystem"),
-        ("CAMark Studio", "https://camark.fathforce.com/", "CA Ecosystem"),
-        ("CAFramework Hub", "https://caframework.fathforce.com/", "CA Ecosystem"),
-        ("CAShell Portal", "https://cashell.fathforce.com/", "CA Ecosystem"),
-        ("CAOrch Web", "https://caorch.fathforce.com/", "CA Ecosystem"),
-        ("CAUI Design System", "https://caui.fathforce.com/", "CA Ecosystem"),
-        ("CAStudio Studio", "https://castudio.fathforce.com/", "CA Ecosystem"),
-        ("CACash Finance", "https://cacash.fathforce.com/", "CA Ecosystem"),
-        ("Fathforce Blog", "https://blog.fathforce.com/", "CA Ecosystem"),
-        ("Fathforce Docs", "https://docs.fathforce.com/", "CA Ecosystem"),
-        ("Fathforce Changelogs", "https://changelog.fathforce.com/", "CA Ecosystem"),
-        ("Fathforce Member", "https://member.fathforce.com/", "CA Ecosystem"),
-        ("GCC Central Core", "https://gcc.fathforce.com/", "CA Ecosystem"),
-        ("Cecep Azhar Portal", "https://cecepazhar.com/", "CA Ecosystem"),
-        ("Fathforce Master", "https://fathforce.com/", "CA Ecosystem"),
-        ("FathStore Engine", "https://fathstore.com/", "CA Ecosystem"),
-        ("Tencent Traefik :80", "http://100.96.8.82/", "Fleet Nodes"),
-        ("Tencent Content Hub", "http://100.96.8.82:8096/", "Fleet Nodes"),
-        ("Tencent CAOrch :8091", "http://100.96.8.82:8091/", "Fleet Nodes"),
-        ("Dokploy YPC Host", "http://100.127.232.32:3000", "Fleet Nodes"),
-        ("Hostinger Gateway", "https://100.76.150.46:8443", "Fleet Nodes"),
-        ("9router AI Gateway", "http://127.0.0.1:20128/health", "Localhost"),
-        ("CAShell Local Daemon", "http://127.0.0.1:8090/api/health", "Localhost"),
-    ];
-
-    let mut targets: Vec<(String, String, String)> = default_targets
-        .iter()
-        .map(|&(n, u, g)| (n.to_string(), u.to_string(), g.to_string()))
-        .collect();
+    // ZERO TRUST INITIAL STATE
+    // No default monitors are pre-filled on a fresh install.
+    // Users start with an empty monitor list and can:
+    //   1. Add their own endpoints via the `ADD` button.
+    //   2. Import canonical CA sites via `IMPORT CA SITES` (which
+    //      writes them to `cfg.uptime.custom_monitors` so they
+    //      persist and can be permanently deleted).
+    // Deletion flow is 100% clean: removing a monitor adds it to
+    // `disabled_monitors`, preventing the probe engine from ever
+    // re-creating it on subsequent ticks.
+    let mut targets: Vec<(String, String, String)> = Vec::new();
 
     let cfg_opt = crate::config::Config::load(None).ok();
 
-    // Filter out disabled monitors from default targets
+    // Load user-defined custom monitors from config
     if let Some(ref cfg) = cfg_opt {
-        targets.retain(|(name, _, _)| !cfg.uptime.disabled_monitors.contains(name));
-
-        // Load custom monitors from config
         for m in &cfg.uptime.custom_monitors {
             if !cfg.uptime.disabled_monitors.contains(&m.name) && !targets.iter().any(|(_, u, _)| u == &m.target) {
                 let grp = if m.group.trim().is_empty() { "Custom".to_string() } else { m.group.clone() };
@@ -2265,9 +2262,7 @@ mod tests {
         assert_eq!(local.cpu_pct, Some(42.0));
         assert_eq!(local.ram_pct, Some(55));
         assert_eq!(local.disk_pct, Some(24));
-        assert!(node.iter().any(|n| n.name == "YPC"));
-        assert!(node.iter().any(|n| n.name == "Hostinger VPS"));
-        assert!(node.iter().any(|n| n.name == "Tencent Cloud VPS"));
+        assert!(node.iter().any(|n| n.name == "Local ThinkPad X1"));
     }
 
     #[test]

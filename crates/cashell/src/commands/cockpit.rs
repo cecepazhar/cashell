@@ -1413,20 +1413,20 @@ impl CockpitApp {
         let idx = self.selected_server.min(self.server_probe_results.len() - 1);
         let server_name = self.server_probe_results[idx].0.clone();
 
-        if self.cfg.daemon.nodes.contains_key(&server_name) {
-            self.cfg.daemon.nodes.remove(&server_name);
-            self.save_config_silent();
-            if let Some(ref d) = self.db {
-                let _ = d.delete_registered_node(&server_name);
-            }
-        } else {
-            self.set_notification(format!("Node '{server_name}' is a hardcoded system fleet node and cannot be removed."));
+        if server_name.starts_with("ThinkPad X1") || server_name.starts_with("Local") || server_name == "local" {
+            self.set_notification("Local machine node cannot be removed.");
             return;
+        }
+
+        self.cfg.daemon.nodes.remove(&server_name);
+        self.save_config_silent();
+        if let Some(ref d) = self.db {
+            let _ = d.delete_registered_node(&server_name);
         }
 
         self.server_probe_results.remove(idx);
         self.selected_server = 0;
-        self.set_notification(format!("🗑 Fleet server '{server_name}' removed"));
+        self.set_notification(format!("🗑 Fleet server '{server_name}' permanently removed"));
     }
 
     fn execute_project_deletion(&mut self) {
@@ -13950,14 +13950,9 @@ mod tests {
     #[test]
     fn test_executive_command_center_telemetry() {
         let app = CockpitApp::new(&Config::default());
-        // Verify all 5 canonical armada nodes present
+        // Verify the local node is present
         let nodes = &app.latest_snap.fleet_nodes;
         assert!(nodes.iter().any(|n| n.name.contains("ThinkPad X1") || n.name.contains("Local")));
-        assert!(nodes.iter().any(|n| n.name == "YPC"));
-        assert!(nodes.iter().any(|n| n.name == "Hostinger VPS"));
-        assert!(nodes.iter().any(|n| n.name == "Tencent Cloud VPS"));
-        assert!(nodes.iter().any(|n| n.name == "XPC"));
-        assert!(nodes.iter().any(|n| n.name == "pc-gerlink"));
 
         // Verify core daemons present
         let daemons = &app.latest_snap.service_health;
