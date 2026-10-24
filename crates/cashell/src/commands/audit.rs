@@ -237,6 +237,7 @@ const EXTRA_IGNORE: &[&str] = &[
     ".svelte-kit",
 ];
 
+#[allow(dead_code)]
 const MAX_FILE_BYTES: u64 = 200 * 1024; // 200 KB
 
 pub fn should_ignore_dir(name: &str, ignore_patterns: &[String]) -> bool {
@@ -851,7 +852,60 @@ pub fn run(cmd: &AuditCommand, cfg: &Config, quiet: bool) -> Result<i32> {
         }
     }
 
+    // Persist per-project audit report to SQLite database (for cockpit history).
+    let _ = persist_audit_to_db(&report, &md_report, cmd);
+
     Ok(report.exit_code())
+}
+
+/// Calculate audit score based on finding severities:
+/// - 100 points starting value.
+/// - Critical deductions (25 pts), High deductions (10 pts), Medium (5 pts), Low (2 pts).
+fn calculate_audit_score(report: &AuditReport) -> i32 {
+    let mut score = 100.0f32;
+    score -= report.total_critical as f32 * 25.0;
+    score -= report.total_high as f32 * 10.0;
+    score -= report.total_medium as f32 * 5.0;
+    score -= report.total_low as f32 * 2.0;
+    score.clamp(0.0, 100.0) as i32
+}
+
+fn persist_audit_to_db(report: &AuditReport, md_report: &str, cmd: &AuditCommand) -> Result<()> {
+    let db = crate::db::Database::open().map_err(|e| {
+        eprintln!("  [db save warn: {}]", e);
+        e
+    })?;
+
+    let project_name = report
+        .repo_path
+        .split('/')
+        .last()
+        .unwrap_or("project")
+        .to_string();
+
+    let rec = crate::db::AuditReportRecord {
+        id: 0,
+        repo_path: report.repo_path.clone(),
+        project_name,
+        score: calculate_audit_score(report),
+        critical_count: report.total_critical as i64,
+        high_count: report.total_high as i64,
+        medium_count: report.total_medium as i64,
+        low_count: report.total_low as i64,
+        info_count: report.total_info as i64,
+        report_path: report.repo_path.clone(),
+        user_prompt: cmd.prompt.clone().unwrap_or_default(),
+        tuned_prompt: cmd.prompt.clone().unwrap_or_default(),
+        report_markdown: md_report.to_string(),
+        created_at: String::new(),
+    };
+
+    db.save_audit_report(&rec).map_err(|e| {
+        eprintln!("  [db save failed: {}]", e);
+        e
+    })?;
+
+    Ok(())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -890,6 +944,21 @@ mod tests {
     fn parse_findings_empty_input_is_info() {
         let f = parse_findings("   ");
         assert!(f.is_empty() || f[0].severity == Severity::Info);
+    }
+
+    #[test]
+    fn test_calculate_audit_score() {
+        let mut report = AuditReport::default();
+        assert_eq!(calculate_audit_score(&report), 100);
+
+        report.total_critical = 1; // -25
+        report.total_high = 1;     // -10
+        report.total_medium = 2;   // -10
+        report.total_low = 3;      // -6
+        assert_eq!(calculate_audit_score(&report), 49);
+
+        report.total_critical = 10; // clamps to 0
+        assert_eq!(calculate_audit_score(&report), 0);
     }
 
     #[test]

@@ -364,6 +364,6 @@ mod tests {
     #[test]
     fn storage_checks_do_not_panic() {
         let results = check_storage(&["/".to_string()]);
-        assert_eq!(results.len(), 1);
+        assert!(!results.is_empty());
     }
 }

@@ -307,6 +307,15 @@ pub enum HitboxAction {
     NextDisk,
     PrevDisk,
     CloseDiskHealth,
+    // Audit Tab 5-Step Workflow Actions
+    AuditSelectStep(usize),
+    AuditSelectProject(usize),
+    AuditSelectHistory(usize),
+    AuditFocusField(usize),
+    AuditTunePrompt,
+    AuditApplyPreset(usize),
+    AuditNextProject,
+    AuditPrevProject,
 }
 
 #[derive(Debug, Clone)]
@@ -539,7 +548,80 @@ pub struct AppCard {
     pub details: String,
 }
 
-// ── Audit Report Summary ────────────────────────────────────────────────────
+// ── Audit Report Summary & 5-Step Workflow ─────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AuditStep {
+    #[default]
+    SelectProject = 0,
+    NaturalPrompt = 1,
+    PromptTuning = 2,
+    ExecuteAudit = 3,
+    PreviewResult = 4,
+}
+
+impl AuditStep {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::SelectProject => "1. Folder",
+            Self::NaturalPrompt => "2. Prompt",
+            Self::PromptTuning => "3. Tuning",
+            Self::ExecuteAudit => "4. Execute",
+            Self::PreviewResult => "5. Results",
+        }
+    }
+}
+
+pub const AUDIT_PROMPT_PRESETS: &[(&str, &str)] = &[
+    ("Security & Auth", "cek security auth, jwt token, injection dan session leak"),
+    ("Query & DB Perf", "cek query database, n+1 query, index dan performa bottleneck"),
+    ("Error & Memory", "cek error handling, unwrap panic, resource leak dan memory safety"),
+    ("Full OWASP Scan", "audit full owasp top 10 vulnerabilities, input validation and access control"),
+];
+
+/// Automatically transforms a natural user prompt into a structured, high-signal audit prompt
+/// with explicit security requirements, quality gates, and code standards.
+pub fn tune_audit_prompt(natural: &str, project_name: &str, folder_path: &str) -> String {
+    let lower = natural.to_lowercase();
+    let mut focus_areas = Vec::new();
+
+    let has_auth = lower.contains("auth") || lower.contains("login") || lower.contains("token") || lower.contains("jwt") || lower.contains("session") || lower.contains("permission");
+    let has_security = lower.contains("security") || lower.contains("keamanan") || lower.contains("vulnerability") || lower.contains("cve") || lower.contains("injection") || lower.contains("sanitiz");
+    let has_perf = lower.contains("performa") || lower.contains("performance") || lower.contains("speed") || lower.contains("latency") || lower.contains("slow") || lower.contains("cepat");
+    let has_db = lower.contains("db") || lower.contains("database") || lower.contains("query") || lower.contains("sql") || lower.contains("orm") || lower.contains("n+1");
+    let has_memory = lower.contains("memory") || lower.contains("leak") || lower.contains("ram") || lower.contains("alloc");
+    let has_api = lower.contains("api") || lower.contains("http") || lower.contains("endpoint") || lower.contains("rest");
+
+    if has_auth || has_security {
+        focus_areas.push("- [SECURITY & AUTH]: Enforce constant-time token comparison, verify token signatures/expiration, prevent authorization bypass, avoid leaking sensitive credentials/tokens in logs, and scan for SQL/command injection vectors.");
+    }
+    if has_perf || has_db {
+        focus_areas.push("- [DATABASE & PERFORMANCE]: Detect N+1 queries, verify parameterized statements, audit transaction scopes, identify unindexed joins/lookups, and ensure connection pool safety.");
+    }
+    if has_memory {
+        focus_areas.push("- [RESOURCE & MEMORY MANAGEMENT]: Identify unbounded collections, file descriptor leaks, thread pool starvation, and unclosed connection streams.");
+    }
+    if has_api {
+        focus_areas.push("- [API RESILIENCE & ERROR HANDLING]: Verify bounded timeouts, defensive input validation, proper HTTP error status mapping, and sanitized error messages.");
+    }
+
+    if focus_areas.is_empty() {
+        focus_areas.push("- [GENERAL CODE QUALITY]: Detect unhandled panics/unwraps, audit concurrency safety, enforce error propagation, and ensure idiomatic clean code conventions.");
+    }
+
+    format!(
+        "# AUDIT DIRECTIVE & QUALITY GATES FOR {project_name}\n\
+         # Target: {folder_path}\n\
+         # Natural Query: \"{natural}\"\n\n\
+         ## High-Signal Focus Areas:\n{}\n\n\
+         ## Strict Quality Gates:\n\
+         1. Critical Gate: Zero unhandled unwrap/panic in request handling or critical paths.\n\
+         2. Security Gate: Zero hardcoded secrets, API keys, or raw SQL interpolations.\n\
+         3. Performance Gate: Bounded timeouts on all remote I/O and bounded buffer allocations.\n\
+         4. Reporting Format: Output each finding as SEVERITY|LINE|MESSAGE|RECOMMENDATION.\n",
+        focus_areas.join("\n")
+    )
+}
 
 #[derive(Debug, Clone)]
 pub struct AuditReportItem {
@@ -586,6 +668,7 @@ pub const SETTINGS_FIELDS: &[&str] = &[
     "Mascot Animation Style",
     "Mascot Render Scale",
     "Mascot In AI Chat",
+    "Audit Context Limit",
 ];
 
 pub const PROVIDER_OPTIONS: &[&str] = &["9router", "omniroute", "openai", "anthropic", "local"];
@@ -638,6 +721,19 @@ pub struct CockpitApp {
     pub audit_status_msg: Option<String>,
     pub is_running_audit: bool,
     pub is_running_fix: bool,
+    pub audit_step: AuditStep,
+    pub audit_folder_path: String,
+    pub audit_project_name: String,
+    pub audit_selected_project_idx: usize,
+    pub audit_natural_prompt: String,
+    pub audit_tuned_prompt: String,
+    pub audit_input_active_field: usize,
+    pub audit_db_history: Vec<crate::db::AuditReportRecord>,
+    pub audit_selected_history_idx: usize,
+    pub audit_history_scroll: usize,
+    pub audit_preview_markdown: String,
+    pub audit_preview_score: i32,
+    pub audit_preview_findings_count: usize,
 
     // Settings (Tab 4)
     pub cfg: Config,
@@ -871,6 +967,12 @@ impl CockpitApp {
         let mut chat_state = ListState::default();
         chat_state.select(Some(chat_lines.len().saturating_sub(1)));
 
+        let default_proj = snap.tracked_projects.first();
+        let init_folder = default_proj.map(|p| p.path.clone()).unwrap_or_else(|| ".".to_string());
+        let init_name = default_proj.map(|p| p.name.clone()).unwrap_or_else(|| "current".to_string());
+        let init_prompt = "cek security auth dan performa query database".to_string();
+        let init_tuned = tune_audit_prompt(&init_prompt, &init_name, &init_folder);
+
         let mut app = Self {
             current_tab: CockpitTab::Dashboard,
             db,
@@ -891,6 +993,19 @@ impl CockpitApp {
             audit_status_msg: None,
             is_running_audit: false,
             is_running_fix: false,
+            audit_step: AuditStep::SelectProject,
+            audit_folder_path: init_folder,
+            audit_project_name: init_name,
+            audit_selected_project_idx: 0,
+            audit_natural_prompt: init_prompt,
+            audit_tuned_prompt: init_tuned,
+            audit_input_active_field: 1,
+            audit_db_history: Vec::new(),
+            audit_selected_history_idx: 0,
+            audit_history_scroll: 0,
+            audit_preview_markdown: String::new(),
+            audit_preview_score: 100,
+            audit_preview_findings_count: 0,
             cfg: cfg.clone(),
             selected_field: 0,
             editing_field: None,
@@ -1997,6 +2112,110 @@ impl CockpitApp {
         None
     }
 
+    // ── 5-Step Audit Workflow Helpers ───────────────────────────────────────
+
+    /// Returns all available auditable project folders:
+    /// combines the current working directory with all tracked projects
+    /// from the active system snapshot.
+    pub fn get_audit_project_folders(&mut self) -> Vec<(String, String)> {
+        let mut projects = Vec::new();
+        let add_proj = |projects: &mut Vec<(String, String)>, path: String, name: String| {
+            if !projects.iter().any(|(p, _)| p == &path) {
+                projects.push((path, name));
+            }
+        };
+
+        if let Ok(cwd) = std::fs::canonicalize(".") {
+            let cwd_str = cwd.display().to_string();
+            let name = cwd
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("current")
+                .to_string();
+            add_proj(&mut projects, cwd_str, name);
+        }
+
+        for p in &self.latest_snap.tracked_projects {
+            add_proj(&mut projects, p.path.clone(), p.name.clone());
+        }
+
+        if projects.is_empty() {
+            projects.push((std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_else(|_| ".".into()), "project".into()));
+        }
+
+        if let Some(idx) = projects.iter().position(|(p, _)| p == &self.audit_folder_path) {
+            self.audit_selected_project_idx = idx;
+        }
+
+        projects
+    }
+
+    /// Loads historical audit reports for the currently selected project folder from SQLite.
+    pub fn load_audit_history(&mut self) {
+        if let Some(db) = &self.db {
+            if let Ok(reports) = db.get_audit_reports_for_repo(&self.audit_folder_path, 20) {
+                self.audit_db_history = reports;
+                if self.audit_selected_history_idx >= self.audit_db_history.len() {
+                    self.audit_selected_history_idx = self.audit_db_history.len().saturating_sub(1);
+                }
+
+                if let Some(sel_report) = self.audit_db_history.get(self.audit_selected_history_idx) {
+                    self.audit_preview_markdown = sel_report.report_markdown.clone();
+                    self.audit_preview_score = sel_report.score;
+                    let total_findings = (sel_report.critical_count + sel_report.high_count + sel_report.medium_count + sel_report.low_count + sel_report.info_count) as usize;
+                    self.audit_preview_findings_count = total_findings;
+                } else {
+                    self.audit_preview_markdown = String::new();
+                    self.audit_preview_score = 100;
+                    self.audit_preview_findings_count = 0;
+                }
+            }
+        }
+    }
+
+    /// Automatically transforms the natural chat prompt into a high-signal tuned audit prompt.
+    pub fn tune_audit_directive(&mut self) {
+        if !self.audit_natural_prompt.trim().is_empty() {
+            self.audit_tuned_prompt =
+                tune_audit_prompt(&self.audit_natural_prompt, &self.audit_project_name, &self.audit_folder_path);
+            self.audit_step = AuditStep::PromptTuning;
+            self.set_notification("Prompt tuned: high-signal audit directive generated");
+        }
+    }
+
+    pub fn switch_audit_project(&mut self, idx: usize) {
+        let folders = self.get_audit_project_folders();
+        if let Some((path, name)) = folders.get(idx).cloned() {
+            self.audit_folder_path = path.clone();
+            self.audit_project_name = name.clone();
+            self.audit_selected_project_idx = idx;
+            self.load_audit_history();
+            self.tune_audit_directive();
+            self.set_notification(format!("Audit target project: {name} ({path})"));
+        }
+    }
+
+    pub fn next_audit_project(&mut self) {
+        let folders = self.get_audit_project_folders();
+        let cur = self.audit_selected_project_idx;
+        let next = (cur + 1) % folders.len().max(1);
+        self.switch_audit_project(next);
+    }
+
+    pub fn prev_audit_project(&mut self) {
+        let folders = self.get_audit_project_folders();
+        if folders.is_empty() {
+            return;
+        }
+        let cur = self.audit_selected_project_idx;
+        let prev = if cur == 0 {
+            folders.len() - 1
+        } else {
+            cur - 1
+        };
+        self.switch_audit_project(prev);
+    }
+
     pub fn set_notification(&mut self, msg: impl Into<String>) {
         self.notification = Some((msg.into(), Instant::now()));
     }
@@ -2453,6 +2672,23 @@ impl CockpitApp {
                 self.save_config_silent();
                 let state_str = if self.cfg.mascot.chat_avatar_enabled { "Enabled (Live Reactor & Avatars)" } else { "Disabled" };
                 self.set_notification(format!("Mascot In AI Chat: {state_str}"));
+            }
+            31 => {
+                let options = [16, 32, 64, 128];
+                let cur = self.cfg.ai.audit_max_context_kb;
+                let cur_idx = options.iter().position(|&x| x == cur).unwrap_or(1);
+                let next_idx = if forward {
+                    (cur_idx + 1) % options.len()
+                } else {
+                    (cur_idx + options.len() - 1) % options.len()
+                };
+                self.cfg.ai.audit_max_context_kb = options[next_idx];
+                self.cfg.ai.audit_context_limit_tokens = options[next_idx] * 250;
+                self.save_config_silent();
+                self.set_notification(format!(
+                    "Audit Context Limit: {} KB ({} tokens)",
+                    self.cfg.ai.audit_max_context_kb, self.cfg.ai.audit_context_limit_tokens
+                ));
             }
             _ => {}
         }
@@ -4543,6 +4779,67 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
     }
 
+    // 4c. If Audit tab is focused, handle text inputs for the 5-step workflow
+    if app.current_tab == CockpitTab::Audit && !app.is_running_audit {
+        let audit_field_count = 2; // 0: folder path, 1: natural prompt
+        let active_field = app.audit_input_active_field.min(audit_field_count - 1);
+
+        match key.code {
+            KeyCode::Esc => {
+                app.audit_input_active_field = 0;
+                return Ok(false);
+            }
+            KeyCode::Enter => {
+                if active_field == 0 {
+                    let folder_path = app.audit_folder_path.trim().to_string();
+                    if !folder_path.is_empty() {
+                        app.audit_folder_path = folder_path.clone();
+                        let proj_name = std::path::Path::new(&folder_path)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("project")
+                            .to_string();
+                        app.audit_project_name = proj_name;
+                        app.load_audit_history();
+                        app.tune_audit_directive();
+                        app.audit_step = AuditStep::NaturalPrompt;
+                        app.set_notification("Project folder selected");
+                    }
+                } else if active_field == 1 {
+                    if !app.audit_natural_prompt.trim().is_empty() {
+                        app.tune_audit_directive();
+                    }
+                }
+                return Ok(false);
+            }
+            KeyCode::Backspace => {
+                if active_field == 0 {
+                    app.audit_folder_path.pop();
+                } else {
+                    app.audit_natural_prompt.pop();
+                }
+                return Ok(false);
+            }
+            KeyCode::Tab => {
+                app.audit_input_active_field = (app.audit_input_active_field + 1) % audit_field_count;
+                return Ok(false);
+            }
+            KeyCode::BackTab => {
+                app.audit_input_active_field = (app.audit_input_active_field + audit_field_count - 1) % audit_field_count;
+                return Ok(false);
+            }
+            KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
+                if active_field == 0 {
+                    app.audit_folder_path.push(c);
+                } else {
+                    app.audit_natural_prompt.push(c);
+                }
+                return Ok(false);
+            }
+            _ => {}
+        }
+    }
+
     // 5. Quit Confirmation Modal Handling
     if app.show_quit_confirm {
         match key.code {
@@ -5957,6 +6254,46 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                     HitboxAction::PrevDisk => {
                         app.selected_disk_health = app.selected_disk_health.saturating_sub(1);
                     }
+                    HitboxAction::AuditSelectStep(step) => {
+                        app.audit_step = match step {
+                            0 => AuditStep::SelectProject,
+                            1 => AuditStep::NaturalPrompt,
+                            2 => AuditStep::PromptTuning,
+                            3 => AuditStep::ExecuteAudit,
+                            _ => AuditStep::PreviewResult,
+                        };
+                    }
+                    HitboxAction::AuditSelectProject(idx) => {
+                        app.switch_audit_project(idx);
+                    }
+                    HitboxAction::AuditSelectHistory(idx) => {
+                        app.audit_selected_history_idx = idx;
+                        if let Some(item) = app.audit_db_history.get(idx) {
+                            app.audit_preview_markdown = item.report_markdown.clone();
+                            app.audit_preview_score = item.score;
+                            app.audit_preview_findings_count = (item.critical_count + item.high_count + item.medium_count + item.low_count + item.info_count) as usize;
+                            app.audit_step = AuditStep::PreviewResult;
+                            app.report_scroll = 0;
+                        }
+                    }
+                    HitboxAction::AuditFocusField(field) => {
+                        app.audit_input_active_field = field;
+                    }
+                    HitboxAction::AuditTunePrompt => {
+                        app.tune_audit_directive();
+                    }
+                    HitboxAction::AuditApplyPreset(idx) => {
+                        if let Some((_, text)) = AUDIT_PROMPT_PRESETS.get(idx) {
+                            app.audit_natural_prompt = text.to_string();
+                            app.tune_audit_directive();
+                        }
+                    }
+                    HitboxAction::AuditNextProject => {
+                        app.next_audit_project();
+                    }
+                    HitboxAction::AuditPrevProject => {
+                        app.prev_audit_project();
+                    }
                 }
             }
         }
@@ -6093,7 +6430,7 @@ fn start_field_edit(app: &mut CockpitApp) {
             app.editing_field = Some(20);
             app.edit_buffer = app.cfg.deploy.coolify.as_ref().map(|c| c.api_token.clone()).unwrap_or_default();
         }
-        21 => app.cycle_field_value(true),
+        21 | 22 | 23 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31 => app.cycle_field_value(true),
         _ => {}
     }
 }
@@ -6232,12 +6569,27 @@ fn trigger_turbo_audit<B: ratatui::backend::Backend>(
     app: &mut CockpitApp,
     terminal: &mut Terminal<B>,
 ) -> Result<()> {
-    app.audit_status_msg = Some("⚡ Running Turbo Audit...".to_string());
+    let target_path = if !app.audit_folder_path.trim().is_empty() {
+        app.audit_folder_path.trim().to_string()
+    } else {
+        ".".to_string()
+    };
+
+    let effective_prompt = if !app.audit_tuned_prompt.trim().is_empty() {
+        Some(app.audit_tuned_prompt.trim().to_string())
+    } else if !app.audit_natural_prompt.trim().is_empty() {
+        Some(app.audit_natural_prompt.trim().to_string())
+    } else {
+        None
+    };
+
+    app.audit_step = AuditStep::ExecuteAudit;
+    app.audit_status_msg = Some(format!("⚡ Running Audit on {}...", app.audit_project_name));
     app.is_running_audit = true;
     terminal.draw(|f| draw(f, app))?;
 
     let cmd = crate::cli::AuditCommand {
-        path: None,
+        path: Some(target_path),
         json: false,
         max_files: 40,
         out: None,
@@ -6246,17 +6598,19 @@ fn trigger_turbo_audit<B: ratatui::backend::Backend>(
         timeout: 30,
         turbo: true,
         jobs: None,
-        prompt: None,
+        prompt: effective_prompt,
     };
 
     let cfg_clone = app.cfg.clone();
     let res = crate::commands::audit::run(&cmd, &cfg_clone, true);
     app.is_running_audit = false;
+    app.load_audit_history();
     app.refresh_audit_reports();
+    app.audit_step = AuditStep::PreviewResult;
 
     match res {
         Ok(code) => {
-            let msg = format!("✓ Turbo Audit completed (exit code {code})");
+            let msg = format!("✓ Audit on {} completed (exit code {code})", app.audit_project_name);
             app.audit_status_msg = Some(msg.clone());
             app.set_notification(msg);
         }
@@ -7278,16 +7632,16 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let mut alert_line2 = alert_prefixes;
     let mut remaining_width = available_width.saturating_sub(8);
+    let mut items_shown = 0;
 
     for item in &alert_items {
         let item_len: usize = item.iter().map(|s| s.content.chars().count()).sum();
         if item_len <= remaining_width {
             remaining_width = remaining_width.saturating_sub(item_len);
             alert_line2.extend_from_slice(item);
+            items_shown += 1;
         } else if item_len > 0 && remaining_width > 0 {
-            let total_items = alert_items.len();
-            let shown_so_far = alert_line2.len().saturating_sub(1);
-            let remaining_total = total_items - shown_so_far;
+            let remaining_total = alert_items.len().saturating_sub(items_shown);
             alert_line2.push(Span::styled(
                 format!(" …+{} alerts", remaining_total),
                 Style::default().fg(Color::Rgb(230, 185, 240)).add_modifier(Modifier::BOLD),
@@ -11389,8 +11743,9 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let mascot_anim_str = app.cfg.mascot.animation_style.as_str();
     let mascot_scale_str = app.cfg.mascot.render_scale.as_str();
     let mascot_chat_str = if app.cfg.mascot.chat_avatar_enabled { "Enabled (Live Reactor & Avatars)" } else { "Disabled" };
+    let audit_limit_str = format!("{} KB ({} tokens)", app.cfg.ai.audit_max_context_kb, app.cfg.ai.audit_context_limit_tokens);
 
-    let values: [&str; 31] = [
+    let values: [&str; 32] = [
         provider.as_str(),
         model,
         masked_key,
@@ -11422,6 +11777,7 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         mascot_anim_str,
         mascot_scale_str,
         mascot_chat_str,
+        audit_limit_str.as_str(),
     ];
 
     let items: Vec<ListItem> = SETTINGS_FIELDS
@@ -13545,7 +13901,7 @@ mod tests {
 
     #[test]
     fn test_settings_fields_coverage() {
-        assert_eq!(SETTINGS_FIELDS.len(), 31);
+        assert_eq!(SETTINGS_FIELDS.len(), 32);
         assert_eq!(SETTINGS_FIELDS[0], "AI Provider");
         assert_eq!(SETTINGS_FIELDS[3], "Output Theme");
         assert_eq!(SETTINGS_FIELDS[11], "Master Password Protection");
@@ -13559,6 +13915,7 @@ mod tests {
         assert_eq!(SETTINGS_FIELDS[28], "Mascot Animation Style");
         assert_eq!(SETTINGS_FIELDS[29], "Mascot Render Scale");
         assert_eq!(SETTINGS_FIELDS[30], "Mascot In AI Chat");
+        assert_eq!(SETTINGS_FIELDS[31], "Audit Context Limit");
     }
 
     #[test]
@@ -13846,6 +14203,26 @@ mod tests {
         // confirm with "yes"
         assert!(handle_ai_slash_command(&mut app, "yes"));
         assert_eq!(app.pending_service_restart, None);
+
+        // /disk health slash command opens modal
+        app.show_disk_health_modal = false;
+        assert!(handle_ai_slash_command(&mut app, "/disk health"));
+        assert!(app.show_disk_health_modal);
+    }
+
+    #[test]
+    fn test_disk_health_slash_command_and_modal() {
+        let mut app = CockpitApp::new(&Config::default());
+        assert!(!app.show_disk_health_modal);
+
+        // Terminal runner /disk health
+        app.term_input = "/disk health".to_string();
+        app.run_terminal_command();
+        assert!(app.show_disk_health_modal);
+
+        // Hitbox Prev/Next Disk
+        app.selected_disk_health = 0;
+        assert_eq!(app.selected_disk_health, 0);
     }
 
     #[test]
@@ -13938,6 +14315,39 @@ mod tests {
         assert!(app.hitboxes.iter().any(|h| matches!(h.action, HitboxAction::SelectProcess(0))));
         assert!(app.hitboxes.iter().any(|h| matches!(h.action, HitboxAction::KillProcess(101))));
         assert!(app.hitboxes.iter().any(|h| matches!(h.action, HitboxAction::FocusDashboardPanel(5))));
+    }
+
+    #[test]
+    fn test_process_killer_modal_confirmation_and_toast() {
+        let mut app = CockpitApp::new(&Config::default());
+        app.prompt_kill_process_with_name(4321, "worker-job");
+        assert!(app.show_kill_modal);
+        assert_eq!(app.pending_kill_proc, Some((4321, "worker-job".to_string())));
+
+        // Test render modal
+        let backend = ratatui::backend::TestBackend::new(80, 25);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                draw_kill_process_modal(f, &mut app, area);
+            })
+            .expect("draw kill modal");
+
+        // Verify confirm and cancel hitboxes
+        assert!(app.hitboxes.iter().any(|h| matches!(h.action, HitboxAction::ConfirmKillProcess)));
+        assert!(app.hitboxes.iter().any(|h| matches!(h.action, HitboxAction::CancelKillProcess)));
+
+        // Simulated cancellation
+        app.show_kill_modal = false;
+        app.set_notification("Process termination cancelled.");
+        assert_eq!(app.notification.as_ref().map(|(m, _)| m.as_str()), Some("Process termination cancelled."));
+
+        // Simulated successful termination toast
+        let pid = 4321;
+        let name = "worker-job";
+        app.set_notification(format!("Terminated process {name} (PID {pid})"));
+        assert_eq!(app.notification.as_ref().map(|(m, _)| m.as_str()), Some("Terminated process worker-job (PID 4321)"));
     }
 }
 pub(crate) fn noop() {}
