@@ -297,6 +297,11 @@ pub enum HitboxAction {
     // Turbo tab actions
     TurboProfile(usize),
     TurboAction(usize),
+    // Task Manager & Process Killer actions
+    SelectProcess(usize),
+    KillProcess(u32),
+    ConfirmKillProcess,
+    CancelKillProcess,
 }
 
 #[derive(Debug, Clone)]
@@ -566,10 +571,37 @@ pub const SETTINGS_FIELDS: &[&str] = &[
     "Coolify Base URL",
     "Coolify API Token",
     "DB Auto Prune",
+    // ── Mascot & Emoticon Customization ──
     "Matrix Rain Effect",
+    "Matrix Rain Speed",
+    "Mascot Change Speed",
+    "Mascot Sensitivity",
+    "Mascot Hardware Tracking",
+    "Mascot Color Scheme",
+    "Mascot Animation Style",
+    "Mascot Render Scale",
+    "Mascot In AI Chat",
 ];
 
 pub const PROVIDER_OPTIONS: &[&str] = &["9router", "omniroute", "openai", "anthropic", "local"];
+pub const MASCOT_SPEED_OPTIONS: &[&str] = &["Fast", "Normal", "Slow", "Zen"];
+pub const MASCOT_SENSITIVITY_OPTIONS: &[&str] = &["High", "Balanced", "Calm"];
+pub const MASCOT_COLOR_OPTIONS: &[&str] = &[
+    "Dynamic Reactive",
+    "Phosphor Green",
+    "Cyan Cyber",
+    "Amber Retro",
+    "Crimson Red",
+    "Neon Violet",
+];
+pub const MASCOT_ANIMATION_OPTIONS: &[&str] = &[
+    "Hover Bobbing",
+    "Continuous 3D Spin",
+    "Pulse Breathing",
+    "Stationary",
+];
+pub const MASCOT_SCALE_OPTIONS: &[&str] = &["Auto-Fit", "Large", "Standard", "Compact"];
+pub const MATRIX_SPEED_OPTIONS: &[&str] = &["Fast", "Normal", "Slow"];
 
 // ── Cockpit App State ───────────────────────────────────────────────────────
 
@@ -663,13 +695,20 @@ pub struct CockpitApp {
     pub is_compact: bool,
     pub overview_proc_scroll: usize,
 
-    // Dashboard panel focus (which of the 5 dashboard panels receives scrolling)
+    // Dashboard panel focus (which of the 6 dashboard panels receives scrolling/focus)
     pub dashboard_focused_panel: usize,
     pub dashboard_fleet_scroll: usize,
     pub dashboard_services_scroll: usize,
     pub dashboard_containers_scroll: usize,
     pub dashboard_monitors_scroll: usize,
     pub dashboard_analytics_scroll: usize,
+    pub dashboard_proc_selected: usize,
+    pub dashboard_proc_scroll: usize,
+
+    // Task Manager & Process Killer state
+    pub show_kill_modal: bool,
+    pub pending_kill_proc: Option<(u32, String)>,
+    pub pending_kill_force: bool,
 
     // Virtual Pet (Tamagotchi)
     pub show_pet_modal: bool,
@@ -907,6 +946,12 @@ impl CockpitApp {
             dashboard_containers_scroll: 0,
             dashboard_monitors_scroll: 0,
             dashboard_analytics_scroll: 0,
+            dashboard_proc_selected: 0,
+            dashboard_proc_scroll: 0,
+
+            show_kill_modal: false,
+            pending_kill_proc: None,
+            pending_kill_force: false,
 
             show_pet_modal: false,
             pet_name_buffer: "Ciko".to_string(),
@@ -1190,6 +1235,48 @@ impl CockpitApp {
             }
         }
         self.show_delete_confirm = false;
+    }
+
+    pub fn prompt_kill_process(&mut self, pid: u32) {
+        let name = self
+            .latest_snap
+            .top_processes
+            .iter()
+            .find(|p| p.pid == pid)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| format!("PID {pid}"));
+        self.prompt_kill_process_with_name(pid, &name);
+    }
+
+    pub fn prompt_kill_process_with_name(&mut self, pid: u32, name: &str) {
+        self.pending_kill_proc = Some((pid, name.to_string()));
+        self.pending_kill_force = false;
+        self.show_kill_modal = true;
+    }
+
+    pub fn execute_kill_process(&mut self) {
+        if let Some((pid, ref name)) = self.pending_kill_proc.take() {
+            let sig = if self.pending_kill_force { "-9" } else { "-15" };
+            let res = std::process::Command::new("kill").args([sig, &pid.to_string()]).output();
+            match res {
+                Ok(out) if out.status.success() => {
+                    self.set_notification(format!("Terminated process {name} (PID {pid})"));
+                }
+                Ok(out) => {
+                    let err = String::from_utf8_lossy(&out.stderr);
+                    if err.is_empty() {
+                        self.set_notification(format!("Terminated process {name} (PID {pid})"));
+                    } else {
+                        self.set_notification(format!("Kill error for {name} ({pid}): {}", err.trim()));
+                    }
+                }
+                Err(e) => {
+                    self.set_notification(format!("Failed to kill {name} ({pid}): {e}"));
+                }
+            }
+            self.show_kill_modal = false;
+            self.pending_kill_force = false;
+        }
     }
 
     fn execute_server_deletion(&mut self) {
@@ -2287,6 +2374,66 @@ impl CockpitApp {
                 self.save_config_silent();
                 let state_str = if self.cfg.output.matrix_rain { "Enabled" } else { "Disabled" };
                 self.set_notification(format!("Matrix Rain Effect: {state_str}"));
+            }
+            23 => {
+                let cur = &self.cfg.mascot.matrix_speed;
+                let cur_idx = MATRIX_SPEED_OPTIONS.iter().position(|&s| s == cur).unwrap_or(1);
+                let next_idx = if forward { (cur_idx + 1) % MATRIX_SPEED_OPTIONS.len() } else { (cur_idx + MATRIX_SPEED_OPTIONS.len() - 1) % MATRIX_SPEED_OPTIONS.len() };
+                self.cfg.mascot.matrix_speed = MATRIX_SPEED_OPTIONS[next_idx].to_string();
+                self.save_config_silent();
+                self.set_notification(format!("Matrix Rain Speed: {}", self.cfg.mascot.matrix_speed));
+            }
+            24 => {
+                let cur = &self.cfg.mascot.speed;
+                let cur_idx = MASCOT_SPEED_OPTIONS.iter().position(|&s| s == cur).unwrap_or(1);
+                let next_idx = if forward { (cur_idx + 1) % MASCOT_SPEED_OPTIONS.len() } else { (cur_idx + MASCOT_SPEED_OPTIONS.len() - 1) % MASCOT_SPEED_OPTIONS.len() };
+                self.cfg.mascot.speed = MASCOT_SPEED_OPTIONS[next_idx].to_string();
+                self.save_config_silent();
+                self.set_notification(format!("Mascot Expression Speed: {}", self.cfg.mascot.speed));
+            }
+            25 => {
+                let cur = &self.cfg.mascot.sensitivity;
+                let cur_idx = MASCOT_SENSITIVITY_OPTIONS.iter().position(|&s| s == cur).unwrap_or(1);
+                let next_idx = if forward { (cur_idx + 1) % MASCOT_SENSITIVITY_OPTIONS.len() } else { (cur_idx + MASCOT_SENSITIVITY_OPTIONS.len() - 1) % MASCOT_SENSITIVITY_OPTIONS.len() };
+                self.cfg.mascot.sensitivity = MASCOT_SENSITIVITY_OPTIONS[next_idx].to_string();
+                self.save_config_silent();
+                self.set_notification(format!("Mascot Hardware Sensitivity: {}", self.cfg.mascot.sensitivity));
+            }
+            26 => {
+                self.cfg.mascot.condition_tracking = !self.cfg.mascot.condition_tracking;
+                self.save_config_silent();
+                let state_str = if self.cfg.mascot.condition_tracking { "Enabled (Reflects CPU/RAM/Outage)" } else { "Disabled (Neutral)" };
+                self.set_notification(format!("Mascot Hardware Tracking: {state_str}"));
+            }
+            27 => {
+                let cur = &self.cfg.mascot.color_scheme;
+                let cur_idx = MASCOT_COLOR_OPTIONS.iter().position(|&s| s == cur).unwrap_or(0);
+                let next_idx = if forward { (cur_idx + 1) % MASCOT_COLOR_OPTIONS.len() } else { (cur_idx + MASCOT_COLOR_OPTIONS.len() - 1) % MASCOT_COLOR_OPTIONS.len() };
+                self.cfg.mascot.color_scheme = MASCOT_COLOR_OPTIONS[next_idx].to_string();
+                self.save_config_silent();
+                self.set_notification(format!("Mascot Color Scheme: {}", self.cfg.mascot.color_scheme));
+            }
+            28 => {
+                let cur = &self.cfg.mascot.animation_style;
+                let cur_idx = MASCOT_ANIMATION_OPTIONS.iter().position(|&s| s == cur).unwrap_or(0);
+                let next_idx = if forward { (cur_idx + 1) % MASCOT_ANIMATION_OPTIONS.len() } else { (cur_idx + MASCOT_ANIMATION_OPTIONS.len() - 1) % MASCOT_ANIMATION_OPTIONS.len() };
+                self.cfg.mascot.animation_style = MASCOT_ANIMATION_OPTIONS[next_idx].to_string();
+                self.save_config_silent();
+                self.set_notification(format!("Mascot Animation Style: {}", self.cfg.mascot.animation_style));
+            }
+            29 => {
+                let cur = &self.cfg.mascot.render_scale;
+                let cur_idx = MASCOT_SCALE_OPTIONS.iter().position(|&s| s == cur).unwrap_or(0);
+                let next_idx = if forward { (cur_idx + 1) % MASCOT_SCALE_OPTIONS.len() } else { (cur_idx + MASCOT_SCALE_OPTIONS.len() - 1) % MASCOT_SCALE_OPTIONS.len() };
+                self.cfg.mascot.render_scale = MASCOT_SCALE_OPTIONS[next_idx].to_string();
+                self.save_config_silent();
+                self.set_notification(format!("Mascot Render Scale: {}", self.cfg.mascot.render_scale));
+            }
+            30 => {
+                self.cfg.mascot.chat_avatar_enabled = !self.cfg.mascot.chat_avatar_enabled;
+                self.save_config_silent();
+                let state_str = if self.cfg.mascot.chat_avatar_enabled { "Enabled (Live Reactor & Avatars)" } else { "Disabled" };
+                self.set_notification(format!("Mascot In AI Chat: {state_str}"));
             }
             _ => {}
         }
@@ -4377,6 +4524,28 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
     }
 
+    // 5d. Kill Process Confirmation Modal Handling
+    if app.show_kill_modal {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                app.execute_kill_process();
+                return Ok(false);
+            }
+            KeyCode::Char('9') => {
+                app.pending_kill_force = true;
+                app.execute_kill_process();
+                return Ok(false);
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc | KeyCode::Char('q') => {
+                app.show_kill_modal = false;
+                app.pending_kill_force = false;
+                app.set_notification("Process termination cancelled.");
+                return Ok(false);
+            }
+            _ => return Ok(false),
+        }
+    }
+
     // 6. Global Navigation Shortcuts
     match key.code {
         KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -4453,30 +4622,46 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             app.pet_selected_action = 4;
             app.toggle_pet_history();
         }
+        KeyCode::Char('k') | KeyCode::Char('K') if app.current_tab == CockpitTab::Dashboard => {
+            let target = app.latest_snap.top_processes.get(app.dashboard_proc_selected).map(|p| (p.pid, p.name.clone()));
+            if let Some((pid, name)) = target {
+                app.prompt_kill_process_with_name(pid, &name);
+            } else {
+                app.set_notification("No process selected to kill");
+            }
+        }
 
         KeyCode::Tab => {
             if app.current_tab == CockpitTab::Dashboard {
-                app.dashboard_focused_panel = (app.dashboard_focused_panel + 1) % 5;
+                app.dashboard_focused_panel = (app.dashboard_focused_panel + 1) % 6;
             } else {
                 let next_idx = (app.current_tab.to_index() + 1) % CockpitTab::COUNT;
                 app.current_tab = CockpitTab::from_index(next_idx);
             }
         }
         KeyCode::BackTab => {
-            let prev_idx = (app.current_tab.to_index() + CockpitTab::COUNT - 1) % CockpitTab::COUNT;
-            app.current_tab = CockpitTab::from_index(prev_idx);
+            if app.current_tab == CockpitTab::Dashboard {
+                app.dashboard_focused_panel = (app.dashboard_focused_panel + 5) % 6;
+            } else {
+                let prev_idx = (app.current_tab.to_index() + CockpitTab::COUNT - 1) % CockpitTab::COUNT;
+                app.current_tab = CockpitTab::from_index(prev_idx);
+            }
         }
 
         // Tab-specific controls: Up / k and Down / j
         KeyCode::Up | KeyCode::Char('k') => match app.current_tab {
             CockpitTab::Dashboard => {
-                app.pet_selected_action = (app.pet_selected_action + 4) % 5;
-                match app.dashboard_focused_panel {
-                    0 => app.dashboard_fleet_scroll = app.dashboard_fleet_scroll.saturating_sub(1),
-                    1 => app.dashboard_services_scroll = app.dashboard_services_scroll.saturating_sub(1),
-                    2 => app.dashboard_containers_scroll = app.dashboard_containers_scroll.saturating_sub(1),
-                    3 => app.dashboard_monitors_scroll = app.dashboard_monitors_scroll.saturating_sub(1),
-                    _ => app.dashboard_analytics_scroll = app.dashboard_analytics_scroll.saturating_sub(1),
+                if app.dashboard_focused_panel == 5 {
+                    app.dashboard_proc_selected = app.dashboard_proc_selected.saturating_sub(1);
+                } else {
+                    app.pet_selected_action = (app.pet_selected_action + 4) % 5;
+                    match app.dashboard_focused_panel {
+                        0 => app.dashboard_fleet_scroll = app.dashboard_fleet_scroll.saturating_sub(1),
+                        1 => app.dashboard_services_scroll = app.dashboard_services_scroll.saturating_sub(1),
+                        2 => app.dashboard_containers_scroll = app.dashboard_containers_scroll.saturating_sub(1),
+                        3 => app.dashboard_monitors_scroll = app.dashboard_monitors_scroll.saturating_sub(1),
+                        _ => app.dashboard_analytics_scroll = app.dashboard_analytics_scroll.saturating_sub(1),
+                    }
                 }
             }
             CockpitTab::Project => {
@@ -4524,13 +4709,18 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         },
         KeyCode::Down | KeyCode::Char('j') => match app.current_tab {
             CockpitTab::Dashboard => {
-                app.pet_selected_action = (app.pet_selected_action + 1) % 5;
-                match app.dashboard_focused_panel {
-                    0 => app.dashboard_fleet_scroll = (app.dashboard_fleet_scroll + 1).min(30),
-                    1 => app.dashboard_services_scroll = (app.dashboard_services_scroll + 1).min(30),
-                    2 => app.dashboard_containers_scroll = (app.dashboard_containers_scroll + 1).min(30),
-                    3 => app.dashboard_monitors_scroll = (app.dashboard_monitors_scroll + 1).min(30),
-                    _ => app.dashboard_analytics_scroll = (app.dashboard_analytics_scroll + 1).min(30),
+                if app.dashboard_focused_panel == 5 {
+                    let max_idx = app.latest_snap.top_processes.len().saturating_sub(1);
+                    app.dashboard_proc_selected = (app.dashboard_proc_selected + 1).min(max_idx);
+                } else {
+                    app.pet_selected_action = (app.pet_selected_action + 1) % 5;
+                    match app.dashboard_focused_panel {
+                        0 => app.dashboard_fleet_scroll = (app.dashboard_fleet_scroll + 1).min(30),
+                        1 => app.dashboard_services_scroll = (app.dashboard_services_scroll + 1).min(30),
+                        2 => app.dashboard_containers_scroll = (app.dashboard_containers_scroll + 1).min(30),
+                        3 => app.dashboard_monitors_scroll = (app.dashboard_monitors_scroll + 1).min(30),
+                        _ => app.dashboard_analytics_scroll = (app.dashboard_analytics_scroll + 1).min(30),
+                    }
                 }
             }
             CockpitTab::Project => {
@@ -5159,7 +5349,8 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                 1 => app.dashboard_services_scroll = app.dashboard_services_scroll.saturating_sub(1),
                 2 => app.dashboard_containers_scroll = app.dashboard_containers_scroll.saturating_sub(1),
                 3 => app.dashboard_monitors_scroll = app.dashboard_monitors_scroll.saturating_sub(1),
-                _ => app.dashboard_analytics_scroll = app.dashboard_analytics_scroll.saturating_sub(1),
+                4 => app.dashboard_analytics_scroll = app.dashboard_analytics_scroll.saturating_sub(1),
+                _ => app.dashboard_proc_selected = app.dashboard_proc_selected.saturating_sub(1),
             },
             CockpitTab::Project => match app.project_view {
                 ProjectView::Hierarchy | ProjectView::Tree => app.selected_project = app.selected_project.saturating_sub(1),
@@ -5182,7 +5373,11 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                 1 => app.dashboard_services_scroll = (app.dashboard_services_scroll + 1).min(30),
                 2 => app.dashboard_containers_scroll = (app.dashboard_containers_scroll + 1).min(30),
                 3 => app.dashboard_monitors_scroll = (app.dashboard_monitors_scroll + 1).min(30),
-                _ => app.dashboard_analytics_scroll = (app.dashboard_analytics_scroll + 1).min(30),
+                4 => app.dashboard_analytics_scroll = (app.dashboard_analytics_scroll + 1).min(30),
+                _ => {
+                    let max_idx = app.latest_snap.top_processes.len().saturating_sub(1);
+                    app.dashboard_proc_selected = (app.dashboard_proc_selected + 1).min(max_idx);
+                }
             },
             CockpitTab::Project => match app.project_view {
                 ProjectView::Hierarchy | ProjectView::Tree => {
@@ -5634,6 +5829,21 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                     }
                     HitboxAction::TurboAction(idx) => {
                         app.execute_turbo_action(idx);
+                    }
+                    HitboxAction::SelectProcess(idx) => {
+                        app.dashboard_proc_selected = idx;
+                        app.dashboard_focused_panel = 5;
+                    }
+                    HitboxAction::KillProcess(pid) => {
+                        app.prompt_kill_process(pid);
+                    }
+                    HitboxAction::ConfirmKillProcess => {
+                        app.execute_kill_process();
+                    }
+                    HitboxAction::CancelKillProcess => {
+                        app.show_kill_modal = false;
+                        app.pending_kill_force = false;
+                        app.set_notification("Process termination cancelled.");
                     }
                 }
             }
@@ -6102,6 +6312,10 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if app.show_pro_wizard {
         draw_pro_wizard(f, app, area);
     }
+
+    if app.show_kill_modal {
+        draw_kill_process_modal(f, app, area);
+    }
 }
 
 // ── Header (Calm Sovereign Cockpit Branding) ────────────────────────────────
@@ -6411,12 +6625,23 @@ fn format_core_span(core: Option<&CpuCoreInfo>, id: usize, bar_len: usize) -> Ve
     ]
 }
 
-#[cfg(test)]
-fn format_kbps(kbps: f64) -> String {
-    if kbps >= 1024.0 {
+pub fn format_kbps(kbps: f64) -> String {
+    if kbps >= 1024.0 * 1024.0 {
+        format!("{:.2} GB/s", kbps / (1024.0 * 1024.0))
+    } else if kbps >= 1024.0 {
         format!("{:.1} MB/s", kbps / 1024.0)
     } else {
-        format!("{:.0} KB/s", kbps)
+        format!("{:.1} KB/s", kbps)
+    }
+}
+
+pub fn format_net_gb(gb: f64) -> String {
+    if gb >= 1024.0 {
+        format!("{:.2} TB", gb / 1024.0)
+    } else if gb >= 1.0 {
+        format!("{:.2} GB", gb)
+    } else {
+        format!("{:.1} MB", gb * 1024.0)
     }
 }
 
@@ -9047,6 +9272,29 @@ fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         .constraints([Constraint::Length(3), Constraint::Min(8), Constraint::Length(3)])
         .split(area);
 
+    let telem = crate::pet::MascotTelemetry {
+        cpu_pct: app.latest_snap.cpu_pct,
+        cpu_temp_c: app.latest_snap.cpu_temp_c,
+        ram_pct: ((app.latest_snap.ram_used_mb as f64) / (app.latest_snap.ram_total_mb.max(1) as f64) * 100.0) as u8,
+        swap_pct: ((app.latest_snap.swap_used_mb as f64) / (app.latest_snap.swap_total_mb.max(1) as f64) * 100.0) as u8,
+        containers_down: app.latest_snap.docker_containers.iter().filter(|c| c.state != "running").count(),
+        fleet_nodes_down: app.server_probe_results.iter().filter(|(_, lat)| lat.is_none()).count(),
+        uptime_monitors_down: app.latest_snap.uptime_monitors.iter().filter(|m| !m.is_up).count(),
+        git_dirty_count: app.latest_snap.tracked_projects.iter().filter(|p| p.is_dirty).count(),
+        turbo_active: app.turbo_profile_active != "ECO_BALANCED" && !app.turbo_profile_active.is_empty(),
+        transient_action: if app.is_chat_processing { Some(crate::pet::PetActionState::Run) } else { None },
+        xp_level: 3,
+        tick: app.pet_tick,
+        speed: app.cfg.mascot.speed.clone(),
+        sensitivity: app.cfg.mascot.sensitivity.clone(),
+        condition_tracking: app.cfg.mascot.condition_tracking,
+        color_scheme: app.cfg.mascot.color_scheme.clone(),
+        animation_style: app.cfg.mascot.animation_style.clone(),
+        render_scale: "Compact".to_string(),
+        matrix_speed: app.cfg.mascot.matrix_speed.clone(),
+    };
+    let expr = crate::pet::select_expression(&telem);
+
     let bar_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(palette.border));
@@ -9066,36 +9314,65 @@ fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         HitboxAction::ClearAiChat,
     );
 
-    let bar_spans = vec![
+    let mut bar_spans = vec![
         Span::styled(format!(" [🤖 Model: {active_model} (m)] "), Style::default().fg(Color::Black).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
         Span::raw("  "),
         Span::styled(" [🗑 Clear Chat] ", Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)),
-        Span::raw("  │  Gateway: "),
-        Span::styled("OmniRoute / 9router (localhost:20128 / :3007)", Style::default().fg(palette.accent)),
     ];
+    if app.cfg.mascot.chat_avatar_enabled {
+        bar_spans.push(Span::raw("  "));
+        bar_spans.push(Span::styled(
+            format!(" [🪙 #{:02} {}] ", expr.id, expr.label),
+            Style::default().fg(Color::Black).bg(Color::Rgb(57, 255, 20)).add_modifier(Modifier::BOLD),
+        ));
+    }
+    bar_spans.push(Span::raw("  │  Gateway: "));
+    bar_spans.push(Span::styled("OmniRoute / 9router (localhost:20128 / :3007)", Style::default().fg(palette.accent)));
     f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
+
+    // Split middle area horizontally if wide enough and mascot in chat is enabled
+    let (chat_area, mascot_area) = if app.cfg.mascot.chat_avatar_enabled && chunks[1].width >= 82 {
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(68), Constraint::Percentage(32)])
+            .split(chunks[1]);
+        (cols[0], Some(cols[1]))
+    } else {
+        (chunks[1], None)
+    };
 
     let hist_block = Block::default()
         .borders(Borders::ALL)
         .title(format!(" Workspace AI Chat — Persona: {} ({}) ", app.cfg.persona.user_name, app.cfg.persona.assistant_role))
         .border_style(Style::default().fg(palette.border));
-    let hist_inner = hist_block.inner(chunks[1]);
-    f.render_widget(hist_block, chunks[1]);
+    let hist_inner = hist_block.inner(chat_area);
+    f.render_widget(hist_block, chat_area);
 
+    let chat_avatar_on = app.cfg.mascot.chat_avatar_enabled;
     let items: Vec<ListItem> = app
         .chat_lines
         .iter()
         .map(|l| {
-            let style = if l.starts_with("User:") {
-                Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)
+            let (display_text, style) = if l.starts_with("User:") {
+                let text = if chat_avatar_on {
+                    format!("👤 {}: {}", app.cfg.persona.user_name, l.strip_prefix("User:").unwrap_or(l).trim_start())
+                } else {
+                    l.clone()
+                };
+                (text, Style::default().fg(palette.accent).add_modifier(Modifier::BOLD))
             } else if l.starts_with("AI:") {
-                Style::default().fg(Color::White)
+                let text = if chat_avatar_on {
+                    format!("🪙 [#{:02} {}] {}: {}", expr.id, expr.label, app.cfg.persona.assistant_role, l.strip_prefix("AI:").unwrap_or(l).trim_start())
+                } else {
+                    l.clone()
+                };
+                (text, Style::default().fg(Color::White))
             } else if l.starts_with("Error:") {
-                Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD)
+                (l.clone(), Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD))
             } else {
-                Style::default().fg(palette.text_muted)
+                (l.clone(), Style::default().fg(palette.text_muted))
             };
-            ListItem::new(Line::from(Span::styled(l.clone(), style)))
+            ListItem::new(Line::from(Span::styled(display_text, style)))
         })
         .collect();
 
@@ -9104,12 +9381,42 @@ fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         .highlight_symbol("▶ ");
     f.render_stateful_widget(chat_list, hist_inner, &mut app.chat_state);
 
+    // Companion Chat Reactor Panel on Right Side
+    if let Some(m_area) = mascot_area {
+        let m_block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" 🪙 Companion Reactor [#{:02} {}] ", expr.id, expr.label))
+            .border_style(Style::default().fg(Color::Rgb(57, 255, 20)).add_modifier(Modifier::BOLD));
+        let m_inner = m_block.inner(m_area);
+        f.render_widget(m_block, m_area);
+
+        let (m_lines, _) = crate::pet::render_sovereign_token_lines(
+            m_inner.width as usize,
+            m_inner.height.saturating_sub(2) as usize,
+            &telem,
+            app.cfg.output.matrix_rain,
+        );
+
+        let mut all_widget_lines = m_lines;
+        let reaction_msg = if app.is_chat_processing {
+            "⚡ Sovereign Thinking... generating token synthesis"
+        } else {
+            "✔ Reacting live to prompts & system health"
+        };
+        all_widget_lines.push(Line::from(Span::styled(
+            reaction_msg,
+            Style::default().fg(if app.is_chat_processing { Color::Yellow } else { palette.text_muted }),
+        )));
+
+        f.render_widget(Paragraph::new(all_widget_lines).alignment(Alignment::Center), m_inner);
+    }
+
     let in_block = Block::default()
         .borders(Borders::ALL)
         .title(if app.is_chat_processing {
-            " AI is thinking... "
+            format!(" 🪙 AI is thinking... [#{:02} {}] ", expr.id, expr.label)
         } else {
-            " Prompt Input ($ > Enter to send | 'm': Model | 'c': Clear) "
+            " Prompt Input ($ > Enter to send | 'm': Model | 'c': Clear) ".to_string()
         })
         .border_style(if app.is_chat_processing {
             Style::default().fg(palette.status_warn)
@@ -9165,10 +9472,10 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     };
 
     let mood_short = match app.pet_mood {
-        crate::pet::PetMood::Idle => "☺ Normal",
-        crate::pet::PetMood::Overheated => "🥵 Hot",
-        crate::pet::PetMood::Sick => "💀 Sick",
-        crate::pet::PetMood::Sprint => "🏃 Sprint",
+        crate::pet::PetMood::Idle => "● Normal",
+        crate::pet::PetMood::Overheated => "[ALERT] Hot",
+        crate::pet::PetMood::Sick => "[DOWN] Sick",
+        crate::pet::PetMood::Sprint => "▲ Sprint",
     };
 
     let pet_name_display = if name.is_empty() {
@@ -9210,19 +9517,26 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         transient_action: if app.pet_is_stopped { Some(crate::pet::PetActionState::Death) } else if let Some((st, _)) = app.pet_transient_action { Some(st) } else { None },
         xp_level: level as usize,
         tick: app.pet_tick,
+        speed: app.cfg.mascot.speed.clone(),
+        sensitivity: app.cfg.mascot.sensitivity.clone(),
+        condition_tracking: app.cfg.mascot.condition_tracking,
+        color_scheme: app.cfg.mascot.color_scheme.clone(),
+        animation_style: app.cfg.mascot.animation_style.clone(),
+        render_scale: app.cfg.mascot.render_scale.clone(),
+        matrix_speed: app.cfg.mascot.matrix_speed.clone(),
     };
     let expr = crate::pet::select_expression(&telem);
 
     let state_badge = if app.pet_is_stopped {
-        "⏸ STOPPED".to_string()
+        "■ STOPPED".to_string()
     } else {
         format!("#{:02} {}", expr.id, expr.label)
     };
 
     let title = if area.width >= 36 {
-        format!(" 🪙 SOVEREIGN TOKEN [ {} · Lv.{} · {} | {} ] ", pet_name_display, level, state_badge, mood_short)
+        format!(" ■ SOVEREIGN TOKEN [ {} · Lv.{} · {} | {} ] ", pet_name_display, level, state_badge, mood_short)
     } else {
-        format!(" 🪙 SOVEREIGN [ {} · Lv.{} ] ", pet_name_display, level)
+        format!(" ■ SOVEREIGN [ {} · Lv.{} ] ", pet_name_display, level)
     };
 
     let block = Block::default()
@@ -9240,8 +9554,8 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if app.show_pet_history {
         let mut lines = vec![
             Line::from(vec![
-                Span::styled(" 📜 ACTIVITY LOG ", Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD)),
-                Span::styled(" [✖ Close (h/Esc)] ", Style::default().fg(palette.text_muted)),
+                Span::styled(" ■ ACTIVITY LOG ", Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD)),
+                Span::styled(" [X Close (h/Esc)] ", Style::default().fg(palette.text_muted)),
             ]),
             Line::from(Span::raw("─".repeat(inner.width as usize))),
         ];
@@ -9294,9 +9608,9 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         Span::raw(" "),
         Span::styled(" [▼] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [✔OK] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(" [OK] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [✖] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Red).add_modifier(Modifier::BOLD)),
+        Span::styled(" [X] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Red).add_modifier(Modifier::BOLD)),
     ];
     f.render_widget(Paragraph::new(Line::from(nav_spans)), chunks[1]);
 
@@ -9327,8 +9641,8 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     );
 
     // 3. Action Buttons with active selection highlight & Stop Button (Sovereign themed)
-    let stop_label = if app.pet_is_stopped { "▶Spin(p)" } else { "◼Stop(p)" };
-    let stop_label_short = if app.pet_is_stopped { "▶(p)" } else { "◼(p)" };
+    let stop_label = if app.pet_is_stopped { "▶Spin(p)" } else { "■Stop(p)" };
+    let stop_label_short = if app.pet_is_stopped { "▶(p)" } else { "■(p)" };
     let actions: &[&str] = if inner.width >= 36 {
         &[
             "Overclock(f)",
@@ -10719,8 +11033,25 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     };
     let auto_prune_str = if app.cfg.database.auto_prune { "Enabled" } else { "Disabled" };
     let matrix_rain_str = if app.cfg.output.matrix_rain { "Enabled (Matrix Rain Background)" } else { "Disabled (Clean Background)" };
+    let matrix_speed_str = app.cfg.mascot.matrix_speed.as_str();
+    let mascot_speed_str = match app.cfg.mascot.speed.as_str() {
+        "Fast" => "Fast (2s interval)",
+        "Slow" => "Slow (10s interval)",
+        "Zen" => "Zen (20s interval)",
+        _ => "Normal (5s interval)",
+    };
+    let mascot_sens_str = match app.cfg.mascot.sensitivity.as_str() {
+        "High" => "High Reactive (>70°C / >70% Load)",
+        "Calm" => "Calm (>90°C / >92% Load)",
+        _ => "Balanced (>80°C / >85% Load)",
+    };
+    let mascot_track_str = if app.cfg.mascot.condition_tracking { "Enabled (Reflects CPU/RAM/Outage)" } else { "Disabled (Neutral)" };
+    let mascot_color_str = app.cfg.mascot.color_scheme.as_str();
+    let mascot_anim_str = app.cfg.mascot.animation_style.as_str();
+    let mascot_scale_str = app.cfg.mascot.render_scale.as_str();
+    let mascot_chat_str = if app.cfg.mascot.chat_avatar_enabled { "Enabled (Live Reactor & Avatars)" } else { "Disabled" };
 
-    let values: [&str; 23] = [
+    let values: [&str; 31] = [
         provider.as_str(),
         model,
         masked_key,
@@ -10744,6 +11075,14 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         coolify_token,
         auto_prune_str,
         matrix_rain_str,
+        matrix_speed_str,
+        mascot_speed_str,
+        mascot_sens_str,
+        mascot_track_str,
+        mascot_color_str,
+        mascot_anim_str,
+        mascot_scale_str,
+        mascot_chat_str,
     ];
 
     let items: Vec<ListItem> = SETTINGS_FIELDS
@@ -12029,6 +12368,79 @@ fn draw_delete_confirm_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     );
 }
 
+// ── Process Kill Confirmation Modal ──────────────────────────────────────────
+
+fn draw_kill_process_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let popup_area = centered_rect(58, 12, area);
+    f.render_widget(Clear, popup_area);
+
+    let (pid, name) = app
+        .pending_kill_proc
+        .clone()
+        .unwrap_or((0, "unknown".to_string()));
+
+    let block = Block::default()
+        .title(" ■ Confirm Process Kill ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD));
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                format!(" Confirm Kill PID {pid} ({name})? "),
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(Span::styled(
+            " This will send SIGTERM (or [9] for SIGKILL) to stop the process. ",
+            Style::default().fg(palette.text_muted),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                " [y] Confirm ",
+                Style::default().fg(Color::Black).bg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("    "),
+            Span::styled(
+                " [n] Cancel ",
+                Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("    "),
+            Span::styled(
+                " [9] Force Kill ",
+                Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+    ];
+    f.render_widget(
+        Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center),
+        inner,
+    );
+
+    // Register mouse hitboxes
+    let btn_y = inner.y + 4;
+    let yes_w = 13u16;
+    let gap_w = 4u16;
+    let no_w = 12u16;
+    let force_w = 16u16;
+    let total_w = yes_w + gap_w + no_w + gap_w + force_w;
+    let start_x = inner.x + (inner.width.saturating_sub(total_w)) / 2;
+
+    app.register_hitbox(
+        Rect { x: start_x, y: btn_y, width: yes_w, height: 1 },
+        HitboxAction::ConfirmKillProcess,
+    );
+    app.register_hitbox(
+        Rect { x: start_x + yes_w + gap_w, y: btn_y, width: no_w, height: 1 },
+        HitboxAction::CancelKillProcess,
+    );
+}
+
 // ── Master Password Lock Screen ──────────────────────────────────────────────
 
 fn draw_lock_screen(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
@@ -12532,12 +12944,20 @@ mod tests {
 
     #[test]
     fn test_settings_fields_coverage() {
-        assert_eq!(SETTINGS_FIELDS.len(), 23);
+        assert_eq!(SETTINGS_FIELDS.len(), 31);
         assert_eq!(SETTINGS_FIELDS[0], "AI Provider");
         assert_eq!(SETTINGS_FIELDS[3], "Output Theme");
         assert_eq!(SETTINGS_FIELDS[11], "Master Password Protection");
         assert_eq!(SETTINGS_FIELDS[12], "Set/Change Master Password");
         assert_eq!(SETTINGS_FIELDS[22], "Matrix Rain Effect");
+        assert_eq!(SETTINGS_FIELDS[23], "Matrix Rain Speed");
+        assert_eq!(SETTINGS_FIELDS[24], "Mascot Change Speed");
+        assert_eq!(SETTINGS_FIELDS[25], "Mascot Sensitivity");
+        assert_eq!(SETTINGS_FIELDS[26], "Mascot Hardware Tracking");
+        assert_eq!(SETTINGS_FIELDS[27], "Mascot Color Scheme");
+        assert_eq!(SETTINGS_FIELDS[28], "Mascot Animation Style");
+        assert_eq!(SETTINGS_FIELDS[29], "Mascot Render Scale");
+        assert_eq!(SETTINGS_FIELDS[30], "Mascot In AI Chat");
     }
 
     #[test]

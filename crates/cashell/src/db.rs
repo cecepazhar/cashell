@@ -903,7 +903,7 @@ impl Database {
 
     /// Seed the `analytics_websites` table with the default CA product list.
     pub fn import_default_ca_websites(&self) -> Result<()> {
-        let defaults: [(&str, &str, &str); 14] = [
+        let defaults: &[(&str, &str, &str)] = &[
             ("caterm", "CAProduct Landing", "caterm.fathforce.com"),
             ("fathstore", "FathStore Solo", "fathstore.com"),
             ("caui", "CAUI Design System", "caui.fathforce.com"),
@@ -918,6 +918,12 @@ impl Database {
             ("castudio", "CAStudio", "castudio.fathforce.com"),
             ("caprompt", "CAPrompt Studio", "caprompt.fathforce.com"),
             ("cecepazhar.com", "Prof. Cecep Blog", "cecepazhar.com"),
+            ("docs", "Fathforce Docs Hub", "docs.fathforce.com"),
+            ("changelogs", "Fathforce Changelogs Hub", "changelog.fathforce.com"),
+            ("blog", "Fathforce Blog", "blog.fathforce.com"),
+            ("member", "Fathforce Member Portal", "member.fathforce.com"),
+            ("fathforce", "Fathforce Master Studio", "fathforce.com"),
+            ("gcc", "GCC Central Dashboard", "gcc.fathforce.com"),
         ];
         for (id, name, domain) in defaults {
             self.add_analytic_site(id, name, domain)?;

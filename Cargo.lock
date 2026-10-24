@@ -274,7 +274,7 @@ dependencies = [
 
 [[package]]
 name = "cashell"
-version = "0.3.8"
+version = "1.0.1"
 dependencies = [
  "aes-gcm",
  "anyhow",

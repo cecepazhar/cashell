@@ -130,6 +130,14 @@ fn main() -> Result<()> {
                 std::process::exit(code);
             }
         }
+        Some(Commands::Uptime(cmd)) => {
+            banner::print(args.quiet);
+            commands::uptime::run(&cmd)?;
+        }
+        Some(Commands::Analytics(cmd)) => {
+            banner::print(args.quiet);
+            commands::analytics::run(&cmd)?;
+        }
     }
     Ok(())
 }

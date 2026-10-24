@@ -11,7 +11,7 @@ name = "caorch"
 path = "src/main.rs"
 
 [dependencies]
-cashell-common = { path = "../common" }
+cashell-common = { path = "../common", version = "1.0.1" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"

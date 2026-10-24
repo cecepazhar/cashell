@@ -87,6 +87,12 @@ pub enum Commands {
 
     /// Pro multi-device zero-knowledge sync: login, status, sync, push, pull, devices, logout
     Pro(ProCommand),
+
+    /// Probe and display live uptime status of all CA Ecosystem endpoints and fleet nodes
+    Uptime(crate::commands::uptime::UptimeCommand),
+
+    /// View sovereign web analytics & traffic summary across CA ecosystem sites
+    Analytics(crate::commands::analytics::AnalyticsCommand),
 }
 
 // ── Pro Command CLI types ────────────────────────────────────────────────────

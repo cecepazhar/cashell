@@ -155,7 +155,7 @@ pub struct EmojiFrame {
 
 // ── Mascot Telemetry Input for Expression Selection ──────────────────────────
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct MascotTelemetry {
     pub cpu_pct: f32,
     pub cpu_temp_c: f32,
@@ -169,6 +169,40 @@ pub struct MascotTelemetry {
     pub transient_action: Option<PetActionState>,
     pub xp_level: usize,
     pub tick: usize,
+    // Custom settings from Setting page
+    pub speed: String, // "Fast", "Normal", "Slow", "Zen"
+    pub sensitivity: String, // "High", "Balanced", "Calm"
+    pub condition_tracking: bool,
+    pub color_scheme: String, // "Dynamic Reactive", "Phosphor Green", "Cyan Cyber", "Amber Retro", "Crimson Red", "Neon Violet"
+    pub animation_style: String, // "Hover Bobbing", "Continuous 3D Spin", "Pulse Breathing", "Stationary"
+    pub render_scale: String, // "Auto-Fit", "Large", "Standard", "Compact"
+    pub matrix_speed: String, // "Fast", "Normal", "Slow"
+}
+
+impl Default for MascotTelemetry {
+    fn default() -> Self {
+        Self {
+            cpu_pct: 0.0,
+            cpu_temp_c: 45.0,
+            ram_pct: 30,
+            swap_pct: 10,
+            containers_down: 0,
+            fleet_nodes_down: 0,
+            uptime_monitors_down: 0,
+            git_dirty_count: 0,
+            turbo_active: false,
+            transient_action: None,
+            xp_level: 1,
+            tick: 0,
+            speed: "Normal".to_string(),
+            sensitivity: "Balanced".to_string(),
+            condition_tracking: true,
+            color_scheme: "Dynamic Reactive".to_string(),
+            animation_style: "Hover Bobbing".to_string(),
+            render_scale: "Auto-Fit".to_string(),
+            matrix_speed: "Normal".to_string(),
+        }
+    }
 }
 
 // ── 100 Discrete Sovereign Expressions ───────────────────────────────────────
@@ -312,74 +346,92 @@ pub const SOVEREIGN_EXPRESSIONS: [MascotExpression; 100] = [
 /// Deterministically selects the exact expression from the 100 expressions
 /// based on real-time CAShell telemetry.
 pub fn select_expression(telem: &MascotTelemetry) -> &'static MascotExpression {
+    let tick_scaled = match telem.speed.as_str() {
+        "Fast" => telem.tick.saturating_mul(2),
+        "Slow" => telem.tick / 2,
+        "Zen" => telem.tick / 4,
+        _ => telem.tick,
+    };
+
     // 1. High Priority: Explicit Turbo mode engaged
     if telem.turbo_active {
-        let v = (telem.tick / 12) % 10;
+        let v = (tick_scaled / 12) % 10;
         return &SOVEREIGN_EXPRESSIONS[90 + v];
     }
 
-    // 2. High Priority: Thermal Overheat or CPU Overload (>80°C or >85%)
-    if telem.cpu_temp_c > 80.0 || telem.cpu_pct > 85.0 {
-        let v = (telem.tick / 10) % 10;
-        return &SOVEREIGN_EXPRESSIONS[60 + v];
-    }
+    if telem.condition_tracking {
+        // Sensitivity thresholds
+        let (temp_thr, cpu_thr, ram_thr) = match telem.sensitivity.as_str() {
+            "High" => (70.0f32, 70.0f32, 75u8),
+            "Calm" => (90.0f32, 92.0f32, 90u8),
+            _ => (80.0f32, 85.0f32, 85u8), // Balanced
+        };
 
-    // 3. High Priority: RAM / Swap pressure
-    if telem.ram_pct >= 85 || telem.swap_pct >= 80 {
-        let v = (telem.tick / 14) % 10;
-        return &SOVEREIGN_EXPRESSIONS[60 + v];
-    }
+        // 2. High Priority: Thermal Overheat or CPU Overload
+        if telem.cpu_temp_c > temp_thr || telem.cpu_pct > cpu_thr {
+            let v = (tick_scaled / 10) % 10;
+            return &SOVEREIGN_EXPRESSIONS[60 + v];
+        }
 
-    // 4. Critical: Node or Container Down (Surprise / Anomaly)
-    if telem.fleet_nodes_down > 0 || telem.containers_down > 0 || telem.uptime_monitors_down > 0 {
-        let v = (telem.tick / 16) % 10;
-        return &SOVEREIGN_EXPRESSIONS[70 + v];
+        // 3. High Priority: RAM / Swap pressure
+        if telem.ram_pct >= ram_thr || telem.swap_pct >= 80 {
+            let v = (tick_scaled / 14) % 10;
+            return &SOVEREIGN_EXPRESSIONS[60 + v];
+        }
+
+        // 4. Critical: Node or Container Down (Surprise / Anomaly)
+        if telem.fleet_nodes_down > 0 || telem.containers_down > 0 || telem.uptime_monitors_down > 0 {
+            let v = (tick_scaled / 16) % 10;
+            return &SOVEREIGN_EXPRESSIONS[70 + v];
+        }
     }
 
     // 5. User Interaction Actions
     if let Some(action) = telem.transient_action {
         match action {
             PetActionState::Attack | PetActionState::Dash => {
-                let v = (telem.tick / 6) % 10;
+                let v = (tick_scaled / 6) % 10;
                 return &SOVEREIGN_EXPRESSIONS[90 + v]; // Turbo / Cyber
             }
             PetActionState::Jump => {
-                let v = (telem.tick / 8) % 10;
+                let v = (tick_scaled / 8) % 10;
                 return &SOVEREIGN_EXPRESSIONS[40 + v]; // Tongue Blep
             }
             PetActionState::Run => {
-                let v = (telem.tick / 10) % 10;
+                let v = (tick_scaled / 10) % 10;
                 return &SOVEREIGN_EXPRESSIONS[10 + v]; // Wink
             }
             PetActionState::Death => {
-                let v = (telem.tick / 16) % 10;
+                let v = (tick_scaled / 16) % 10;
                 return &SOVEREIGN_EXPRESSIONS[80 + v]; // Zen Sleep
             }
             _ => {}
         }
     }
 
-    // 6. Alert state: Uncommitted git or medium CPU (50..80%)
-    if telem.git_dirty_count > 0 || telem.cpu_pct > 50.0 {
-        let v = (telem.tick / 14) % 10;
-        return &SOVEREIGN_EXPRESSIONS[50 + v];
-    }
+    if telem.condition_tracking {
+        // 6. Alert state: Uncommitted git or medium CPU (50..80%)
+        if telem.git_dirty_count > 0 || telem.cpu_pct > 50.0 {
+            let v = (tick_scaled / 14) % 10;
+            return &SOVEREIGN_EXPRESSIONS[50 + v];
+        }
 
-    // 7. Idle / Night / Very low CPU
-    if telem.cpu_pct < 8.0 && (telem.tick / 24) % 5 == 4 {
-        let v = (telem.tick / 20) % 10;
-        return &SOVEREIGN_EXPRESSIONS[80 + v];
+        // 7. Idle / Night / Very low CPU
+        if telem.cpu_pct < 8.0 && (tick_scaled / 24) % 5 == 4 {
+            let v = (tick_scaled / 20) % 10;
+            return &SOVEREIGN_EXPRESSIONS[80 + v];
+        }
     }
 
     // 8. High XP Celebration
-    if telem.xp_level >= 3 && (telem.tick / 30) % 4 == 3 {
-        let v = (telem.tick / 12) % 10;
+    if telem.xp_level >= 3 && (tick_scaled / 30) % 4 == 3 {
+        let v = (tick_scaled / 12) % 10;
         return &SOVEREIGN_EXPRESSIONS[30 + v];
     }
 
     // 9. Standard nominal: Cycle between Shades (0..9), Wink (10..19), Grin (20..29)
-    let cycle = (telem.tick / 32) % 3;
-    let v = (telem.tick / 8) % 10;
+    let cycle = (tick_scaled / 32) % 3;
+    let v = (tick_scaled / 8) % 10;
     match cycle {
         0 => &SOVEREIGN_EXPRESSIONS[v],        // Shades
         1 => &SOVEREIGN_EXPRESSIONS[10 + v],   // Wink
@@ -415,7 +467,11 @@ pub fn render_sovereign_token_lines(
         const RAIN_CHARS: &[char] = &[
             '0', '1', 'A', 'F', 'C', 'X', '8', '9', '7', 'E', '#', '*', '~', ':', ';', '·',
         ];
-        let t = telem.tick;
+        let t = match telem.matrix_speed.as_str() {
+            "Fast" => telem.tick.saturating_mul(2),
+            "Slow" => telem.tick / 2,
+            _ => telem.tick,
+        };
         for col in 0..w {
             let col_speed = 1 + (col % 3);
             let head_y = ((t * col_speed + col * 7) % (h + 12)) as i32 - 4;
@@ -443,33 +499,59 @@ pub fn render_sovereign_token_lines(
         }
     }
 
-    // 2. Stable Hovering Bobbing (melayang stabil)
-    // Smooth sine wave: ±1 row vertical floating, no horizontal jitter
-    let bob_sine = (telem.tick as f64 * 0.12).sin();
-    let bob = if bob_sine > 0.4 { 1i32 } else if bob_sine < -0.4 { -1i32 } else { 0i32 };
+    // 2. Animation Style:
+    // "Hover Bobbing" (Melayang stabil): smooth sine wave
+    // "Continuous 3D Spin": Y-axis horizontal ellipse compression rotation
+    // "Pulse Breathing": rhythmic scale pulse
+    // "Stationary": still
+    let (bob, spin_mult, scale_mult) = match telem.animation_style.as_str() {
+        "Continuous 3D Spin" => {
+            let spin = (telem.tick as f64 * 0.22).cos().abs().max(0.22);
+            (0i32, spin, 1.0f64)
+        }
+        "Pulse Breathing" => {
+            let pulse = 1.0 + (telem.tick as f64 * 0.16).sin() * 0.08;
+            (0i32, 1.0f64, pulse)
+        }
+        "Stationary" => (0i32, 1.0f64, 1.0f64),
+        _ => { // "Hover Bobbing"
+            let bob_sine = (telem.tick as f64 * 0.12).sin();
+            let b = if bob_sine > 0.4 { 1i32 } else if bob_sine < -0.4 { -1i32 } else { 0i32 };
+            (b, 1.0f64, 1.0f64)
+        }
+    };
 
-    // 3. Coin Geometry & 3D Extrusion
+    // 3. Coin Geometry & 3D Extrusion with Scale Control
     let cx = (w as f64) / 2.0;
     let cy = ((h as f64) / 2.0 - 1.2 + (bob as f64)).max(2.0);
-    let rx = ((w as f64) / 2.0 - 2.8).max(4.0);
-    let ry = ((h as f64) / 3.4).max(1.8);
+
+    let (base_rx, base_ry) = match telem.render_scale.as_str() {
+        "Large" => (((w as f64) / 2.0 - 1.2).max(4.0), ((h as f64) / 2.8).max(2.0)),
+        "Compact" => (((w as f64) / 2.8).max(3.5), ((h as f64) / 4.2).max(1.5)),
+        _ => (((w as f64) / 2.0 - 2.8).max(4.0), ((h as f64) / 3.4).max(1.8)), // "Auto-Fit" / "Standard"
+    };
+    let rx = (base_rx * spin_mult * scale_mult).max(2.5);
+    let ry = (base_ry * scale_mult).max(1.5);
     let thickness = (h / 4).clamp(2, 4) as i32;
 
-    // Mood-specific neon phosphor hue
-    let neon_bright = match telem.cpu_temp_c {
-        t if t > 80.0 => Color::Rgb(255, 60, 60),  // Overheated Red
-        _ if telem.turbo_active => Color::Rgb(0, 255, 240), // Turbo Cyan
-        _ => Color::Rgb(57, 255, 20), // Sovereign Phosphor Neon Green
-    };
-    let neon_mid = match telem.cpu_temp_c {
-        t if t > 80.0 => Color::Rgb(180, 30, 30),
-        _ if telem.turbo_active => Color::Rgb(0, 180, 200),
-        _ => Color::Rgb(0, 190, 55),
-    };
-    let neon_dim = match telem.cpu_temp_c {
-        t if t > 80.0 => Color::Rgb(90, 15, 15),
-        _ if telem.turbo_active => Color::Rgb(0, 80, 100),
-        _ => Color::Rgb(0, 90, 25),
+    // 4. Color Scheme Configuration
+    let (neon_bright, neon_mid, neon_dim) = match telem.color_scheme.as_str() {
+        "Phosphor Green" => (Color::Rgb(57, 255, 20), Color::Rgb(0, 190, 55), Color::Rgb(0, 90, 25)),
+        "Cyan Cyber" => (Color::Rgb(0, 255, 240), Color::Rgb(0, 180, 200), Color::Rgb(0, 80, 100)),
+        "Amber Retro" => (Color::Rgb(255, 176, 0), Color::Rgb(200, 130, 0), Color::Rgb(100, 60, 0)),
+        "Crimson Red" => (Color::Rgb(255, 50, 60), Color::Rgb(180, 30, 40), Color::Rgb(90, 15, 20)),
+        "Neon Violet" => (Color::Rgb(180, 60, 255), Color::Rgb(130, 40, 200), Color::Rgb(70, 20, 100)),
+        _ => { // "Dynamic Reactive" (Default)
+            if telem.cpu_temp_c > 80.0 || telem.cpu_pct > 85.0 {
+                (Color::Rgb(255, 60, 60), Color::Rgb(180, 30, 30), Color::Rgb(90, 15, 15))
+            } else if telem.turbo_active {
+                (Color::Rgb(0, 255, 240), Color::Rgb(0, 180, 200), Color::Rgb(0, 80, 100))
+            } else if telem.cpu_pct > 65.0 {
+                (Color::Rgb(255, 215, 0), Color::Rgb(180, 150, 0), Color::Rgb(90, 75, 0))
+            } else {
+                (Color::Rgb(57, 255, 20), Color::Rgb(0, 190, 55), Color::Rgb(0, 90, 25))
+            }
+        }
     };
 
     // Draw 3D Extrusion Rim (bottom curved layers)

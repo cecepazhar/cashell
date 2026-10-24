@@ -1,5 +1,6 @@
 //! Subcommand implementations.
 
+pub mod analytics;
 pub mod audit;
 pub mod auth;
 pub mod chat;
@@ -18,6 +19,7 @@ pub mod pro;
 pub mod r2;
 pub mod review;
 pub mod server;
+pub mod uptime;
 pub mod vault;
 pub mod version;
 

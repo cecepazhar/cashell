@@ -59,6 +59,8 @@ pub struct Config {
     pub security: SecurityConfig,
     #[serde(default)]
     pub pro: ProConfig,
+    #[serde(default)]
+    pub mascot: MascotConfig,
 }
 
 /// Daemon & multi-node orchestration configuration.
@@ -274,6 +276,51 @@ pub fn default_matrix_rain() -> bool {
 fn default_theme() -> String {
     "ca-classic".to_string()
 }
+
+/// Cyberpunk Companion Mascot & Emoticon Configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MascotConfig {
+    #[serde(default = "default_mascot_speed")]
+    pub speed: String, // "Fast", "Normal", "Slow", "Zen"
+    #[serde(default = "default_mascot_sensitivity")]
+    pub sensitivity: String, // "High", "Balanced", "Calm"
+    #[serde(default = "default_mascot_tracking")]
+    pub condition_tracking: bool,
+    #[serde(default = "default_mascot_color")]
+    pub color_scheme: String, // "Dynamic Reactive", "Phosphor Green", "Cyan Cyber", "Amber Retro", "Crimson Red", "Neon Violet"
+    #[serde(default = "default_mascot_animation")]
+    pub animation_style: String, // "Hover Bobbing", "Continuous 3D Spin", "Pulse Breathing", "Stationary"
+    #[serde(default = "default_mascot_scale")]
+    pub render_scale: String, // "Auto-Fit", "Large", "Standard", "Compact"
+    #[serde(default = "default_matrix_speed")]
+    pub matrix_speed: String, // "Fast", "Normal", "Slow"
+    #[serde(default = "default_mascot_chat")]
+    pub chat_avatar_enabled: bool,
+}
+
+impl Default for MascotConfig {
+    fn default() -> Self {
+        Self {
+            speed: default_mascot_speed(),
+            sensitivity: default_mascot_sensitivity(),
+            condition_tracking: default_mascot_tracking(),
+            color_scheme: default_mascot_color(),
+            animation_style: default_mascot_animation(),
+            render_scale: default_mascot_scale(),
+            matrix_speed: default_matrix_speed(),
+            chat_avatar_enabled: default_mascot_chat(),
+        }
+    }
+}
+
+pub fn default_mascot_speed() -> String { "Normal".to_string() }
+pub fn default_mascot_sensitivity() -> String { "Balanced".to_string() }
+pub fn default_mascot_tracking() -> bool { true }
+pub fn default_mascot_color() -> String { "Dynamic Reactive".to_string() }
+pub fn default_mascot_animation() -> String { "Hover Bobbing".to_string() }
+pub fn default_mascot_scale() -> String { "Auto-Fit".to_string() }
+pub fn default_matrix_speed() -> String { "Normal".to_string() }
+pub fn default_mascot_chat() -> bool { true }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProductsConfig {
