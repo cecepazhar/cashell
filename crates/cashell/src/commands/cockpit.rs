@@ -6071,6 +6071,10 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         draw_monitor_wizard(f, app, area);
     }
 
+    if app.show_uptime_detail_modal {
+        draw_uptime_detail_modal(f, app, area);
+    }
+
     if app.show_quit_confirm {
         draw_quit_modal(f, app, area);
     }
@@ -8407,7 +8411,7 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let rows: Vec<Row> = displayed
         .iter()
         .enumerate()
-        .map(|(i, (orig_idx, m))| {
+        .map(|(i, (_orig_idx, m))| {
             let is_sel = i == app.selected_monitor;
             let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
             let (status_badge, badge_color) = if m.is_up {
@@ -9174,7 +9178,7 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     };
 
     // Determine active action state (transient action or telemetry mood)
-    let active_state = if app.pet_is_stopped {
+    let _active_state = if app.pet_is_stopped {
         crate::pet::PetActionState::Idle
     } else if let Some((st, _)) = app.pet_transient_action {
         st
@@ -9938,7 +9942,7 @@ fn draw_analytics_list_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             Style::default().fg(Color::Rgb(255, 255, 255))
         };
 
-        let mut spans: Vec<Span> = vec![
+        let spans: Vec<Span> = vec![
             Span::styled(format!("{:<4}", i + 1), row_style.clone()),
             Span::styled(format!("{:<18}", site.name), row_style.clone()),
             Span::styled(format!("{:<24}", site.domain), row_style.clone()),
