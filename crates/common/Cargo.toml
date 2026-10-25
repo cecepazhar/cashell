@@ -1,6 +1,6 @@
 [package]
 name = "cashell-common"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 description = "Shared types for the CA ecosystem"
 authors = ["Cecep Saeful Azhar Hidayat, ST"]
