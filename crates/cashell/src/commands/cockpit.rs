@@ -7516,7 +7516,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if fleet_offline == 0 && total_nodes > 0 {
         alerts_spans.push(Span::styled(
             format!(" Armada: ● {online_nodes}/{total_nodes} Online "),
-            Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
         ));
     } else {
         alerts_spans.push(Span::styled(
@@ -7537,7 +7537,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if down_cont == 0 && total_cont > 0 {
         alerts_spans.push(Span::styled(
             format!(" ● {running_cont}/{total_cont} Containers Running "),
-            Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
         ));
     } else if down_cont > 0 {
         alerts_spans.push(Span::styled(
@@ -7563,7 +7563,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if active_daemons == total_daemons && total_daemons > 0 {
         alerts_spans.push(Span::styled(
             format!(" Daemons: ● {active_daemons}/{total_daemons} Active "),
-            Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
         ));
     } else {
         let err_count = total_daemons.saturating_sub(active_daemons + degraded_daemons);
@@ -7583,7 +7583,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if down_monitors == 0 && total_monitors > 0 {
         alerts_spans.push(Span::styled(
             format!(" Monitors: [OK] ALL {up_monitors} UP "),
-            Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
         ));
     } else {
         alerts_spans.push(Span::styled(
@@ -8741,29 +8741,29 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         Span::raw(" "),
         Span::styled(
             target_label_text.as_str(),
-            Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD),
         ),
         Span::raw(" │ "),
     ];
     bar_spans.push(Span::raw(" "));
-    bar_spans.push(Span::styled(" [+ Add Project] ", Style::default().fg(Color::Black).bg(palette.status_warn).add_modifier(Modifier::BOLD)));
+    bar_spans.push(Span::styled(" [+ Add Project] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
     bar_spans.push(Span::raw(" "));
-    bar_spans.push(Span::styled(" [+ Add Container] ", Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD)));
+    bar_spans.push(Span::styled(" [+ Add Container] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
     bar_spans.push(Span::raw(" │ Actions: "));
-    bar_spans.push(Span::styled(" [▶ Start] ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD)));
+    bar_spans.push(Span::styled(" [▶ Start] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)));
     bar_spans.push(Span::raw(" "));
-    bar_spans.push(Span::styled(" [■ Stop] ", Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)));
+    bar_spans.push(Span::styled(" [■ Stop] ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)));
     bar_spans.push(Span::raw(" "));
-    bar_spans.push(Span::styled(" [↺ Restart] ", Style::default().fg(Color::Black).bg(palette.status_warn).add_modifier(Modifier::BOLD)));
+    bar_spans.push(Span::styled(" [↺ Restart] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
 
     if app.project_view == ProjectView::Containers {
         bar_spans.push(Span::raw(" "));
-        bar_spans.push(Span::styled(" [✎ Edit] (e) ", Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD)));
+        bar_spans.push(Span::styled(" [✎ Edit] (e) ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
         bar_spans.push(Span::raw(" "));
-        bar_spans.push(Span::styled(" [🗑 Delete] (x) ", Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)));
+        bar_spans.push(Span::styled(" [🗑 Delete] (x) ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)));
     } else {
         bar_spans.push(Span::raw(" "));
-        bar_spans.push(Span::styled(" [🗑 Delete] (x) ", Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)));
+        bar_spans.push(Span::styled(" [🗑 Delete] (x) ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)));
     }
 
     f.render_widget(Paragraph::new(Line::from(bar_spans)), action_inner);
@@ -9235,17 +9235,17 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     // ── Toolbar row 1: Core Actions (Add, Probe, Edit, Delete, Group, Sort) ──
     let alert_on = app.cfg.uptime.telegram_alerts_enabled;
     let mut toolbar_spans: Vec<Span> = vec![
-        Span::styled(" [ADD] (m) ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
+        Span::styled(" [ADD] (m) ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
         Span::raw("  "),
-        Span::styled(" [PROBE] (p) ", Style::default().fg(Color::Black).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
+        Span::styled(" [PROBE] (p) ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         Span::raw("  "),
-        Span::styled(" [EDIT] (e) ", Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" [EDIT] (e) ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw("  "),
-        Span::styled(" [DEL] (x) ", Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+        Span::styled(" [DEL] (x) ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
         Span::raw("  │  "),
-        Span::styled(format!(" [GRP:{}] ", app.uptime_group_filter), Style::default().fg(Color::Black).bg(palette.status_warn).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" [GRP:{}] ", app.uptime_group_filter), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
         Span::raw("  "),
-        Span::styled(format!(" [SRT:{}] ", app.uptime_sort_mode.label_short()), Style::default().fg(Color::Black).bg(Color::Rgb(80, 80, 80)).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" [SRT:{}] ", app.uptime_sort_mode.label_short()), Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
     ];
     let up_count = app.latest_snap.uptime_monitors.iter().filter(|m| m.is_up).count();
     let total_count = app.latest_snap.uptime_monitors.len();
@@ -9287,16 +9287,16 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let adv_y = bar_y + 1;
     if adv_y < bar_inner.bottom() {
         let adv_spans: Vec<Span> = vec![
-            Span::styled(" [EXPORT] ", Style::default().fg(Color::Black).bg(Color::Rgb(80, 80, 80)).add_modifier(Modifier::BOLD)),
+            Span::styled(" [EXPORT] ", Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
             Span::raw("  "),
-            Span::styled(" [IMPORT] ", Style::default().fg(Color::Black).bg(Color::Rgb(80, 80, 80)).add_modifier(Modifier::BOLD)),
+            Span::styled(" [IMPORT] ", Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
             Span::raw("  "),
             Span::styled(
                 if alert_on { " [ALERTS:ON] " } else { " [ALERTS:OFF] " },
-                Style::default().fg(Color::Black).bg(if alert_on { Color::Rgb(0, 128, 0) } else { Color::Rgb(80, 80, 80) }).add_modifier(Modifier::BOLD),
+                Style::default().fg(if alert_on { Color::Green } else { Color::DarkGray }).add_modifier(Modifier::BOLD),
             ),
             Span::raw("  "),
-            Span::styled(" [TEST TG ALERT] ", Style::default().fg(Color::Black).bg(Color::Rgb(0, 136, 204)).add_modifier(Modifier::BOLD)),
+            Span::styled(" [TEST TG ALERT] ", Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD)),
             Span::raw("  │  "),
             Span::styled(" [V] View Detail (Enter) ", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
         ];
@@ -9567,18 +9567,18 @@ fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     f.render_widget(btn_bar_block, modal_chunks[1]);
 
     let btn_spans = vec![
-        Span::styled(" [ ↻ Probe (p) ] ", Style::default().fg(Color::Black).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
+        Span::styled(" [ ↻ Probe (p) ] ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
         Span::styled(
             if app.cfg.uptime.telegram_alerts_enabled { " [ 🔔 Alerts: ON (t) ] " } else { " [ 🔕 Alerts: OFF (t) ] " },
-            Style::default().fg(Color::Black).bg(if app.cfg.uptime.telegram_alerts_enabled { Color::Rgb(0, 180, 50) } else { Color::Rgb(100, 100, 100) }).add_modifier(Modifier::BOLD),
+            Style::default().fg(if app.cfg.uptime.telegram_alerts_enabled { Color::Green } else { Color::DarkGray }).add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
-        Span::styled(" [ ✏ Edit (e) ] ", Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" [ ✏ Edit (e) ] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [ 🗑 Delete (x) ] ", Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+        Span::styled(" [ 🗑 Delete (x) ] ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [ ✖ Close (Esc) ] ", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(" [ ✖ Close (Esc) ] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
     ];
     f.render_widget(Paragraph::new(Line::from(btn_spans)), btn_bar_inner);
 
@@ -9645,21 +9645,21 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     app.register_hitbox(Rect { x: cur_x, y, width: btn_del_w, height: 1 }, HitboxAction::RemoveServer);
 
     let bar_spans = vec![
-        Span::styled(" [+ Add] (a) ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
+        Span::styled(" [+ Add] (a) ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [✎ Edit] (e) ", Style::default().fg(Color::Black).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
+        Span::styled(" [✎ Edit] (e) ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [❐ Clone] (c) ", Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" [❐ Clone] (c) ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [⏸ Active] (v) ", Style::default().fg(Color::Black).bg(palette.status_warn).add_modifier(Modifier::BOLD)),
+        Span::styled(" [⏸ Active] (v) ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [⚡ SSH] (t) ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(" [⚡ SSH] (t) ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [🔍 Probe] (p) ", Style::default().fg(Color::Black).bg(palette.chart_cpu).add_modifier(Modifier::BOLD)),
+        Span::styled(" [🔍 Probe] (p) ", Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [💽 Health] (d) ", Style::default().fg(Color::Black).bg(Color::Magenta).add_modifier(Modifier::BOLD)),
+        Span::styled(" [💽 Health] (d) ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [🗑 Del] (x) ", Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+        Span::styled(" [🗑 Del] (x) ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
     ];
     f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
 
@@ -9887,9 +9887,9 @@ fn draw_log_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         Span::raw(" "),
         Span::styled(" [agent logs] ", Style::default().fg(a_fg).bg(a_bg).add_modifier(Modifier::BOLD)),
         Span::raw(" │ "),
-        Span::styled(" [↺ Refresh] ", Style::default().fg(Color::Black).bg(palette.status_warn).add_modifier(Modifier::BOLD)),
+        Span::styled(" [↺ Refresh] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
         Span::raw("  Filter: "),
-        Span::styled(format!(" [{}] (Press 'l') ", app.log_level.label()), Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" [{}] (Press 'l') ", app.log_level.label()), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
     ];
     f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
 
@@ -9954,7 +9954,7 @@ fn draw_terminal_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     };
 
     let bar_spans = vec![
-        Span::styled(format!(" Target: [{target_label}] (Press 'r') "), Style::default().fg(Color::Black).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" Target: [{target_label}] (Press 'r') "), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         Span::raw(" │ Quick Presets: "),
         Span::styled(" [cas doctor] ", Style::default().fg(palette.accent)),
         Span::raw(" "),
@@ -10057,15 +10057,15 @@ fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     );
 
     let mut bar_spans = vec![
-        Span::styled(format!(" [🤖 Model: {active_model} (m)] "), Style::default().fg(Color::Black).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" [🤖 Model: {active_model} (m)] "), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         Span::raw("  "),
-        Span::styled(" [🗑 Clear Chat] ", Style::default().fg(Color::Black).bg(palette.status_err).add_modifier(Modifier::BOLD)),
+        Span::styled(" [🗑 Clear Chat] ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
     ];
     if app.cfg.mascot.chat_avatar_enabled {
         bar_spans.push(Span::raw("  "));
         bar_spans.push(Span::styled(
             format!(" [🪙 #{:02} {}] ", expr.id, expr.label),
-            Style::default().fg(Color::Black).bg(Color::Rgb(57, 255, 20)).add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
         ));
     }
     bar_spans.push(Span::raw("  │  Gateway: "));
@@ -10587,7 +10587,7 @@ fn draw_app_inspector_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     app.register_hitbox(close_btn_rect, HitboxAction::CloseInspector);
     let close_span = Span::styled(
         " [ Close (Esc) ] ",
-        Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD),
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
     );
     f.render_widget(Paragraph::new(Line::from(close_span)), content_layout[1]);
 }
@@ -10630,9 +10630,9 @@ fn draw_analytics_detail_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let back_label = " [ ← Back to Sites (b/Esc) ] ";
     let bar_spans = vec![
-        Span::styled(back_label, Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(back_label, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
         Span::raw("  "),
-        Span::styled(" [ Refresh (r) ] ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
+        Span::styled(" [ Refresh (r) ] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
         Span::raw("  │  "),
         Span::styled("Press 'b' or Esc to return to Overview table", Style::default().fg(palette.text_muted)),
     ];
@@ -10897,17 +10897,17 @@ fn draw_analytics_list_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     app.register_hitbox(Rect { x: x5, y: y0, width: btn_del_w, height: h }, HitboxAction::ClearAnalyticsData);
 
     let bar_spans = vec![
-        Span::styled(" [ Add Site (a) ] ", Style::default().fg(Color::Black).bg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+        Span::styled(" [ Add Site (a) ] ", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [ Import (i) ] ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(" [ Import (i) ] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [ Refresh (r) ] ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
+        Span::styled(" [ Refresh (r) ] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [ Script (s) ] ", Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" [ Script (s) ] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [ Export (e) ] ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(" [ Export (e) ] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
-        Span::styled(" [ Wipe/Del (x) ] ", Style::default().fg(Color::Black).bg(Color::LightRed).add_modifier(Modifier::BOLD)),
+        Span::styled(" [ Wipe/Del (x) ] ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
     ];
     f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
 
@@ -11095,11 +11095,11 @@ fn draw_site_import_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let btn_y = inner.bottom().saturating_sub(2);
     let submit_span = Span::styled(
         " [ Submit (Enter) ] ",
-        Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD),
+        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
     );
     let cancel_span = Span::styled(
         " [ Cancel (Esc) ] ",
-        Style::default().fg(Color::Black).bg(palette.status_warn).add_modifier(Modifier::BOLD),
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
     );
 
     app.register_hitbox(
@@ -11260,15 +11260,15 @@ fn draw_pro_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let btn_sync_label = if app.is_syncing_gcc { "Syncing…" } else { "Sync GCC" };
     let btn_sync = Span::styled(
         format!(" [☁ {btn_sync_label}] (y) "),
-        Style::default().fg(Color::Black).bg(Color::Rgb(0, 200, 255)).add_modifier(Modifier::BOLD),
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
     );
     let btn_trial = Span::styled(
         " [★ 7-Day Trial] (t) ",
-        Style::default().fg(Color::Black).bg(Color::Rgb(255, 200, 0)).add_modifier(Modifier::BOLD),
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
     );
     let btn_login = Span::styled(
         " [🔐 Sign In] (Enter) ",
-        Style::default().fg(Color::Black).bg(Color::Rgb(0, 255, 120)).add_modifier(Modifier::BOLD),
+        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
     );
     let btn_close = Span::styled(
         " [✖ Cancel] (Esc) ",
@@ -11390,7 +11390,7 @@ fn draw_analytics_script_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) 
         Line::from(Span::styled("📌 Note: Auto-tracks Scroll Depth (25/50/75/90/100%), Clicks (% coords), Rage Clicks (>3/sec), and Dwell Time.", Style::default().fg(palette.text_muted))),
         Line::from(Span::styled("📌 Replace 'http://127.0.0.1:8090' with your public domain or CF Tunnel (e.g. 'https://cashell.cecepazhar.com').", Style::default().fg(palette.text_muted))),
         Line::from(""),
-        Line::from(Span::styled(" [ Press Esc to Close ] ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(" [ Press Esc to Close ] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))),
     ];
 
     f.render_widget(Paragraph::new(lines), inner);
@@ -11429,11 +11429,11 @@ fn draw_audit_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let btn_audit = Span::styled(
         " [⚡ Turbo Audit] ",
-        Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
     );
     let btn_fix = Span::styled(
         " [🔧 Run Fix] ",
-        Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD),
+        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
     );
 
     let status_text = app
@@ -13054,12 +13054,12 @@ fn draw_delete_confirm_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         Line::from(vec![
             Span::styled(
                 " [Y] Yes, Delete ",
-                Style::default().fg(Color::Black).bg(Color::Red).add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             ),
             Span::raw("    "),
             Span::styled(
                 " [N / Esc] Cancel & Keep ",
-                Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
             ),
         ]),
     ];
@@ -13121,17 +13121,17 @@ fn draw_kill_process_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         Line::from(vec![
             Span::styled(
                 " [y] Confirm ",
-                Style::default().fg(Color::Black).bg(Color::Red).add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             ),
             Span::raw("    "),
             Span::styled(
                 " [n] Cancel ",
-                Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
             ),
             Span::raw("    "),
             Span::styled(
                 " [9] Force Kill ",
-                Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
             ),
         ]),
     ];
@@ -13230,7 +13230,7 @@ fn draw_disk_health_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         if is_cur {
             drive_spans.push(Span::styled(
                 format!("{prefix}[{short_dev}] "),
-                Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             ));
         } else {
             drive_spans.push(Span::styled(
@@ -13403,13 +13403,13 @@ fn draw_disk_health_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     // ── 6. Footer Controls ──
     let footer_line = Line::from(vec![
-        Span::styled(" [r] ", Style::default().fg(Color::Black).bg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" [r] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::raw(" Refresh   "),
-        Span::styled(" [←/h] ", Style::default().fg(Color::Black).bg(palette.status_warn).add_modifier(Modifier::BOLD)),
+        Span::styled(" [←/h] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
         Span::raw(" Prev Drive   "),
-        Span::styled(" [→/l] ", Style::default().fg(Color::Black).bg(palette.status_warn).add_modifier(Modifier::BOLD)),
+        Span::styled(" [→/l] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
         Span::raw(" Next Drive   "),
-        Span::styled(" [Esc/q/Enter] ", Style::default().fg(Color::Black).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
+        Span::styled(" [Esc/q/Enter] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
         Span::raw(" Close"),
     ]);
     f.render_widget(Paragraph::new(footer_line).alignment(ratatui::layout::Alignment::Center), chunks[5]);

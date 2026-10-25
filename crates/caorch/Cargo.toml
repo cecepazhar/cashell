@@ -1,6 +1,6 @@
 [package]
 name = "caorch"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 description = "CAOrch — Lightweight Fleet Agent Daemon for CA Ecosystem"
 authors = ["Cecep Saeful Azhar Hidayat, ST"]
@@ -11,7 +11,7 @@ name = "caorch"
 path = "src/main.rs"
 
 [dependencies]
-cashell-common = { path = "../common", version = "1.0.2" }
+cashell-common = { path = "../common", version = "1.0.3" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
