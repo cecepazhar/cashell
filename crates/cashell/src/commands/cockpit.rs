@@ -2387,17 +2387,59 @@ impl CockpitApp {
             }
         }
 
-        // Also merge any tracked projects from local filesystem
+        // Only merge *live public web domains* (fathforce.com / cecepazhar.com / fathstore.com)
+        // from tracked projects. Local project folders (`{id}.local`) and offline repos are
+        // excluded to keep the analytics list focused on live web properties.
+        let mut active_ids: Vec<String> = self
+            .latest_snap
+            .web_analytics
+            .product_analytics
+            .iter()
+            .filter(|p| p.status != "EMPTY")
+            .map(|p| p.product_id.clone())
+            .collect();
+
+        let public_domains: &[&str] = &[
+            "fathforce.com",
+            "cecepazhar.com",
+            "fathstore.com",
+            "fathforce.id",
+        ];
+
         for p in &self.latest_snap.tracked_projects {
             let id = p.name.to_lowercase().replace(' ', "-");
-            if !list.iter().any(|s| s.id == id) {
-                list.push(AnalyticSiteItem {
-                    id: id.clone(),
-                    name: p.name.clone(),
-                    domain: format!("{id}.local"),
-                });
+            if active_ids.iter().any(|aid| aid == &id)
+                || list.iter().any(|s| s.id == id)
+            {
+                active_ids.retain(|x| x != &id);
+            }
+            // Check if the project has a live public web domain
+            let is_public_web = public_domains.iter().any(|domain| p.path.contains(domain));
+            if is_public_web {
+                active_ids.push(id.clone());
+                if !list.iter().any(|s| s.id == id) {
+                    list.push(AnalyticSiteItem {
+                        id: id.clone(),
+                        name: p.name.clone(),
+                        domain: format!("https://{id}.fathforce.com"),
+                    });
+                }
             }
         }
+
+        // Filter out any empty/unregistered `.local` or project folders not in `active_ids`
+        if !active_ids.is_empty() {
+            list.retain(|s| {
+                s.id.is_empty()
+                    || active_ids.contains(&s.id)
+                    || self.db.as_ref().is_some_and(|d| {
+                        d.get_analytic_sites().ok().map(|db_sites| {
+                            db_sites.iter().any(|ds| ds.id == s.id && ds.domain != format!("{}.local", s.id))
+                        }).unwrap_or(false)
+                    })
+            });
+        }
+
         list
     }
 

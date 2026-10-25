@@ -537,11 +537,6 @@ pub fn probe_fleet_nodes(local_cpu: f32, local_ram_pct: u8, local_disk_pct: u8) 
         role: "Armada Control Plane / Local".to_string(),
     };
 
-    // ZERO TRUST: remote nodes are sourced exclusively from the user's
-    // `cfg.daemon.nodes` map. Fresh installs only see the local node,
-    // and any Tailscale mesh node is only probed if the user has
-    // registered it in their personal configuration. This prevents
-    // leaking internal VPS IPs to the public.
     let nodes_cfg: std::collections::HashMap<String, crate::config::NodeConfig> = {
         crate::config::Config::load(None)
             .ok()
@@ -549,17 +544,36 @@ pub fn probe_fleet_nodes(local_cpu: f32, local_ram_pct: u8, local_disk_pct: u8) 
             .unwrap_or_default()
     };
 
-    let remotes: Vec<(&String, &str, u16)> = nodes_cfg
-        .iter()
-        .filter(|(name, _)| name.as_str() != "local")
-        .map(|(name, node)| {
-            let port = node
-                .services
-                .first()
-                .map(|s| s.port)
-                .unwrap_or(22);
-            (name, node.ip.as_str(), port)
-        })
+    let mut remotes_map: std::collections::HashMap<String, (String, u16)> = std::collections::HashMap::new();
+
+    for (name, node) in nodes_cfg {
+        if name != "local" {
+            let port = node.services.first().map(|s| s.port).unwrap_or(22);
+            remotes_map.insert(name, (node.ip, port));
+        }
+    }
+
+    if let Ok(out) = Command::new("tailscale").args(["status", "--json"]).output() {
+        if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+            if let Some(peers) = json.get("Peer").and_then(|p| p.as_object()) {
+                for (_, peer) in peers {
+                    let hostname = peer.get("HostName").and_then(|h| h.as_str()).unwrap_or("").to_string();
+                    let ips = peer.get("TailscaleIPs").and_then(|i| i.as_array());
+                    let ip = ips.and_then(|arr| arr.first()).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    if !hostname.is_empty() && !ip.is_empty() {
+                        let exists = remotes_map.iter().any(|(k, (val_ip, _))| k == &hostname || val_ip == &ip);
+                        if !exists {
+                            remotes_map.insert(hostname, (ip, 22));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let remotes: Vec<(String, String, u16)> = remotes_map
+        .into_iter()
+        .map(|(name, (ip, port))| (name, ip, port))
         .collect();
 
     let probed_remotes: Vec<FleetNodeResume> = remotes
@@ -1349,22 +1363,40 @@ pub fn send_telegram_alert(token: &str, chat_id: &str, message: &str) {
 pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
     use rayon::prelude::*;
 
-    // ZERO TRUST INITIAL STATE
-    // No default monitors are pre-filled on a fresh install.
-    // Users start with an empty monitor list and can:
-    //   1. Add their own endpoints via the `ADD` button.
-    //   2. Import canonical CA sites via `IMPORT CA SITES` (which
-    //      writes them to `cfg.uptime.custom_monitors` so they
-    //      persist and can be permanently deleted).
-    // Deletion flow is 100% clean: removing a monitor adds it to
-    // `disabled_monitors`, preventing the probe engine from ever
-    // re-creating it on subsequent ticks.
-    let mut targets: Vec<(String, String, String)> = Vec::new();
+    let default_targets: &[(&str, &str, &str)] = &[
+        ("Landing CATerm", "https://caterm.fathforce.com/", "CA Ecosystem"),
+        ("CAMark Studio", "https://camark.fathforce.com/", "CA Ecosystem"),
+        ("CAUI Design System", "https://caui.fathforce.com/", "CA Ecosystem"),
+        ("CAGames", "https://cagames.fathforce.com/", "CA Ecosystem"),
+        ("CATable", "https://catable.fathforce.com/", "CA Ecosystem"),
+        ("CABook", "https://cabook.fathforce.com/", "CA Ecosystem"),
+        ("CAPost", "https://capost.fathforce.com/", "CA Ecosystem"),
+        ("CACode", "https://cacode.fathforce.com/", "CA Ecosystem"),
+        ("Fathforce Blog", "https://blog.fathforce.com/", "CA Ecosystem"),
+        ("Fathforce Docs", "https://docs.fathforce.com/", "CA Ecosystem"),
+        ("Fathforce Master", "https://fathforce.com/", "CA Ecosystem"),
+        ("FathStore Engine", "https://fathstore.com/", "CA Ecosystem"),
+        ("Cecep Portal", "https://cecepazhar.com/", "CA Ecosystem"),
+        ("GCC Central Core", "https://gcc.fathforce.com/", "CA Ecosystem"),
+        ("YPC (Dokploy)", "http://100.127.232.32:3000", "Fleet Nodes"),
+        ("Hostinger Gateway", "https://100.76.150.46:8443", "Fleet Nodes"),
+        ("Tencent Traefik :80", "http://100.96.8.82/", "Fleet Nodes"),
+        ("Tencent Content Hub", "http://100.96.8.82:8096/", "Fleet Nodes"),
+        ("Tencent CAOrch :8091", "http://100.96.8.82:8091/", "Fleet Nodes"),
+        ("9router AI Gateway", "http://127.0.0.1:20128/health", "Localhost"),
+        ("CAShell Local Daemon", "http://127.0.0.1:8090/api/health", "Localhost"),
+    ];
+
+    let mut targets: Vec<(String, String, String)> = default_targets
+        .iter()
+        .map(|&(n, u, g)| (n.to_string(), u.to_string(), g.to_string()))
+        .collect();
 
     let cfg_opt = crate::config::Config::load(None).ok();
 
-    // Load user-defined custom monitors from config
+    // Filter out disabled monitors
     if let Some(ref cfg) = cfg_opt {
+        targets.retain(|(name, _, _)| !cfg.uptime.disabled_monitors.contains(name));
         for m in &cfg.uptime.custom_monitors {
             if !cfg.uptime.disabled_monitors.contains(&m.name) && !targets.iter().any(|(_, u, _)| u == &m.target) {
                 let grp = if m.group.trim().is_empty() { "Custom".to_string() } else { m.group.clone() };
@@ -1593,6 +1625,7 @@ pub fn probe_storage_health() -> Vec<DiskHealthInfo> {
                 || name.starts_with("vd")
                 || name.starts_with("hd")
                 || name.starts_with("xvd")
+                || name.starts_with("mmcblk")
             {
                 dev_names.push(name);
             }
@@ -1789,6 +1822,10 @@ fn probe_sysfs_disk_health(dev_name: &str) -> Option<DiskHealthInfo> {
         return None;
     }
 
+    let is_removable = std::fs::read_to_string(format!("/sys/block/{dev_name}/removable"))
+        .map(|s| s.trim() == "1")
+        .unwrap_or_else(|_| dev_name.starts_with("mmcblk") || dev_name.starts_with("sd"));
+
     // Model name
     let mut model = String::new();
     let model_paths = [
@@ -1818,7 +1855,27 @@ fn probe_sysfs_disk_health(dev_name: &str) -> Option<DiskHealthInfo> {
         }
     }
     if model.is_empty() {
-        model = format!("Drive {dev_name}");
+        if is_removable {
+            model = "SD/MMC Card Reader / MicroSD".to_string();
+        } else {
+            model = format!("Drive {dev_name}");
+        }
+    }
+
+    // Check mount points and usage via sysinfo::Disks
+    let mut usage_pct = 0u8;
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    for d in disks.iter() {
+        let d_name = d.name().to_string_lossy();
+        let mp = d.mount_point().to_string_lossy();
+        if d_name.contains(dev_name) || mp.contains(dev_name) || mp.starts_with("/run/media") || mp.starts_with("/media") {
+            let total = d.total_space();
+            let avail = d.available_space();
+            if total > 0 {
+                let used = total.saturating_sub(avail);
+                usage_pct = ((used as f64 / total as f64) * 100.0).round() as u8;
+            }
+        }
     }
 
     // Temperature from hwmon
@@ -1886,12 +1943,13 @@ fn probe_sysfs_disk_health(dev_name: &str) -> Option<DiskHealthInfo> {
         .map(|sec| (sec / 3600.0) as u64)
         .unwrap_or(24);
 
-    // Wear level: estimate based on written TBW against standard 300 TBW endurance rating
-    let wear_level_pct = ((written_tb / 300.0) * 100.0).clamp(1.0, 100.0) as u8;
+    let wear_level_pct = if is_removable { usage_pct } else { ((written_tb / 300.0) * 100.0).clamp(1.0, 100.0) as u8 };
     let critical_warnings = if temp_c >= 80.0 { 1 } else { 0 };
     let remaining_pct = 100u8.saturating_sub(wear_level_pct);
 
-    let health_status = if critical_warnings > 0 {
+    let health_status = if is_removable {
+        "HEALTHY (Removable)".to_string()
+    } else if critical_warnings > 0 {
         "CRITICAL".to_string()
     } else if wear_level_pct >= 90 || temp_c >= 70.0 {
         "WARNING".to_string()
