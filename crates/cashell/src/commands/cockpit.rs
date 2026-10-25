@@ -3267,33 +3267,61 @@ impl CockpitApp {
             active,
         };
 
+        // When renaming (edit mode and name changed), remove the old key first.
         if self.server_wizard_is_edit && self.server_wizard_orig_name != name {
-            // Rename: remove old key
             self.cfg.daemon.nodes.remove(&self.server_wizard_orig_name);
         }
+        // Preserve existing node config on edit (or insert new on add).
         self.cfg.daemon.nodes.insert(name.clone(), node_cfg);
-        if self.save_config_silent() {
+
+        if !self.save_config_silent() {
+            self.set_notification("✗ Gagal menyimpan konfigurasi ~/.config/cashell/config.toml");
             if let Some(ref d) = self.db {
-                let _ = d.register_node(&name, &name, &ip, "");
                 let _ = d.log_event(
-                    "INFO",
+                    "ERROR",
                     "cockpit",
-                    &format!("Fleet node '{}' registered via wizard", name),
+                    &format!(
+                        "Fleet node '{}' save failed: could not write ~/.config/cashell/config.toml",
+                        name
+                    ),
                 );
             }
+            return;
+        }
+
+        if let Some(ref d) = self.db {
+            let _ = d.register_node(&name, &name, &ip, "");
+            let _ = d.log_event(
+                "INFO",
+                "cockpit",
+                &format!(
+                    "Fleet node '{}' {} via wizard",
+                    name,
+                    if self.server_wizard_is_edit { "updated" } else { "registered" }
+                ),
+            );
         }
 
         // Auto-probe: refresh apps and probe ports
         self.apps = Self::init_apps(&self.cfg);
         self.probe_all_ports();
         self.probe_servers();
-        self.save_config_silent();
+
+        // Re-select the just-saved node so the UI immediately reflects its new IP/latency.
+        if let Some(pos) = self
+            .server_probe_results
+            .iter()
+            .position(|(n, _)| n == &name)
+        {
+            self.selected_server = pos;
+        }
 
         let action = if self.server_wizard_is_edit { "updated" } else { "added" };
         self.set_notification(format!(
             "✓ Fleet node '{}' {} and auto-probed",
             name, action
         ));
+        // Only close the wizard and clear buffers on a successful save.
         self.show_server_wizard = false;
         self.server_wizard_field = 0;
         self.server_name_buf.clear();
@@ -3348,6 +3376,17 @@ impl CockpitApp {
                     _ => ("100.x.y.z".to_string(), "root".to_string(), "http:80,ssh:22".to_string()),
                 }
             };
+            // Pre-populate self.cfg.daemon.nodes so this node is properly tracked as an existing config node.
+            let parsed_svcs = self.parse_services(&svcs);
+            self.cfg.daemon.nodes.insert(
+                server_name.clone(),
+                crate::config::NodeConfig {
+                    ip: ip.clone(),
+                    user: user.clone(),
+                    services: parsed_svcs,
+                    active: true,
+                },
+            );
             self.server_name_buf = server_name.clone();
             self.server_ip_buf = ip;
             self.server_user_buf = user;
@@ -5565,6 +5604,9 @@ fn handle_server_wizard_key(key: event::KeyEvent, app: &mut CockpitApp) {
             app.show_server_wizard = false;
         }
         KeyCode::Enter => {
+            app.submit_server_wizard();
+        }
+        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.submit_server_wizard();
         }
         KeyCode::Tab | KeyCode::Down => {
@@ -12743,58 +12785,76 @@ fn draw_server_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "Tab/Down: Next │ BackTab/Up: Prev │ Enter: Save │ Esc: Cancel",
+        "Tab/Down: Next │ BackTab/Up: Prev │ Enter/Ctrl+S: Save │ Esc: Cancel",
         Style::default().fg(Color::DarkGray),
     )));
-    lines.push(Line::from(""));
 
-    let btn_save = if is_edit {
-        Span::styled(
-            " [✔ Save Changes] (Enter) ",
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        )
+    let btn_save_str = if is_edit {
+        " [✔ Save Changes] (Enter) "
     } else {
-        Span::styled(
-            " [✔ Add Server] (Enter) ",
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        )
+        " [✔ Add Server] (Enter) "
     };
+    let btn_cancel_str = " [✖ Cancel] (Esc) ";
+
+    let btn_save = Span::styled(
+        btn_save_str,
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    );
     let btn_cancel = Span::styled(
-        " [✖ Cancel] (Esc) ",
+        btn_cancel_str,
         Style::default()
             .fg(Color::Black)
             .bg(Color::Red)
             .add_modifier(Modifier::BOLD),
     );
-    lines.push(Line::from(vec![btn_save, Span::raw("  "), btn_cancel]));
 
-    f.render_widget(Paragraph::new(lines), inner);
+    let btn_y = inner.bottom().saturating_sub(2);
+    let save_width = btn_save_str.chars().count() as u16;
+    let cancel_width = btn_cancel_str.chars().count() as u16;
+    let cancel_x = inner.x + save_width + 2;
 
-    let btn_y = inner.y + 8;
-    if btn_y < inner.bottom() {
+    if btn_y < inner.bottom() && btn_y >= inner.y {
         app.register_hitbox(
             Rect {
                 x: inner.x,
                 y: btn_y,
-                width: 24,
+                width: save_width,
                 height: 1,
             },
             HitboxAction::SubmitServer,
         );
         app.register_hitbox(
             Rect {
-                x: inner.x + 26,
+                x: cancel_x,
                 y: btn_y,
-                width: 18,
+                width: cancel_width,
                 height: 1,
             },
             HitboxAction::CancelServer,
+        );
+    }
+
+    f.render_widget(
+        Paragraph::new(lines),
+        Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(2),
+        },
+    );
+    if btn_y < inner.bottom() && btn_y >= inner.y {
+        f.render_widget(
+            Paragraph::new(Line::from(vec![btn_save, Span::raw("  "), btn_cancel])),
+            Rect {
+                x: inner.x,
+                y: btn_y,
+                width: inner.width,
+                height: 1,
+            },
         );
     }
 }
@@ -14561,6 +14621,73 @@ mod tests {
         let name = "worker-job";
         app.set_notification(format!("Terminated process {name} (PID {pid})"));
         assert_eq!(app.notification.as_ref().map(|(m, _)| m.as_str()), Some("Terminated process worker-job (PID 4321)"));
+    }
+
+    #[test]
+    fn test_fleet_server_edit_persistence_and_hitboxes() {
+        let mut app = CockpitApp::new(&Config::default());
+
+        // 1. Test editing a preset node (not initially in self.cfg.daemon.nodes)
+        assert!(!app.cfg.daemon.nodes.contains_key("pc-gerlink"));
+        app.server_probe_results = vec![("pc-gerlink".to_string(), Some(20u128))];
+        app.selected_server = 0;
+
+        app.open_edit_server_wizard();
+        assert!(app.show_server_wizard);
+        assert!(app.server_wizard_is_edit);
+        assert_eq!(app.server_wizard_orig_name, "pc-gerlink");
+        assert_eq!(app.server_name_buf, "pc-gerlink");
+        assert_eq!(app.server_ip_buf, "100.102.147.90");
+        // Verify pre-population of self.cfg.daemon.nodes
+        assert!(app.cfg.daemon.nodes.contains_key("pc-gerlink"));
+        assert_eq!(app.cfg.daemon.nodes["pc-gerlink"].ip, "100.102.147.90");
+
+        // 2. Modify IP & name
+        app.server_name_buf = "pc-gerlink-updated".to_string();
+        app.server_ip_buf = "100.102.147.99".to_string();
+
+        // 3. Test Ctrl+S shortcut to save
+        handle_server_wizard_key(
+            event::KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+            &mut app,
+        );
+
+        // Wizard should have closed and saved to daemon nodes
+        assert!(!app.show_server_wizard);
+        assert!(app.cfg.daemon.nodes.contains_key("pc-gerlink-updated"));
+        assert_eq!(app.cfg.daemon.nodes["pc-gerlink-updated"].ip, "100.102.147.99");
+        assert!(!app.cfg.daemon.nodes.contains_key("pc-gerlink"));
+
+        // 4. Test draw_server_wizard dynamic hitboxes
+        app.show_server_wizard = true;
+        app.server_wizard_is_edit = true;
+        app.server_wizard_orig_name = "pc-gerlink-updated".to_string();
+        let backend = ratatui::backend::TestBackend::new(80, 25);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                draw_server_wizard(f, &mut app, area);
+            })
+            .expect("draw server wizard");
+
+        let submit_hitbox = app
+            .hitboxes
+            .iter()
+            .find(|h| matches!(h.action, HitboxAction::SubmitServer))
+            .expect("submit server hitbox registered");
+        let cancel_hitbox = app
+            .hitboxes
+            .iter()
+            .find(|h| matches!(h.action, HitboxAction::CancelServer))
+            .expect("cancel server hitbox registered");
+
+        // [✔ Save Changes] (Enter) has length 26 chars
+        assert_eq!(submit_hitbox.rect.width, 26);
+        // Cancel should be placed after save width + 2 spacing
+        assert_eq!(cancel_hitbox.rect.x, submit_hitbox.rect.x + 28);
+        assert_eq!(cancel_hitbox.rect.width, 18);
+        assert_eq!(submit_hitbox.rect.y, cancel_hitbox.rect.y);
     }
 }
 pub(crate) fn noop() {}
