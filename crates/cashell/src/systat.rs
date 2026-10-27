@@ -224,6 +224,8 @@ pub struct UptimeMonitor {
     pub history: Vec<bool>,
     /// Group label (e.g. "Ecosystem", "Production", "Custom") used by the cockpit Uptime tab.
     pub group: String,
+    /// Root cause / error description when down (e.g. "Timeout", "Refused", "DNS Fail", or HTTP error code).
+    pub error: Option<String>,
 }
 
 /// Breakdown of traffic and landing stats for a specific CA product.
@@ -1338,7 +1340,7 @@ fn commit_compose_service(
 static UPTIME_HISTORY_STORE: Mutex<Option<std::collections::HashMap<String, Vec<bool>>>> = Mutex::new(None);
 static PREV_UPTIME_STATE: Mutex<Option<std::collections::HashMap<String, bool>>> = Mutex::new(None);
 
-type ProbeResult = (String, String, bool, Option<u64>, Option<u16>, String);
+type ProbeResult = (String, String, bool, Option<u64>, Option<u16>, String, Option<String>);
 
 pub fn send_telegram_alert(token: &str, chat_id: &str, message: &str) {
     let token = token.to_string();
@@ -1429,16 +1431,42 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
                     .build();
 
                 if let Ok(c) = client {
-                    if let Ok(res) = c.get(url).send() {
-                        let lat = start.elapsed().as_millis() as u64;
-                        let code = res.status().as_u16();
-                        let is_up = res.status().is_success() || res.status().is_redirection() || code == 404 || code == 401;
-                        return (name.to_string(), url.to_string(), is_up, Some(lat), Some(code), group.to_string());
+                    match c.get(url).send() {
+                        Ok(res) => {
+                            let lat = start.elapsed().as_millis() as u64;
+                            let code = res.status().as_u16();
+                            let is_up = res.status().is_success() || res.status().is_redirection() || code == 404 || code == 401;
+                            let err_msg = if !is_up {
+                                Some(format!("{code}"))
+                            } else {
+                                None
+                            };
+                            return (name.to_string(), url.to_string(), is_up, Some(lat), Some(code), group.to_string(), err_msg);
+                        }
+                        Err(err) => {
+                            let reason = if err.is_timeout() {
+                                "Timeout".to_string()
+                            } else if err.is_connect() {
+                                let err_str = err.to_string().to_lowercase();
+                                if err_str.contains("refused") {
+                                    "Refused".to_string()
+                                } else if err_str.contains("dns") || err_str.contains("resolve") || err_str.contains("name resolution") {
+                                    "DNS Fail".to_string()
+                                } else if err_str.contains("reset") {
+                                    "Reset".to_string()
+                                } else {
+                                    "Unreach".to_string()
+                                }
+                            } else {
+                                "Conn Err".to_string()
+                            };
+                            return (name.to_string(), url.to_string(), false, None, None, group.to_string(), Some(reason));
+                        }
                     }
                 }
-                (name.to_string(), url.to_string(), false, None, None, group.to_string())
+                (name.to_string(), url.to_string(), false, None, None, group.to_string(), Some("Client Err".to_string()))
             } else {
-                (name.to_string(), url.to_string(), false, None, None, group.to_string())
+                (name.to_string(), url.to_string(), false, None, None, group.to_string(), Some("Invalid URL".to_string()))
             }
         })
         .collect();
@@ -1465,10 +1493,14 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
                 let mut state_guard = PREV_UPTIME_STATE.lock().unwrap();
                 let prev_map = state_guard.get_or_insert_with(std::collections::HashMap::new);
 
-                for (name, url, is_up, latency_ms, status_code, _) in &probe_results {
+                for (name, url, is_up, latency_ms, status_code, _, error) in &probe_results {
                     if let Some(&prev_up) = prev_map.get(name) {
                         if prev_up && !*is_up {
-                            let code_str = status_code.map(|c| c.to_string()).unwrap_or_else(|| "Connection Error / Timeout".to_string());
+                            let code_str = match (status_code, error) {
+                                (Some(c), _) => format!("HTTP {c}"),
+                                (None, Some(err)) => format!("ERR: {err}"),
+                                (None, None) => "Connection Error / Timeout".to_string(),
+                            };
                             let time_str = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
                             let msg = format!(
                                 "🚨 *[CASHELL UPTIME ALERT]*\n❌ *Endpoint DOWN*: `{}`\n• URL: {}\n• Code: {}\n• Time: `{}`",
@@ -1496,7 +1528,7 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
     let store = store_guard.get_or_insert_with(std::collections::HashMap::new);
 
     let mut monitors = Vec::new();
-    for (name, url, is_up, latency_ms, status_code, group) in probe_results {
+    for (name, url, is_up, latency_ms, status_code, group, error) in probe_results {
         let hist = store.entry(name.clone()).or_insert_with(|| vec![true; 19]);
         hist.push(is_up);
         if hist.len() > 20 {
@@ -1515,6 +1547,7 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
             uptime_pct,
             history: hist.clone(),
             group,
+            error,
         });
     }
 

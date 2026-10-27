@@ -2033,6 +2033,7 @@ impl CockpitApp {
     }
 
     pub fn probe_all_ports(&mut self) {
+        self.latest_snap.uptime_monitors = crate::systat::probe_uptime_monitors();
         for app in &mut self.apps {
             if let Some(port) = app.port {
                 let target_ip = if app.target.starts_with("http") || app.target.starts_with("coolify:") {
@@ -3812,6 +3813,7 @@ impl CockpitApp {
                 uptime_pct: 100.0,
                 history: vec![true],
                 group: group.clone(),
+                error: None,
             });
         }
 
@@ -4207,6 +4209,7 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
                             uptime_pct: 100.0,
                             history: vec![true],
                             group: group.clone(),
+                            error: None,
                         });
                     }
 
@@ -7728,11 +7731,15 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     }
 
     // Check uptime endpoints down
-    let down_endpoints: Vec<(&str, Option<u16>, &str)> = snap.uptime_monitors.iter().filter(|m| !m.is_up).map(|m| (m.name.as_str(), m.status_code, m.target.as_str())).collect();
+    let down_endpoints: Vec<(&str, Option<u16>, &str, Option<&str>)> = snap.uptime_monitors.iter().filter(|m| !m.is_up).map(|m| (m.name.as_str(), m.status_code, m.target.as_str(), m.error.as_deref())).collect();
     if !down_endpoints.is_empty() {
         let alert_bg = Color::Rgb(48, 22, 28);
-        for (ep_name, code, ep_url) in down_endpoints.iter().take(2) {
-            let code_str = code.map(|c| format!("HTTP {c}")).unwrap_or_else(|| "TIMEOUT/REFUSED".to_string());
+        for (ep_name, code, ep_url, ep_err) in down_endpoints.iter().take(2) {
+            let code_str = match (code, ep_err) {
+                (Some(c), _) => format!("HTTP {c}"),
+                (None, Some(err)) => format!("ERR: {err}"),
+                (None, None) => "TIMEOUT/REFUSED".to_string(),
+            };
             let short_url = truncate_str(ep_url, 26);
             let mut item = vec![Span::styled(" [OUTAGE ALERT: ", Style::default().fg(Color::Rgb(235, 125, 135)).bg(alert_bg).add_modifier(Modifier::BOLD))];
             item.push(Span::styled(format!("{ep_name} "), Style::default().fg(Color::Rgb(245, 175, 135)).bg(alert_bg).add_modifier(Modifier::BOLD)));
@@ -8444,20 +8451,28 @@ fn draw_uptime_monitors_resume_panel(
         let (status_label, status_col) = if m.is_up {
             ("● UP", palette.status_ok)
         } else {
-            ("[DOWN] DOWN", Color::LightRed)
+            ("✖ DOWN", Color::LightRed)
         };
 
         let http_code = match m.status_code {
             Some(c) if (200..=299).contains(&c) => format!("{c} OK"),
             Some(c) if (300..=399).contains(&c) => format!("{c} REDIR"),
             Some(401) => "401 AUTH".to_string(),
-            Some(403) => "403 FORBIDDEN".to_string(),
+            Some(403) => "403 FORBID".to_string(),
             Some(404) if m.is_up => "404 UP".to_string(),
             Some(404) => "404 NOT FOUND".to_string(),
             Some(c) if (500..=599).contains(&c) => format!("{c} ERR"),
             Some(c) if m.is_up => format!("{c} UP"),
-            Some(c) => format!("{c}"),
-            None => "--".to_string(),
+            Some(c) => format!("{c} ERR"),
+            None => {
+                if let Some(ref err) = m.error {
+                    format!("ERR: {err}")
+                } else if !m.is_up {
+                    "ERR: Down".to_string()
+                } else {
+                    "--".to_string()
+                }
+            }
         };
         let rtt_str = m.latency_ms.map(|ms| format!("{ms}ms")).unwrap_or_else(|| "--".to_string());
 
@@ -8474,7 +8489,7 @@ fn draw_uptime_monitors_resume_panel(
         let history_len = m.history.len();
         let pad_needed = 20usize.saturating_sub(history_len);
         for _ in 0..pad_needed {
-            sparkline_spans.push(Span::styled("❚", Style::default().fg(Color::DarkGray)));
+            sparkline_spans.push(Span::styled("█", Style::default().fg(Color::Rgb(60, 60, 60))));
         }
         for &up in m.history.iter().take(20) {
             let col = if up {
@@ -8486,9 +8501,9 @@ fn draw_uptime_monitors_resume_panel(
             } else {
                 Color::LightRed
             };
-            sparkline_spans.push(Span::styled("❚", Style::default().fg(col)));
+            sparkline_spans.push(Span::styled("█", Style::default().fg(col)));
         }
-        sparkline_spans.push(Span::styled(format!("] {:.0}%", m.uptime_pct), Style::default().fg(spark_col)));
+        sparkline_spans.push(Span::styled(format!("] {:>3.0}%", m.uptime_pct), Style::default().fg(spark_col)));
 
         let is_down = !m.is_up;
         let row_bg = if is_down { Some(Color::Rgb(46, 22, 28)) } else { None };
@@ -8503,8 +8518,16 @@ fn draw_uptime_monitors_resume_panel(
             s
         };
 
+        let endpoint_spans = vec![
+            Span::styled(&m.name, cell_style(if is_down { Color::LightRed } else { Color::White }, true)),
+            Span::styled(
+                format!(" ({})", m.target),
+                cell_style(if is_down { Color::Rgb(200, 140, 140) } else { palette.chart_cpu }, false),
+            ),
+        ];
+
         rows.push(Row::new(vec![
-            Cell::from(m.name.clone()).style(cell_style(if is_down { Color::LightRed } else { Color::White }, true)),
+            Cell::from(Line::from(endpoint_spans)),
             Cell::from(status_label).style(cell_style(status_col, true)),
             Cell::from(http_code).style(cell_style(if is_down { Color::LightRed } else { palette.chart_cpu }, false)),
             Cell::from(rtt_str).style(cell_style(palette.text, false)),
@@ -8533,18 +8556,18 @@ fn draw_uptime_monitors_resume_panel(
     let table = Table::new(
         rows,
         [
-            Constraint::Length(22),
-            Constraint::Length(10),
-            Constraint::Length(12),
-            Constraint::Length(10),
             Constraint::Min(26),
+            Constraint::Length(9),
+            Constraint::Length(14),
+            Constraint::Length(8),
+            Constraint::Length(28),
         ],
     )
     .header(
         Row::new(vec![
             "MONITOR ENDPOINT",
             "STATUS",
-            "HTTP CODE",
+            "HTTP / ERR",
             "RTT",
             "HEARTBEAT HISTORY (20)",
         ])
@@ -9458,39 +9481,63 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 .latency_ms
                 .map(|l| format!("{l}ms"))
                 .unwrap_or_else(|| "--".to_string());
-            let code_str = m
-                .status_code
-                .map(|c| {
-                    if (200..=299).contains(&c) {
-                        format!("{c} OK")
+            let code_str = match m.status_code {
+                Some(c) if (200..=299).contains(&c) => format!("{c} OK"),
+                Some(c) if (300..=399).contains(&c) => format!("{c} REDIR"),
+                Some(401) => "401 AUTH".to_string(),
+                Some(403) => "403 FORBID".to_string(),
+                Some(404) if m.is_up => "404 UP".to_string(),
+                Some(404) => "404 NOT FOUND".to_string(),
+                Some(c) if (500..=599).contains(&c) => format!("{c} ERR"),
+                Some(c) if m.is_up => format!("{c} UP"),
+                Some(c) => format!("{c} ERR"),
+                None => {
+                    if let Some(ref err) = m.error {
+                        format!("ERR: {err}")
+                    } else if !m.is_up {
+                        "ERR: Down".to_string()
                     } else {
-                        c.to_string()
+                        "--".to_string()
                     }
-                })
-                .unwrap_or_else(|| "--".to_string());
+                }
+            };
+            let code_color = if !m.is_up {
+                palette.status_err
+            } else if m.status_code.map(|c| (200..=299).contains(&c)).unwrap_or(false) {
+                palette.chart_cpu
+            } else {
+                palette.status_warn
+            };
 
-            let history_spans: Vec<Span> = m
-                .history
-                .iter()
-                .map(|&up| {
-                    if up {
-                        Span::styled("█", Style::default().fg(Color::Green))
+            let mut history_spans: Vec<Span> = Vec::with_capacity(20);
+            let pad_needed = 20usize.saturating_sub(m.history.len());
+            for _ in 0..pad_needed {
+                history_spans.push(Span::styled("█", Style::default().fg(Color::Rgb(60, 60, 60))));
+            }
+            for &up in m.history.iter().take(20) {
+                let col = if up {
+                    if let Some(ms) = m.latency_ms {
+                        if ms > 500 { Color::Yellow } else { Color::Green }
                     } else {
-                        Span::styled("█", Style::default().fg(Color::Red))
+                        Color::Green
                     }
-                })
-                .collect();
+                } else {
+                    Color::Red
+                };
+                history_spans.push(Span::styled("█", Style::default().fg(col)));
+            }
 
             let eye_span = Span::styled("[V]", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
 
             Row::new(vec![
                 Cell::from(format!("{i:>3}")).style(Style::default().fg(palette.text_muted).add_modifier(Modifier::BOLD)),
-                Cell::from(m.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Cell::from(m.name.clone()).style(Style::default().fg(if !m.is_up { Color::LightRed } else { Color::White }).add_modifier(Modifier::BOLD)),
+                Cell::from(m.target.clone()).style(Style::default().fg(Color::Cyan)),
                 Cell::from(m.group.clone()).style(Style::default().fg(palette.text_muted)),
                 Cell::from(status_badge).style(Style::default().fg(badge_color).add_modifier(Modifier::BOLD)),
                 Cell::from(latency_str).style(Style::default().fg(palette.accent)),
                 Cell::from(Line::from(history_spans)),
-                Cell::from(code_str).style(Style::default().fg(palette.status_warn)),
+                Cell::from(code_str).style(Style::default().fg(code_color).add_modifier(Modifier::BOLD)),
                 Cell::from(Line::from(vec![eye_span])),
             ])
             .style(Style::default().bg(bg))
@@ -9501,12 +9548,13 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         rows,
         [
             Constraint::Length(4),
-            Constraint::Length(16),
+            Constraint::Length(18),
+            Constraint::Min(26),
             Constraint::Length(14),
             Constraint::Length(16),
             Constraint::Length(9),
             Constraint::Length(22),
-            Constraint::Length(9),
+            Constraint::Length(14),
             Constraint::Length(4),
         ],
     )
@@ -9514,11 +9562,12 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         Row::new(vec![
             "#",
             "MONITOR",
+            "TARGET URL",
             "GROUP",
             "STATUS",
             "LATENCY",
             "HEARTBEATS (20)",
-            "CODE",
+            "HTTP / ERR",
             "⊕",
         ])
         .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
@@ -9581,17 +9630,23 @@ fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ])
         .split(inner);
 
-    let history_spans: Vec<Span> = monitor
-        .history
-        .iter()
-        .map(|&up| {
-            if up {
-                Span::styled("█", Style::default().fg(Color::Green))
+    let mut history_spans: Vec<Span> = Vec::with_capacity(20);
+    let pad_needed = 20usize.saturating_sub(monitor.history.len());
+    for _ in 0..pad_needed {
+        history_spans.push(Span::styled("█", Style::default().fg(Color::Rgb(60, 60, 60))));
+    }
+    for &up in monitor.history.iter().take(20) {
+        let col = if up {
+            if let Some(ms) = monitor.latency_ms {
+                if ms > 500 { Color::Yellow } else { Color::Green }
             } else {
-                Span::styled("█", Style::default().fg(Color::Red))
+                Color::Green
             }
-        })
-        .collect();
+        } else {
+            Color::Red
+        };
+        history_spans.push(Span::styled("█", Style::default().fg(col)));
+    }
 
     let status_label = if monitor.is_up {
         Span::styled("● UP (Healthy)", Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD))
@@ -9605,8 +9660,19 @@ fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     };
 
     let code_span = match monitor.status_code {
-        Some(c) => Span::styled(c.to_string(), Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
-        None => Span::styled("--".to_string(), Style::default().fg(Color::DarkGray)),
+        Some(c) => {
+            let col = if monitor.is_up { palette.status_ok } else { palette.status_err };
+            Span::styled(c.to_string(), Style::default().fg(col).add_modifier(Modifier::BOLD))
+        }
+        None => {
+            if let Some(ref err) = monitor.error {
+                Span::styled(format!("ERR: {err}"), Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD))
+            } else if !monitor.is_up {
+                Span::styled("ERR: Down".to_string(), Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD))
+            } else {
+                Span::styled("--".to_string(), Style::default().fg(Color::DarkGray))
+            }
+        }
     };
 
     let alert_state = if app.cfg.uptime.telegram_alerts_enabled {
@@ -9622,7 +9688,7 @@ fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         Span::styled(" [⚠ NO BOT TOKEN SET — open Settings (-) tab]", Style::default().fg(Color::Yellow))
     };
 
-    let lines = vec![
+    let mut lines = vec![
         Line::from(""),
         Line::from(vec![
             Span::styled("Endpoint:     ", Style::default().fg(palette.text_muted)),
@@ -9646,6 +9712,18 @@ fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             Span::styled("HTTP Code: ", Style::default().fg(palette.text_muted)),
             code_span,
         ]),
+    ];
+
+    if let Some(ref err) = monitor.error {
+        if !monitor.is_up {
+            lines.push(Line::from(vec![
+                Span::styled("Failure Cause: ", Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("ERR: {err}"), Style::default().fg(Color::LightRed)),
+            ]));
+        }
+    }
+
+    lines.extend([
         Line::from(vec![
             Span::styled("Uptime Rate:  ", Style::default().fg(palette.text_muted)),
             Span::styled(format!("{:.1}%", monitor.uptime_pct), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
@@ -9661,7 +9739,7 @@ fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             alert_state,
             token_status,
         ]),
-    ];
+    ]);
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), modal_chunks[0]);
 
     // Bottom Action Button Toolbar inside modal
@@ -14419,6 +14497,7 @@ mod tests {
             uptime_pct: 100.0,
             history: vec![],
             group: "Test".to_string(),
+            error: None,
         });
         app.selected_monitor = app.latest_snap.uptime_monitors.len() - 1;
         app.remove_selected_monitor();
@@ -14730,6 +14809,122 @@ mod tests {
         assert_eq!(cancel_hitbox.rect.x, submit_hitbox.rect.x + 28);
         assert_eq!(cancel_hitbox.rect.width, 18);
         assert_eq!(submit_hitbox.rect.y, cancel_hitbox.rect.y);
+    }
+
+    #[test]
+    fn test_uptime_monitors_display_and_glyphs() {
+        let mut app = CockpitApp::new(&Config::default());
+        app.latest_snap.uptime_monitors = vec![
+            crate::systat::UptimeMonitor {
+                name: "CATable".to_string(),
+                target: "https://catable.fathforce.com/".to_string(),
+                is_up: true,
+                latency_ms: Some(42),
+                status_code: Some(200),
+                uptime_pct: 100.0,
+                history: vec![true; 20],
+                group: "CA Ecosystem".to_string(),
+                error: None,
+            },
+            crate::systat::UptimeMonitor {
+                name: "Broken API".to_string(),
+                target: "https://api.broken.internal/".to_string(),
+                is_up: false,
+                latency_ms: None,
+                status_code: None,
+                uptime_pct: 85.0,
+                history: vec![true, true, false],
+                group: "Internal".to_string(),
+                error: Some("Timeout".to_string()),
+            },
+            crate::systat::UptimeMonitor {
+                name: "502 Gateway".to_string(),
+                target: "https://badgw.internal/".to_string(),
+                is_up: false,
+                latency_ms: Some(120),
+                status_code: Some(502),
+                uptime_pct: 70.0,
+                history: vec![false; 5],
+                group: "Internal".to_string(),
+                error: Some("502".to_string()),
+            },
+        ];
+
+        let backend = ratatui::backend::TestBackend::new(140, 45);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        // 1. Test resume panel rendering
+        let palette = ThemePalette::get(&app.cfg.output.theme);
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                draw_uptime_monitors_resume_panel(f, &mut app, area, &palette, 0, false);
+            })
+            .expect("draw uptime resume panel");
+
+        let buffer = terminal.backend().buffer().clone();
+        let content: String = (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Target URL and failure reasons visible
+        assert!(content.contains("https://catable.fathforce.com/"));
+        assert!(content.contains("ERR: Timeout"));
+        assert!(content.contains("502 ERR"));
+        // Glyph is solid block █ (U+2588) and not ❚ (U+275E)
+        assert!(content.contains('█'));
+        assert!(!content.contains('❚'));
+
+        // 2. Test uptime tab rendering
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                draw_uptime_tab(f, &mut app, area);
+            })
+            .expect("draw uptime tab");
+
+        let tab_buf = terminal.backend().buffer().clone();
+        let tab_content: String = (0..tab_buf.area.height)
+            .map(|y| {
+                (0..tab_buf.area.width)
+                    .map(|x| tab_buf[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(tab_content.contains("TARGET URL"));
+        assert!(tab_content.contains("https://catable.fathforce."));
+        assert!(tab_content.contains("ERR: Timeout"));
+        assert!(tab_content.contains('█'));
+
+        // 3. Test detail modal rendering
+        app.uptime_detail_index = 1;
+        app.show_uptime_detail_modal = true;
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                draw_uptime_detail_modal(f, &mut app, area);
+            })
+            .expect("draw detail modal");
+
+        let modal_buf = terminal.backend().buffer().clone();
+        let modal_content: String = (0..modal_buf.area.height)
+            .map(|y| {
+                (0..modal_buf.area.width)
+                    .map(|x| modal_buf[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(modal_content.contains("Failure Cause:"));
+        assert!(modal_content.contains("ERR: Timeout"));
     }
 }
 pub(crate) fn noop() {}
