@@ -138,6 +138,10 @@ fn main() -> Result<()> {
             banner::print(args.quiet);
             commands::analytics::run(&cmd)?;
         }
+        Some(Commands::Reset(cmd)) => {
+            banner::print(args.quiet);
+            commands::reset::run(&cmd)?;
+        }
     }
     Ok(())
 }

@@ -2,7 +2,8 @@
 
 use crate::commands::{
     auth::AuthCommand, chat::ChatCommand, cockpit::CockpitCommand, config::ConfigCommand,
-    daemon::DaemonCommand, product::ProductCommand, project::ProjectCommand, server::ServerCommand,
+    daemon::DaemonCommand, product::ProductCommand, project::ProjectCommand, reset::ResetCommand,
+    server::ServerCommand,
 };
 use clap::{Parser, Subcommand};
 #[derive(Parser, Debug)]
@@ -93,6 +94,9 @@ pub enum Commands {
 
     /// View sovereign web analytics & traffic summary across CA ecosystem sites
     Analytics(crate::commands::analytics::AnalyticsCommand),
+
+    /// Factory reset: wipe all data (config, database, cache)
+    Reset(ResetCommand),
 }
 
 // ── Pro Command CLI types ────────────────────────────────────────────────────

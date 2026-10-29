@@ -17,6 +17,7 @@ pub mod product_new;
 pub mod project;
 pub mod pro;
 pub mod r2;
+pub mod reset;
 pub mod review;
 pub mod server;
 pub mod uptime;

@@ -800,13 +800,10 @@ pub struct CockpitApp {
     pub is_compact: bool,
     pub overview_proc_scroll: usize,
 
-    // Dashboard panel focus (which of the 6 dashboard panels receives scrolling/focus)
+    // Dashboard panel focus (which of the 3 dashboard panels receives scrolling/focus)
     pub dashboard_focused_panel: usize,
-    pub dashboard_fleet_scroll: usize,
     pub dashboard_services_scroll: usize,
     pub dashboard_containers_scroll: usize,
-    pub dashboard_monitors_scroll: usize,
-    pub dashboard_analytics_scroll: usize,
     pub dashboard_proc_selected: usize,
     pub dashboard_proc_scroll: usize,
 
@@ -1070,12 +1067,9 @@ impl CockpitApp {
             notification: None,
             is_compact: false,
             overview_proc_scroll: 0,
-            dashboard_focused_panel: 2, // Default focus on Containers
-            dashboard_fleet_scroll: 0,
+            dashboard_focused_panel: 1, // Default focus on Containers
             dashboard_services_scroll: 0,
             dashboard_containers_scroll: 0,
-            dashboard_monitors_scroll: 0,
-            dashboard_analytics_scroll: 0,
             dashboard_proc_selected: 0,
             dashboard_proc_scroll: 0,
 
@@ -7849,12 +7843,8 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         let monitors_scroll = app.dashboard_monitors_scroll;
         let analytics_scroll = app.dashboard_analytics_scroll;
         let proc_selected = app.dashboard_proc_selected;
-
-        draw_fleet_nodes_resume_panel(f, app, upper_cols[0], &palette, fleet_scroll, fleet_focused);
         draw_services_health_resume_panel(f, app, upper_cols[1], &palette, services_scroll, services_focused);
         draw_docker_containers_resume_panel(f, app, middle_cols[0], &palette, containers_scroll, containers_focused);
-        draw_uptime_monitors_resume_panel(f, app, middle_cols[1], &palette, monitors_scroll, monitors_focused);
-        draw_web_analytics_resume_panel(f, app, lower_cols[0], &palette, analytics_scroll, analytics_focused);
         draw_host_top_processes_panel(f, app, lower_cols[1], &palette, proc_selected, procs_focused);
     } else {
         // Compact view: switch between Upper, Middle, and Lower panels
@@ -7869,17 +7859,14 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         if app.dashboard_focused_panel <= 1 {
             let fleet_scroll = app.dashboard_fleet_scroll;
             let services_scroll = app.dashboard_services_scroll;
-            draw_fleet_nodes_resume_panel(f, app, cols[0], &palette, fleet_scroll, app.dashboard_focused_panel == 0);
             draw_services_health_resume_panel(f, app, cols[1], &palette, services_scroll, app.dashboard_focused_panel == 1);
         } else if app.dashboard_focused_panel <= 3 {
             let containers_scroll = app.dashboard_containers_scroll;
             let monitors_scroll = app.dashboard_monitors_scroll;
             draw_docker_containers_resume_panel(f, app, cols[0], &palette, containers_scroll, app.dashboard_focused_panel == 2);
-            draw_uptime_monitors_resume_panel(f, app, cols[1], &palette, monitors_scroll, app.dashboard_focused_panel == 3);
         } else {
             let analytics_scroll = app.dashboard_analytics_scroll;
             let proc_selected = app.dashboard_proc_selected;
-            draw_web_analytics_resume_panel(f, app, cols[0], &palette, analytics_scroll, app.dashboard_focused_panel == 4);
             draw_host_top_processes_panel(f, app, cols[1], &palette, proc_selected, app.dashboard_focused_panel == 5);
         }
     }
