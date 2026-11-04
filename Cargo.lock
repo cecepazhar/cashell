@@ -282,6 +282,7 @@ dependencies = [
  "axum",
  "base64ct",
  "cashell-common",
+ "catui",
  "chrono",
  "clap",
  "colored",
@@ -326,6 +327,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dec551ab6e7578819132c713a93c022a05d60159dc86e7a7050223577484c55a"
 dependencies = [
  "rustversion",
+]
+
+[[package]]
+name = "catui"
+version = "0.1.0"
+source = "git+https://github.com/cecepazhar/catui?branch=main#8f3106c83f731c6d0f27e9438c45fa0fac858837"
+dependencies = [
+ "crossterm",
+ "ratatui",
+ "serde_json",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]
