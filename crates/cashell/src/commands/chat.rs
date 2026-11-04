@@ -17,13 +17,8 @@ use crate::config::Config;
 use crate::systat::{snapshot, SysSnapshot};
 use anyhow::Result;
 use clap::Parser;
-use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::{
-    backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     symbols,
@@ -35,7 +30,6 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::collections::VecDeque;
-use std::io::stdout;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
@@ -155,43 +149,8 @@ impl ChatApp {
     }
 }
 
-// ── Terminal Guard (RAII + Panic safety) ──────────────────────────────────────
-
-struct TermGuard;
-
-impl TermGuard {
-    fn new() -> Result<Self> {
-        enable_raw_mode()?;
-        let mut out = stdout();
-        execute!(out, EnterAlternateScreen, event::EnableMouseCapture)?;
-
-        // ponytail: global panic hook restores terminal before printing panic trace.
-        let prev = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            restore_terminal_raw();
-            prev(info);
-        }));
-
-        Ok(Self)
-    }
-}
-
-impl Drop for TermGuard {
-    fn drop(&mut self) {
-        restore_terminal_raw();
-    }
-}
-
-fn restore_terminal_raw() {
-    let mut out = stdout();
-    let _ = execute!(
-        out,
-        event::DisableMouseCapture,
-        LeaveAlternateScreen,
-        crossterm::cursor::Show
-    );
-    let _ = disable_raw_mode();
-}
+// Terminal setup/teardown: `catui::terminal::TerminalSession` (raw mode, alt
+// screen, mouse, panic-safe restore).
 
 // ── Run Entry Point ──────────────────────────────────────────────────────────
 
@@ -209,9 +168,12 @@ pub fn run(_cmd: &ChatCommand, cfg: &Config) -> Result<()> {
         }
     }
 
-    let _guard = TermGuard::new()?;
-    let backend = CrosstermBackend::new(stdout());
-    let mut terminal = Terminal::new(backend)?;
+    let mut session = catui::terminal::TerminalSession::enter(catui::terminal::TerminalOptions {
+        mouse: true,
+        bracketed_paste: false,
+        alternate_screen: true,
+    })?;
+    let terminal = &mut session.terminal;
 
     // ── Background stats thread (500ms loop) ─────────────────────────────────
     let running = Arc::new(AtomicBool::new(true));
@@ -234,7 +196,7 @@ pub fn run(_cmd: &ChatCommand, cfg: &Config) -> Result<()> {
         }
     });
 
-    let res = event_loop(&mut terminal, &mut app, cfg, &mut snap_rx);
+    let res = event_loop(terminal, &mut app, cfg, &mut snap_rx);
 
     // Stop background worker cleanly
     running.store(false, Ordering::Relaxed);

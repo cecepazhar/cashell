@@ -14,11 +14,10 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     style::Print,
-    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
+    terminal::{Clear, ClearType},
 };
 use std::collections::VecDeque;
 use std::io::{stdout, Write};
-use std::panic;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
@@ -42,40 +41,16 @@ pub enum Ev {
     Finished,
 }
 
-// ── Terminal guard (RAII + panic-safe) ──────────────────────────────────────
-
-struct TermGuard;
-
-impl TermGuard {
-    fn new() -> Result<Self> {
-        enable_raw_mode()?;
-        execute!(stdout(), cursor::Hide)?;
-        restore_now();
-        let prev = panic::take_hook();
-        // ponytail: hook not uninstalled on Drop — the audit command is the
-        // last thing main() runs. Upgrade: store an id and swap back in Drop.
-        panic::set_hook(Box::new(move |info| {
-            restore_now();
-            prev(info);
-        }));
-        Ok(Self)
-    }
-}
-
-impl Drop for TermGuard {
-    fn drop(&mut self) {
-        restore_now();
-    }
-}
-
-fn restore_now() {
-    let _ = execute!(stdout(), cursor::Show);
-    let _ = disable_raw_mode();
-}
+// ── Terminal guard ───────────────────────────────────────────────────────────
+// `catui::terminal::InlineGuard`: raw mode + hidden cursor for the lifetime of
+// the live block (so Ctrl+C arrives as a key event and cancels cleanly),
+// restored on return, Ctrl+C, and panic. Previously the local guard called
+// `restore_now()` right after enabling raw mode, which turned raw mode off
+// again and let Ctrl+C kill the process instead of cancelling.
 
 // ── Live progress state ─────────────────────────────────────────────────────
 
-const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const SPINNER: [&str; 10] = catui::widgets::Spinner::FRAMES;
 
 struct State {
     workers: usize,
@@ -164,7 +139,7 @@ pub fn run_live(
     total: usize,
     cancel: &Arc<AtomicBool>,
 ) -> Result<()> {
-    let _guard = TermGuard::new()?;
+    let _guard = catui::terminal::InlineGuard::enter(true)?;
     let mut st = State::new(jobs, total);
     let mut lines = 0usize;
     let mut last_draw = Instant::now() - Duration::from_secs(1);
