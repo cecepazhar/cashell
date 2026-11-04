@@ -16,22 +16,17 @@ use crate::config::Config;
 use crate::systat::{snapshot, AnalyticSiteItem, CpuCoreInfo, SysSnapshot};
 use anyhow::Result;
 use clap::Parser;
-use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
+use crossterm::event::{self, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::{
-    backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Clear, Gauge, List, ListItem, ListState, Paragraph, Row, Table, Tabs, Wrap},
+    widgets::{Block, Borders, Cell, Clear, Gauge, List, ListItem, ListState, Paragraph, Row, Table, Wrap},
     Frame, Terminal,
 };
+use catui::layout::centered_rect;
 use std::collections::VecDeque;
 use std::fs;
-use std::io::stdout;
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -44,127 +39,32 @@ pub struct CockpitCommand;
 
 // ── Theme Palettes (High Contrast & Adaptive Presets) ───────────────────────
 
+/// Theme choices in the Setting tab: every CATUI preset, CAShell's
+/// historical default first. Legacy config names are resolved by
+/// `catui::ThemePreset::parse`, so old configs keep their theme.
 pub const THEME_OPTIONS: &[&str] = &[
     "ca-classic",
-    "cad-cyberpunk",
+    "ca-dark",
+    "ca-light",
+    "cyberpunk",
     "tokyo-night",
     "monokai",
     "nord",
+    "one-dark",
+    "midnight",
     "high-contrast",
 ];
 
-#[derive(Debug, Clone, Copy)]
-pub struct ThemePalette {
-    pub name: &'static str,
-    pub border: Color,
-    pub accent: Color,
-    pub highlight_bg: Color,
-    pub highlight_fg: Color,
-    pub text: Color,
-    pub text_muted: Color,
-    pub chart_cpu: Color,
-    pub chart_ram: Color,
-    pub status_ok: Color,
-    pub status_warn: Color,
-    pub status_err: Color,
-    pub row_selected_bg: Color,
-}
-
-impl ThemePalette {
-    pub fn get(name: &str) -> Self {
-        match name {
-            "cad-cyberpunk" => Self {
-                name: "cad-cyberpunk",
-                border: Color::Rgb(0, 240, 255),       // Neon Cyan
-                accent: Color::Rgb(255, 0, 128),       // Neon Magenta
-                highlight_bg: Color::Rgb(0, 240, 255), // Cyan
-                highlight_fg: Color::Rgb(0, 0, 0),     // Dark Contrast
-                text: Color::Rgb(220, 235, 245),
-                text_muted: Color::Rgb(90, 110, 130),
-                chart_cpu: Color::Rgb(0, 240, 255),
-                chart_ram: Color::Rgb(255, 0, 128),
-                status_ok: Color::Rgb(0, 255, 136),    // Neon Green
-                status_warn: Color::Rgb(255, 170, 0),  // Neon Amber
-                status_err: Color::Rgb(245, 115, 140), // Pastel Neon Rose
-                row_selected_bg: Color::Rgb(20, 30, 45),
-            },
-            "tokyo-night" => Self {
-                name: "tokyo-night",
-                border: Color::Rgb(122, 162, 247),
-                accent: Color::Rgb(187, 154, 247),
-                highlight_bg: Color::Rgb(122, 162, 247),
-                highlight_fg: Color::Rgb(0, 0, 0),
-                text: Color::Rgb(192, 202, 245),
-                text_muted: Color::Rgb(86, 95, 137),
-                chart_cpu: Color::Rgb(122, 162, 247),
-                chart_ram: Color::Rgb(187, 154, 247),
-                status_ok: Color::Rgb(158, 206, 106),
-                status_warn: Color::Rgb(224, 175, 104),
-                status_err: Color::Rgb(247, 135, 155), // Tokyo Pastel Rose
-                row_selected_bg: Color::Rgb(41, 46, 66),
-            },
-            "monokai" => Self {
-                name: "monokai",
-                border: Color::Rgb(249, 38, 114),
-                accent: Color::Rgb(166, 226, 46),
-                highlight_bg: Color::Rgb(253, 151, 31),
-                highlight_fg: Color::Rgb(0, 0, 0),
-                text: Color::Rgb(248, 248, 242),
-                text_muted: Color::Rgb(117, 113, 94),
-                chart_cpu: Color::Rgb(102, 217, 239),
-                chart_ram: Color::Rgb(166, 226, 46),
-                status_ok: Color::Rgb(166, 226, 46),
-                status_warn: Color::Rgb(230, 219, 116),
-                status_err: Color::Rgb(245, 120, 145), // Pastel Monokai Coral
-                row_selected_bg: Color::Rgb(62, 61, 50),
-            },
-            "nord" => Self {
-                name: "nord",
-                border: Color::Rgb(136, 192, 208),
-                accent: Color::Rgb(129, 161, 193),
-                highlight_bg: Color::Rgb(136, 192, 208),
-                highlight_fg: Color::Rgb(0, 0, 0),
-                text: Color::Rgb(236, 239, 244),
-                text_muted: Color::Rgb(76, 86, 106),
-                chart_cpu: Color::Rgb(136, 192, 208),
-                chart_ram: Color::Rgb(180, 142, 173),
-                status_ok: Color::Rgb(163, 190, 140),
-                status_warn: Color::Rgb(235, 203, 139),
-                status_err: Color::Rgb(215, 125, 135), // Nordic Aurora Rose
-                row_selected_bg: Color::Rgb(46, 52, 64),
-            },
-            "high-contrast" => Self {
-                name: "high-contrast",
-                border: Color::White,
-                accent: Color::Yellow,
-                highlight_bg: Color::Yellow,
-                highlight_fg: Color::Rgb(0, 0, 0),
-                text: Color::White,
-                text_muted: Color::Gray,
-                chart_cpu: Color::Yellow,
-                chart_ram: Color::Cyan,
-                status_ok: Color::Green,
-                status_warn: Color::Yellow,
-                status_err: Color::Rgb(245, 135, 125), // Pastel Salmon Red
-                row_selected_bg: Color::Rgb(50, 50, 50),
-            },
-            _ => Self {
-                name: "ca-classic",
-                border: Color::Cyan,
-                accent: Color::Cyan,
-                highlight_bg: Color::Cyan,
-                highlight_fg: Color::Rgb(0, 0, 0),
-                text: Color::White,
-                text_muted: Color::DarkGray,
-                chart_cpu: Color::Cyan,
-                chart_ram: Color::Rgb(180, 100, 255),
-                status_ok: Color::Green,
-                status_warn: Color::Yellow,
-                status_err: Color::Rgb(238, 128, 120), // Soft Retro Coral
-                row_selected_bg: Color::Rgb(30, 45, 70),
-            },
-        }
-    }
+/// Resolve the cockpit theme from CATUI (shared CA Family theme).
+/// Legacy names (`ca-classic`, `cad-cyberpunk`, `tokyo-night`, `monokai`,
+/// `nord`, `high-contrast`) keep working; unknown names fall back to
+/// `ca-classic`, CAShell's historical default.
+pub fn cockpit_theme(name: &str) -> catui::Theme {
+    static DEPTH: std::sync::OnceLock<catui::ColorDepth> = std::sync::OnceLock::new();
+    let depth = *DEPTH.get_or_init(catui::ColorDepth::detect);
+    catui::Theme::from_name_or(name, catui::ThemePreset::CaClassic)
+        .for_app("cashell")
+        .adapt(depth)
 }
 
 // ── Mouse Hitboxes ──────────────────────────────────────────────────────────
@@ -318,11 +218,8 @@ pub enum HitboxAction {
     AuditPrevProject,
 }
 
-#[derive(Debug, Clone)]
-pub struct Hitbox {
-    pub rect: Rect,
-    pub action: HitboxAction,
-}
+/// Mouse hitboxes now live in CATUI (`catui::hitbox`).
+pub use catui::hitbox::Hitbox;
 
 // ── Delete Confirmation Target ───────────────────────────────────────────────
 
@@ -703,7 +600,7 @@ pub struct CockpitApp {
     pub current_tab: CockpitTab,
     pub db: Option<crate::db::Database>,
     pub show_help_modal: bool,
-    pub hitboxes: Vec<Hitbox>,
+    pub hitboxes: catui::hitbox::HitboxRegistry<HitboxAction>,
 
     // Telemetry (Overview)
     pub cpu_history: VecDeque<f32>,
@@ -983,7 +880,7 @@ impl CockpitApp {
             current_tab: CockpitTab::Dashboard,
             db,
             show_help_modal: false,
-            hitboxes: Vec::new(),
+            hitboxes: catui::hitbox::HitboxRegistry::new(),
             cpu_history,
             ram_history,
             latest_snap: snap,
@@ -2127,19 +2024,12 @@ impl CockpitApp {
     }
 
     pub fn register_hitbox(&mut self, rect: Rect, action: HitboxAction) {
-        if rect.width > 0 && rect.height > 0 {
-            self.hitboxes.push(Hitbox { rect, action });
-        }
+        self.hitboxes.register(rect, action);
     }
 
+    /// Topmost (last registered, e.g. a modal) hitbox wins — see `catui::hitbox`.
     pub fn find_hitbox(&self, col: u16, row: u16) -> Option<HitboxAction> {
-        let pos = Position { x: col, y: row };
-        for hb in &self.hitboxes {
-            if hb.rect.contains(pos) {
-                return Some(hb.action.clone());
-            }
-        }
-        None
+        self.hitboxes.find(col, row)
     }
 
     // ── 5-Step Audit Workflow Helpers ───────────────────────────────────────
@@ -2636,7 +2526,11 @@ impl CockpitApp {
             3 => {
                 // Theme
                 let current = &self.cfg.output.theme;
-                let cur_idx = THEME_OPTIONS.iter().position(|&t| t == current).unwrap_or(0);
+                let cur_preset = catui::ThemePreset::parse(current).unwrap_or(catui::ThemePreset::CaClassic);
+                let cur_idx = THEME_OPTIONS
+                    .iter()
+                    .position(|&t| catui::ThemePreset::parse(t) == Some(cur_preset))
+                    .unwrap_or(0);
                 let next_idx = if forward {
                     (cur_idx + 1) % THEME_OPTIONS.len()
                 } else {
@@ -3838,42 +3732,8 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 }
 
-// ── Terminal Guard (RAII + Panic safety) ──────────────────────────────────────
-
-struct TermGuard;
-
-impl TermGuard {
-    fn new() -> Result<Self> {
-        enable_raw_mode()?;
-        let mut out = stdout();
-        execute!(out, EnterAlternateScreen, event::EnableMouseCapture)?;
-
-        let prev = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            restore_terminal_raw();
-            prev(info);
-        }));
-
-        Ok(Self)
-    }
-}
-
-impl Drop for TermGuard {
-    fn drop(&mut self) {
-        restore_terminal_raw();
-    }
-}
-
-fn restore_terminal_raw() {
-    let mut out = stdout();
-    let _ = execute!(
-        out,
-        event::DisableMouseCapture,
-        LeaveAlternateScreen,
-        crossterm::cursor::Show
-    );
-    let _ = disable_raw_mode();
-}
+// Terminal setup/teardown (raw mode, alt screen, mouse, panic restore) is
+// provided by `catui::terminal::TerminalSession`.
 
 // ── Main Entry Point ────────────────────────────────────────────────────────
 
@@ -3891,12 +3751,15 @@ pub fn run(_cmd: &CockpitCommand, cfg: &Config) -> Result<()> {
     let mut app = CockpitApp::new(cfg);
 
     if let Ok((w, h)) = crossterm::terminal::size() {
-        app.is_compact = w < 80 || h < 24;
+        app.is_compact = catui::layout::Breakpoint::of(Rect::new(0, 0, w, h)) == catui::layout::Breakpoint::TooSmall;
     }
 
-    let _guard = TermGuard::new()?;
-    let backend = CrosstermBackend::new(stdout());
-    let mut terminal = Terminal::new(backend)?;
+    let mut session = catui::terminal::TerminalSession::enter(catui::terminal::TerminalOptions {
+        mouse: true,
+        bracketed_paste: false,
+        alternate_screen: true,
+    })?;
+    let terminal = &mut session.terminal;
 
     // Telemetry channel from background thread (~1s interval)
     let running = Arc::new(AtomicBool::new(true));
@@ -3973,7 +3836,7 @@ pub fn run(_cmd: &CockpitCommand, cfg: &Config) -> Result<()> {
         }
     });
 
-    let res = event_loop(&mut terminal, &mut app, &snap_rx, &sync_rx);
+    let res = event_loop(terminal, &mut app, &snap_rx, &sync_rx);
 
     running.store(false, Ordering::Relaxed);
     drop(snap_rx);
@@ -4037,19 +3900,22 @@ fn event_loop<B: ratatui::backend::Backend>(
         // 8-10 FPS poll timeout (100ms)
         let timeout = Duration::from_millis(100);
         if event::poll(timeout)? {
-            match event::read()? {
-                Event::Key(key) => {
+            // catui::event::map drops key-release events (Windows) and
+            // normalises the rest.
+            match catui::event::map(event::read()?) {
+                Some(catui::event::AppEvent::Key(key)) => {
                     if key.kind == KeyEventKind::Press
                         && handle_key_event(key, app, terminal)?
                     {
                         return Ok(());
                     }
                 }
-                Event::Mouse(mouse) => {
+                Some(catui::event::AppEvent::Mouse(mouse)) => {
                     handle_mouse_event(mouse, app, terminal)?;
                 }
-                Event::Resize(w, h) => {
-                    app.is_compact = w < 80 || h < 24;
+                Some(catui::event::AppEvent::Resize(w, h)) => {
+                    app.is_compact = catui::layout::Breakpoint::of(Rect::new(0, 0, w, h))
+                        == catui::layout::Breakpoint::TooSmall;
                 }
                 _ => {}
             }
@@ -6811,7 +6677,7 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         return;
     }
 
-    if app.is_compact || area.width < 80 || area.height < 24 {
+    if app.is_compact || catui::layout::Breakpoint::of(area) == catui::layout::Breakpoint::TooSmall {
         draw_compact_fallback(f, app, area);
         return;
     }
@@ -6923,80 +6789,18 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── Header (Calm Sovereign Cockpit Branding) ────────────────────────────────
 
 fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
-    let header_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(palette.border));
-    let inner = header_block.inner(area);
-    f.render_widget(header_block, area);
-
-    if inner.width < 20 || inner.height == 0 {
-        return;
-    }
-
-    let title = format!(" CAShell v{} · Isometric Cockpit ", env!("CARGO_PKG_VERSION"));
+    let palette = cockpit_theme(&app.cfg.output.theme);
+    let title = format!("CAShell v{} · Isometric Cockpit", env!("CARGO_PKG_VERSION"));
     let time_str = chrono::Local::now().format("%H:%M:%S").to_string();
 
-    let router_badge = if app.is_9router_online {
-        Span::styled(
-            " 9router: ● ONLINE ",
-            Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD),
-        )
-    } else {
-        Span::styled(
-            " 9router: ✖ DOWN ",
-            Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD),
-        )
-    };
-
-    let tailscale_badge = if app.is_tailscale_ok {
-        Span::styled(
-            " Tailscale: ● OK ",
-            Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD),
-        )
-    } else {
-        Span::styled(
-            " Tailscale: ✖ DOWN ",
-            Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD),
-        )
-    };
-
-    let host_badge = Span::styled(
-        format!(" {} │", app.hostname),
-        Style::default().fg(palette.text).add_modifier(Modifier::BOLD),
-    );
-
-    let time_badge = Span::styled(
-        format!("│ {time_str} "),
-        Style::default().fg(palette.accent),
-    );
-
-    // Dynamic Pro / Free / Syncing status badge (Phase 4)
-    let pro_badge = if app.is_syncing_gcc {
-        // Blinking yellow: toggle visibility every ~0.5s using pet_tick (10 ticks/sec)
-        let visible = (app.pet_tick / 5) % 2 == 0;
-        Span::styled(
-            " [◌ SYNCING] │",
-            if visible {
-                Style::default()
-                    .fg(Color::Rgb(255, 200, 0))
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::Rgb(80, 60, 0))
-            },
-        )
+    // Dynamic Pro / Free / Syncing edition badge (CATUI `Edition`)
+    let edition = if app.is_syncing_gcc {
+        // Blink ~0.5s using pet_tick (10 ticks/sec)
+        catui::widgets::Edition::Syncing { blink_on: (app.pet_tick / 5) % 2 == 0 }
     } else if app.is_pro() {
-        Span::styled(
-            " [★ PRO] │",
-            Style::default()
-                .fg(Color::Rgb(0, 255, 120))
-                .add_modifier(Modifier::BOLD),
-        )
+        catui::widgets::Edition::Pro
     } else {
-        Span::styled(
-            " [○ FREE] │",
-            Style::default().fg(Color::Rgb(140, 140, 140)),
-        )
+        catui::widgets::Edition::Free
     };
 
     // Active Virtual Pet Badge
@@ -7012,181 +6816,73 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 xp: pet.xp,
             };
             Span::styled(
-                format!(" {} │", status.format_badge()),
+                format!(" {} ", status.format_badge()),
                 Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
             )
         } else {
-            Span::styled(" 🥚 No Pet (p) │", Style::default().fg(palette.text_muted))
+            Span::styled(" 🥚 No Pet (p) ", Style::default().fg(palette.text_muted))
         }
     } else {
-        Span::styled(" 🐥 Ciko Lv.1 │", Style::default().fg(palette.text_muted))
+        Span::styled(" 🐥 Ciko Lv.1 ", Style::default().fg(palette.text_muted))
     };
 
-    let left_spans = vec![
-        Span::styled(title, Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
-    ];
+    let host_badge = Span::styled(
+        format!(" {} ", app.hostname),
+        Style::default().fg(palette.text).add_modifier(Modifier::BOLD),
+    );
+    let router_badge = if app.is_9router_online {
+        Span::styled(" 9router: ● ONLINE ", palette.status(catui::Status::Ok))
+    } else {
+        Span::styled(" 9router: ✖ DOWN ", palette.status(catui::Status::Critical))
+    };
+    let tailscale_badge = if app.is_tailscale_ok {
+        Span::styled(" Tailscale: ● OK ", palette.status(catui::Status::Ok))
+    } else {
+        Span::styled(" Tailscale: ✖ DOWN ", palette.status(catui::Status::Warning))
+    };
+    let time_badge = Span::styled(format!(" {time_str} "), Style::default().fg(palette.accent));
 
-    let right_spans = vec![
-        pro_badge,
-        pet_badge,
-        host_badge,
-        router_badge,
-        Span::raw("│"),
-        tailscale_badge,
-        time_badge,
-    ];
-
-    let left_len: usize = left_spans.iter().map(|s| s.content.len()).sum();
-    let right_len: usize = right_spans.iter().map(|s| s.content.len()).sum();
-    let available_middle = (inner.width as usize).saturating_sub(left_len + right_len);
-
-    let mut line_spans = Vec::new();
-    line_spans.extend(left_spans);
-    if available_middle > 0 {
-        line_spans.push(Span::raw(" ".repeat(available_middle)));
-    }
-    line_spans.extend(right_spans);
-
-    f.render_widget(Paragraph::new(Line::from(line_spans)), inner);
+    f.render_widget(
+        catui::widgets::HeaderBar::new(&palette, title)
+            .item(edition.span(&palette))
+            .item(pet_badge)
+            .item(host_badge)
+            .item(router_badge)
+            .item(tailscale_badge)
+            .item(time_badge),
+        area,
+    );
 }
 
 // ── Tab Bar Navigation ───────────────────────────────────────────────────────
 
 fn draw_tabs(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
-    let titles = CockpitTab::titles();
-    let tab_items: Vec<Line> = titles
-        .iter()
-        .map(|t| Line::from(Span::raw(*t)))
-        .collect();
-
-    let tabs_widget = Tabs::new(tab_items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(palette.border)),
-        )
-        .select(app.current_tab.to_index())
-        .style(Style::default().fg(palette.text_muted))
-        .highlight_style(
-            Style::default()
-                .fg(Color::Rgb(0, 0, 0))
-                .bg(palette.highlight_bg)
-                .add_modifier(Modifier::BOLD),
-        )
-        .divider("│");
-
-    f.render_widget(tabs_widget, area);
-
-    // Register Tab Hitboxes with exact positions based on title lengths
-    let inner = area.inner(Margin::new(1, 1));
-    let mut current_x = inner.x;
-    for (i, title) in titles.iter().enumerate() {
-        let tab_w = (title.len() as u16) + 2;
-        if current_x + tab_w > inner.right() {
-            break;
-        }
-        let tab_rect = Rect {
-            x: current_x,
-            y: inner.y,
-            width: tab_w,
-            height: 1,
-        };
-        app.register_hitbox(tab_rect, HitboxAction::SelectTab(i));
-        current_x = current_x.saturating_add(tab_w + 1);
+    let palette = cockpit_theme(&app.cfg.output.theme);
+    // Titles already carry their hotkey ("[1] Dashboard"), so no auto-numbering.
+    let tabs = catui::widgets::TabBar::new(&palette, CockpitTab::titles())
+        .numbered(false)
+        .select(app.current_tab.to_index());
+    // Hitboxes are computed by the same code that renders the tabs.
+    for (rect, i) in tabs.hitboxes(area) {
+        app.register_hitbox(rect, HitboxAction::SelectTab(i));
     }
+    f.render_widget(tabs, area);
 }
 
-fn render_braille_curve(data: &[f32], width: usize, height: usize) -> Vec<Line<'static>> {
-    if width == 0 || height == 0 {
-        return Vec::new();
-    }
-    let dot_w = width * 2;
-    let dot_h = height * 4;
-    let mut grid = vec![vec![0u8; width]; height];
-
-    let n = data.len();
-    if n == 0 {
-        return vec![Line::from(vec![Span::raw(" ".repeat(width))]); height];
-    }
-
-    let mut sampled = Vec::with_capacity(dot_w);
-    for x in 0..dot_w {
-        let val = if n == 1 {
-            data[0]
+/// CPU braille curve via CATUI, keeping CAShell's 90/80/60 % colour bands.
+fn cpu_braille_lines(palette: &catui::Theme, data: &[f32], width: usize, height: usize) -> Vec<Line<'static>> {
+    let (danger, warning, mid, ok) = (palette.danger, palette.warning, palette.chart[1], palette.success);
+    catui::widgets::braille_lines(data, width, height, 100.0, &move |pct: f32| {
+        if pct >= 90.0 {
+            danger
+        } else if pct >= 80.0 {
+            warning
+        } else if pct >= 60.0 {
+            mid
         } else {
-            let idx = (x as f32 / (dot_w - 1) as f32) * (n - 1) as f32;
-            let i0 = (idx.floor() as usize).min(n - 1);
-            let i1 = (i0 + 1).min(n - 1);
-            let frac = idx - i0 as f32;
-            data[i0] * (1.0 - frac) + data[i1] * frac
-        };
-        sampled.push(val);
-    }
-
-    for x in 0..dot_w {
-        let val = sampled[x].clamp(0.0, 100.0);
-        let y = ((dot_h - 1) as f32 - (val / 100.0) * (dot_h - 1) as f32).round() as usize;
-
-        let (y_start, y_end) = if x > 0 {
-            let prev_val = sampled[x - 1].clamp(0.0, 100.0);
-            let prev_y = ((dot_h - 1) as f32 - (prev_val / 100.0) * (dot_h - 1) as f32).round() as usize;
-            (prev_y.min(y), prev_y.max(y))
-        } else {
-            (y, y)
-        };
-
-        for cur_y in y_start..=y_end {
-            let cx = x / 2;
-            let cy = cur_y / 4;
-            let sx = x % 2;
-            let sy = cur_y % 4;
-
-            let bit = match (sx, sy) {
-                (0, 0) => 0x01,
-                (0, 1) => 0x02,
-                (0, 2) => 0x04,
-                (0, 3) => 0x40,
-                (1, 0) => 0x08,
-                (1, 1) => 0x10,
-                (1, 2) => 0x20,
-                (1, 3) => 0x80,
-                _ => 0,
-            };
-
-            if cy < height && cx < width {
-                grid[cy][cx] |= bit;
-            }
+            ok
         }
-    }
-
-    let mut lines = Vec::with_capacity(height);
-    for row in grid.iter().take(height) {
-        let mut spans = Vec::with_capacity(width);
-        for (cx, &mask) in row.iter().enumerate().take(width) {
-            let ch = if mask == 0 {
-                ' '
-            } else {
-                char::from_u32(0x2800 + mask as u32).unwrap_or(' ')
-            };
-
-            let avg_val = (sampled[(cx * 2).min(dot_w - 1)] + sampled[(cx * 2 + 1).min(dot_w - 1)]) / 2.0;
-            let color = if avg_val >= 90.0 {
-                Color::Rgb(238, 128, 120) // Soft Retro Coral
-            } else if avg_val >= 80.0 {
-                Color::Rgb(245, 155, 120) // Warm Pastel Salmon
-            } else if avg_val >= 60.0 {
-                Color::Rgb(240, 185, 110) // Retro Honey Amber
-            } else {
-                Color::Rgb(140, 215, 165) // Pastel Mint Green
-            };
-
-            spans.push(Span::styled(ch.to_string(), Style::default().fg(color)));
-        }
-        lines.push(Line::from(spans));
-    }
-
-    lines
+    })
 }
 
 fn format_core_span(core: Option<&CpuCoreInfo>, id: usize, bar_len: usize) -> Vec<Span<'static>> {
@@ -7282,7 +6978,7 @@ fn format_mount_capacity(used_mb: u64, total_mb: u64, used_gb: u64, total_gb: u6
 }
 
 fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let snap = app.latest_snap.clone();
 
     let (top_h, show_full_top) = if area.height < 36 && app.overview_proc_scroll >= 1 {
@@ -7312,13 +7008,13 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         };
         let line = Line::from(vec![
             Span::styled("CPU: ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{:.1}%  ", snap.cpu_pct), Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{:.1}%  ", snap.cpu_pct), Style::default().fg(palette.success).add_modifier(Modifier::BOLD)),
             Span::styled("Temp: ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{:.1}°C  ", snap.cpu_temp_c), Style::default().fg(if snap.cpu_temp_c > 85.0 { palette.status_err } else { palette.status_ok })),
+            Span::styled(format!("{:.1}°C  ", snap.cpu_temp_c), Style::default().fg(if snap.cpu_temp_c > 85.0 { palette.danger } else { palette.success })),
             Span::styled("RAM: ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{}M/{}M  ", snap.ram_used_mb, snap.ram_total_mb), Style::default().fg(palette.chart_cpu)),
+            Span::styled(format!("{}M/{}M  ", snap.ram_used_mb, snap.ram_total_mb), Style::default().fg(palette.chart[0])),
             Span::styled("Disk: ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{}G/{}G  ", snap.disk_used_gb, snap.disk_total_gb), Style::default().fg(palette.status_ok)),
+            Span::styled(format!("{}G/{}G  ", snap.disk_used_gb, snap.disk_total_gb), Style::default().fg(palette.success)),
             Span::styled("Net: ", Style::default().fg(palette.text_muted)),
             Span::styled(format!("▼{} ▲{}  ", format_kbps(snap.net_rx_rate_kbps), format_kbps(snap.net_tx_rate_kbps)), Style::default().fg(palette.accent)),
             Span::styled("Companion: ", Style::default().fg(palette.text_muted)),
@@ -7346,11 +7042,11 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             format!(" CPU Telemetry ({:.1}%) ", snap.cpu_pct)
         };
         let cpu_border_color = if thermal_alert {
-            palette.status_err
+            palette.danger
         } else if snap.cpu_pct > 80.0 {
-            palette.status_warn
+            palette.warning
         } else {
-            palette.status_ok
+            palette.success
         };
 
         let cpu_block = Block::default()
@@ -7382,13 +7078,13 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             if thermal_alert {
                 header_spans.push(Span::styled(
                     " [ALERT]",
-                    Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD),
+                    Style::default().fg(palette.danger).add_modifier(Modifier::BOLD),
                 ));
             }
 
             let cpu_hist_vec: Vec<f32> = app.cpu_history.iter().copied().collect();
             let braille_height = if cpu_inner.height >= 8 { 2 } else { 1 };
-            let braille_lines = render_braille_curve(&cpu_hist_vec, cpu_inner.width as usize, braille_height);
+            let braille_lines = cpu_braille_lines(&palette, &cpu_hist_vec, cpu_inner.width as usize, braille_height);
 
             let half_w = (cpu_inner.width.saturating_sub(3) / 2) as usize;
             let bar_len = if half_w >= 26 { 10 } else if half_w >= 18 { 5 } else { 3 };
@@ -7445,11 +7141,11 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             let ram_total = snap.ram_total_mb.max(1);
             let ram_pct = ((ram_used * 100) / ram_total) as u16;
             let ram_color = if ram_pct > 85 {
-                palette.status_err
+                palette.danger
             } else if ram_pct > 70 {
-                palette.status_warn
+                palette.warning
             } else {
-                palette.chart_cpu
+                palette.chart[0]
             };
             let ram_label_span = Span::styled(
                 format!("RAM: {ram_used}M/{ram_total}M ({ram_pct}%)"),
@@ -7473,7 +7169,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 Style::default().fg(Color::Rgb(10, 15, 25)).add_modifier(Modifier::BOLD),
             );
             let swap_gauge = Gauge::default()
-                .gauge_style(Style::default().fg(palette.chart_ram).bg(Color::DarkGray))
+                .gauge_style(Style::default().fg(palette.chart[1]).bg(Color::DarkGray))
                 .ratio(if snap.swap_total_mb > 0 {
                     ((swap_used as f64) / (swap_total as f64)).clamp(0.0, 1.0)
                 } else {
@@ -7486,11 +7182,11 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             let disk_total = snap.disk_total_gb.max(1);
             let disk_pct = ((disk_used * 100) / disk_total) as u16;
             let disk_color = if disk_pct > 90 {
-                palette.status_err
+                palette.danger
             } else if disk_pct > 75 {
-                palette.status_warn
+                palette.warning
             } else {
-                palette.status_ok
+                palette.success
             };
             let disk_label_span = Span::styled(
                 format!("DSK: {disk_used}G/{disk_total}G ({disk_pct}%)"),
@@ -7524,16 +7220,16 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 ]),
                 Line::from(vec![
                     Span::styled("Mount: ", Style::default().fg(palette.text_muted)),
-                    Span::styled(mount_summary, Style::default().fg(palette.status_ok)),
+                    Span::styled(mount_summary, Style::default().fg(palette.success)),
                 ]),
             ];
             if let Some(disk) = snap.disk_health.first() {
                 let health_color = if disk.health_status.contains("HEALTHY") || disk.health_status.contains("GOOD") {
-                    palette.status_ok
+                    palette.success
                 } else if disk.health_status.contains("WARN") {
-                    palette.status_warn
+                    palette.warning
                 } else {
-                    palette.status_err
+                    palette.danger
                 };
                 mem_lines.push(Line::from(vec![
                     Span::styled("SMART: ", Style::default().fg(palette.text_muted)),
@@ -7574,11 +7270,11 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 Line::from(vec![
                     Span::styled("Iface:    ", Style::default().fg(palette.text_muted)),
                     Span::styled(iface_display, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                    Span::styled(" [OK]", Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD)),
+                    Span::styled(" [OK]", Style::default().fg(palette.success).add_modifier(Modifier::BOLD)),
                 ]),
                 Line::from(vec![
                     Span::styled("▼ RX:     ", Style::default().fg(palette.text_muted)),
-                    Span::styled(rx_rate_str, Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD)),
+                    Span::styled(rx_rate_str, Style::default().fg(palette.success).add_modifier(Modifier::BOLD)),
                     Span::styled(" (live)", Style::default().fg(palette.text_muted)),
                 ]),
                 Line::from(vec![
@@ -7596,7 +7292,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 ]),
                 Line::from(vec![
                     Span::styled("State:    ", Style::default().fg(palette.text_muted)),
-                    Span::styled("● ACTIVE", Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD)),
+                    Span::styled("● ACTIVE", Style::default().fg(palette.success).add_modifier(Modifier::BOLD)),
                 ]),
             ];
             f.render_widget(Paragraph::new(net_lines), net_inner);
@@ -7676,7 +7372,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     } else {
         let err_count = total_daemons.saturating_sub(active_daemons + degraded_daemons);
         let tag = if err_count > 0 { "[DOWN]" } else { "[ALERT]" };
-        let col = if err_count > 0 { Color::Rgb(242, 135, 125) } else { palette.status_warn };
+        let col = if err_count > 0 { Color::Rgb(242, 135, 125) } else { palette.warning };
         alerts_spans.push(Span::styled(
             format!(" Daemons: {tag} {active_daemons}/{total_daemons} Active "),
             Style::default().fg(col).bg(Color::Rgb(45, 25, 30)).add_modifier(Modifier::BOLD),
@@ -7756,12 +7452,12 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         any_alert = true;
     }
     if snap.cpu_pct > 80.0 {
-        alert_items.push(vec![Span::styled(" [ALERT: High CPU Load > 80%] ", Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD))]);
+        alert_items.push(vec![Span::styled(" [ALERT: High CPU Load > 80%] ", Style::default().fg(palette.warning).add_modifier(Modifier::BOLD))]);
         any_alert = true;
     }
     let ram_ratio = (snap.ram_used_mb as f64) / (snap.ram_total_mb.max(1) as f64);
     if ram_ratio > 0.85 {
-        alert_items.push(vec![Span::styled(" [ALERT: Low RAM Available] ", Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD))]);
+        alert_items.push(vec![Span::styled(" [ALERT: Low RAM Available] ", Style::default().fg(palette.danger).add_modifier(Modifier::BOLD))]);
         any_alert = true;
     }
 
@@ -7788,7 +7484,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if !any_alert {
         alert_line2.push(Span::styled(
             "[OK] Sovereign Command Center Nominal. All nodes, containers, daemons & monitors healthy.",
-            Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD),
+            Style::default().fg(palette.success).add_modifier(Modifier::BOLD),
         ));
     }
 
@@ -7890,7 +7586,7 @@ fn draw_host_top_processes_panel(
     f: &mut Frame,
     app: &mut CockpitApp,
     area: Rect,
-    palette: &ThemePalette,
+    palette: &catui::Theme,
     selected_idx: usize,
     is_focused: bool,
 ) {
@@ -7902,7 +7598,7 @@ fn draw_host_top_processes_panel(
     let focus_hint = if is_focused { " [● FOCUSED - ↑/↓ Select, k Kill]" } else { "" };
     let title = format!(" ■ Host Top Processes · Task Manager ({}){focus_hint} ", procs.len());
     let border_color = if is_focused {
-        palette.status_err
+        palette.danger
     } else {
         palette.accent
     };
@@ -7938,11 +7634,11 @@ fn draw_host_top_processes_panel(
     {
         let is_selected = idx == selected_idx;
         let cpu_col = if p.cpu_pct >= 50.0 {
-            palette.status_err
+            palette.danger
         } else if p.cpu_pct >= 20.0 {
-            palette.status_warn
+            palette.warning
         } else {
-            palette.status_ok
+            palette.success
         };
 
         let status_glyph = match p.status.as_str() {
@@ -7964,7 +7660,7 @@ fn draw_host_top_processes_panel(
                 Style::default(),
                 Style::default().fg(Color::Cyan),
                 Style::default().fg(Color::White),
-                Style::default().fg(palette.status_err),
+                Style::default().fg(palette.danger),
             )
         };
 
@@ -8021,7 +7717,7 @@ fn draw_host_top_processes_panel(
     )
     .header(
         Row::new(vec!["PID", "NAME", "CPU%", "MEM", "STATUS", "ACTION"])
-            .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+            .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
     );
     f.render_widget(table, inner);
 }
@@ -8032,7 +7728,7 @@ fn draw_fleet_nodes_resume_panel(
     f: &mut Frame,
     app: &mut CockpitApp,
     area: Rect,
-    palette: &ThemePalette,
+    palette: &catui::Theme,
     scroll: usize,
     is_focused: bool,
 ) {
@@ -8049,9 +7745,9 @@ fn draw_fleet_nodes_resume_panel(
     let border_color = if is_focused {
         palette.accent
     } else if online_count == total_count && total_count > 0 {
-        palette.status_ok
+        palette.success
     } else {
-        palette.status_warn
+        palette.warning
     };
 
     let block = Block::default()
@@ -8066,9 +7762,9 @@ fn draw_fleet_nodes_resume_panel(
 
     for (i, n) in nodes.iter().enumerate().skip(scroll_offset) {
         let (status_label, status_col) = match n.status.as_str() {
-            "ONLINE" => ("● ONLINE", palette.status_ok),
-            "OFFLINE" => ("[DOWN] OFFLINE", palette.status_err),
-            _ => ("[ALERT] STANDBY", palette.status_warn),
+            "ONLINE" => ("● ONLINE", palette.success),
+            "OFFLINE" => ("[DOWN] OFFLINE", palette.danger),
+            _ => ("[ALERT] STANDBY", palette.warning),
         };
 
         let rtt_str = match n.latency_ms {
@@ -8082,7 +7778,7 @@ fn draw_fleet_nodes_resume_panel(
         let disk_str = n.disk_pct.map(|v| format!("{v}%")).unwrap_or_else(|| "--".to_string());
 
         let cpu_col = if let Some(cpu) = n.cpu_pct {
-            if cpu >= 80.0 { palette.status_err } else if cpu >= 50.0 { palette.status_warn } else { palette.status_ok }
+            if cpu >= 80.0 { palette.danger } else if cpu >= 50.0 { palette.warning } else { palette.success }
         } else {
             palette.text_muted
         };
@@ -8091,9 +7787,9 @@ fn draw_fleet_nodes_resume_panel(
             Cell::from(n.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
             Cell::from(n.ip.clone()).style(Style::default().fg(palette.accent)),
             Cell::from(status_label).style(Style::default().fg(status_col).add_modifier(Modifier::BOLD)),
-            Cell::from(rtt_str).style(Style::default().fg(palette.chart_cpu)),
+            Cell::from(rtt_str).style(Style::default().fg(palette.chart[0])),
             Cell::from(cpu_str).style(Style::default().fg(cpu_col)),
-            Cell::from(ram_str).style(Style::default().fg(palette.chart_ram)),
+            Cell::from(ram_str).style(Style::default().fg(palette.chart[1])),
             Cell::from(disk_str).style(Style::default().fg(palette.text)),
         ]));
 
@@ -8138,7 +7834,7 @@ fn draw_fleet_nodes_resume_panel(
             "RAM %",
             "DISK %",
         ])
-        .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+        .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
     );
     f.render_widget(table, inner);
 }
@@ -8149,7 +7845,7 @@ fn draw_services_health_resume_panel(
     f: &mut Frame,
     app: &mut CockpitApp,
     area: Rect,
-    palette: &ThemePalette,
+    palette: &catui::Theme,
     scroll: usize,
     is_focused: bool,
 ) {
@@ -8165,9 +7861,9 @@ fn draw_services_health_resume_panel(
     let border_color = if is_focused {
         palette.accent
     } else if active_count == total_count && total_count > 0 {
-        palette.status_ok
+        palette.success
     } else {
-        palette.status_warn
+        palette.warning
     };
 
     let block = Block::default()
@@ -8182,9 +7878,9 @@ fn draw_services_health_resume_panel(
 
     for s in services.iter().skip(scroll_offset) {
         let (status_badge, status_col) = match s.state {
-            crate::systat::DaemonState::Active => ("● ACTIVE", palette.status_ok),
-            crate::systat::DaemonState::Inactive => ("[DOWN] INACTIVE", palette.status_err),
-            crate::systat::DaemonState::Degraded => ("[ALERT] DEGRADED", palette.status_warn),
+            crate::systat::DaemonState::Active => ("● ACTIVE", palette.success),
+            crate::systat::DaemonState::Inactive => ("[DOWN] INACTIVE", palette.danger),
+            crate::systat::DaemonState::Degraded => ("[ALERT] DEGRADED", palette.warning),
         };
 
         let endpoint_disp = truncate_ellipsis(&s.endpoint, 18);
@@ -8192,7 +7888,7 @@ fn draw_services_health_resume_panel(
             Cell::from(s.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
             Cell::from(s.category.clone()).style(Style::default().fg(palette.accent)),
             Cell::from(status_badge).style(Style::default().fg(status_col).add_modifier(Modifier::BOLD)),
-            Cell::from(endpoint_disp).style(Style::default().fg(palette.chart_cpu)),
+            Cell::from(endpoint_disp).style(Style::default().fg(palette.chart[0])),
             Cell::from(s.detail.clone()).style(Style::default().fg(palette.text_muted)),
         ]));
     }
@@ -8221,7 +7917,7 @@ fn draw_services_health_resume_panel(
             "PORT / TARGET",
             "DETAILS",
         ])
-        .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+        .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
     );
     f.render_widget(table, inner);
 }
@@ -8232,7 +7928,7 @@ fn draw_docker_containers_resume_panel(
     f: &mut Frame,
     app: &mut CockpitApp,
     area: Rect,
-    palette: &ThemePalette,
+    palette: &catui::Theme,
     scroll: usize,
     is_focused: bool,
 ) {
@@ -8255,7 +7951,7 @@ fn draw_docker_containers_resume_panel(
     } else if down_count == 0 && total_count > 0 {
         (
             format!(" ■ Docker Containers Resume · ● {running_count}/{total_count} Containers Running{scroll_hint} "),
-            palette.status_ok,
+            palette.success,
         )
     } else if down_count > 0 {
         (
@@ -8284,8 +7980,8 @@ fn draw_docker_containers_resume_panel(
     let scroll_offset = scroll.min(sorted_containers.len().saturating_sub(1));
     for (i, c) in sorted_containers.iter().skip(scroll_offset) {
         let (status_label, status_col) = match c.state.as_str() {
-            "running" => ("● Running", palette.status_ok),
-            "paused" => ("[ALERT] Paused", palette.status_warn),
+            "running" => ("● Running", palette.success),
+            "paused" => ("[ALERT] Paused", palette.warning),
             _ => ("[DOWN] Exited", Color::LightRed),
         };
 
@@ -8297,9 +7993,9 @@ fn draw_docker_containers_resume_panel(
             "[DOWN] UNHEALTHY"
         };
         let health_col = if c.state == "running" {
-            palette.status_ok
+            palette.success
         } else if c.state == "paused" {
-            palette.status_warn
+            palette.warning
         } else {
             Color::LightRed
         };
@@ -8343,7 +8039,7 @@ fn draw_docker_containers_resume_panel(
         rows.push(Row::new(vec![
             Cell::from(c.name.clone()).style(cell_style(Color::White, true)),
             Cell::from(status_label).style(cell_style(status_col, true)),
-            Cell::from(ports_display).style(cell_style(palette.chart_cpu, false)),
+            Cell::from(ports_display).style(cell_style(palette.chart[0], false)),
             Cell::from(health_label).style(cell_style(health_col, true)),
             Cell::from(c.image.clone()).style(cell_style(palette.text_muted, false)),
         ]));
@@ -8385,7 +8081,7 @@ fn draw_docker_containers_resume_panel(
             "HEALTH",
             "IMAGE / REPO",
         ])
-        .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+        .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
     );
     f.render_widget(table, inner);
 }
@@ -8396,7 +8092,7 @@ fn draw_uptime_monitors_resume_panel(
     f: &mut Frame,
     app: &mut CockpitApp,
     area: Rect,
-    palette: &ThemePalette,
+    palette: &catui::Theme,
     scroll: usize,
     is_focused: bool,
 ) {
@@ -8419,7 +8115,7 @@ fn draw_uptime_monitors_resume_panel(
     } else if down_count == 0 && total_count > 0 {
         (
             format!(" ■ Uptime Monitors Resume · [OK] ALL {up_count} UP ({total_count} Total){scroll_hint} "),
-            palette.status_ok,
+            palette.success,
         )
     } else if down_count > 0 {
         (
@@ -8448,7 +8144,7 @@ fn draw_uptime_monitors_resume_panel(
     let scroll_offset = scroll.min(sorted_monitors.len().saturating_sub(1));
     for (i, m) in sorted_monitors.iter().skip(scroll_offset) {
         let (status_label, status_col) = if m.is_up {
-            ("● UP", palette.status_ok)
+            ("● UP", palette.success)
         } else {
             ("✖ DOWN", Color::LightRed)
         };
@@ -8476,11 +8172,11 @@ fn draw_uptime_monitors_resume_panel(
         let rtt_str = m.latency_ms.map(|ms| format!("{ms}ms")).unwrap_or_else(|| "--".to_string());
 
         let spark_col = if m.uptime_pct >= 95.0 {
-            palette.status_ok
+            palette.success
         } else if m.uptime_pct >= 80.0 {
-            palette.status_warn
+            palette.warning
         } else {
-            palette.status_err
+            palette.danger
         };
 
         let mut sparkline_spans = Vec::with_capacity(25);
@@ -8493,9 +8189,9 @@ fn draw_uptime_monitors_resume_panel(
         for &up in m.history.iter().take(20) {
             let col = if up {
                 if let Some(ms) = m.latency_ms {
-                    if ms > 500 { Color::Yellow } else { palette.status_ok }
+                    if ms > 500 { Color::Yellow } else { palette.success }
                 } else {
-                    palette.status_ok
+                    palette.success
                 }
             } else {
                 Color::LightRed
@@ -8521,14 +8217,14 @@ fn draw_uptime_monitors_resume_panel(
             Span::styled(&m.name, cell_style(if is_down { Color::LightRed } else { Color::White }, true)),
             Span::styled(
                 format!(" ({})", m.target),
-                cell_style(if is_down { Color::Rgb(200, 140, 140) } else { palette.chart_cpu }, false),
+                cell_style(if is_down { Color::Rgb(200, 140, 140) } else { palette.chart[0] }, false),
             ),
         ];
 
         rows.push(Row::new(vec![
             Cell::from(Line::from(endpoint_spans)),
             Cell::from(status_label).style(cell_style(status_col, true)),
-            Cell::from(http_code).style(cell_style(if is_down { Color::LightRed } else { palette.chart_cpu }, false)),
+            Cell::from(http_code).style(cell_style(if is_down { Color::LightRed } else { palette.chart[0] }, false)),
             Cell::from(rtt_str).style(cell_style(palette.text, false)),
             Cell::from(Line::from(sparkline_spans)),
         ]));
@@ -8570,7 +8266,7 @@ fn draw_uptime_monitors_resume_panel(
             "RTT",
             "HEARTBEAT HISTORY (20)",
         ])
-        .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+        .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
     );
     f.render_widget(table, inner);
 }
@@ -8581,7 +8277,7 @@ fn draw_web_analytics_resume_panel(
     f: &mut Frame,
     app: &mut CockpitApp,
     area: Rect,
-    palette: &ThemePalette,
+    palette: &catui::Theme,
     _scroll: usize,
     is_focused: bool,
 ) {
@@ -8594,7 +8290,7 @@ fn draw_web_analytics_resume_panel(
     let block = Block::default()
         .borders(Borders::ALL)
         .title(format!(" ■ Product Analytics (Umami / CA-Product Landings) · {} Live{focus_hint} ", a.active_visitors))
-        .border_style(Style::default().fg(if is_focused { palette.status_ok } else { palette.accent }));
+        .border_style(Style::default().fg(if is_focused { palette.success } else { palette.accent }));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -8612,8 +8308,8 @@ fn draw_web_analytics_resume_panel(
 
     for p in sorted_products {
         let (stat_color, stat_label) = match p.status.as_str() {
-            "ACTIVE" => (palette.status_ok, "● LIVE"),
-            "IDLE" => (palette.status_warn, "[OK] TRACKING"),
+            "ACTIVE" => (palette.success, "● LIVE"),
+            "IDLE" => (palette.warning, "[OK] TRACKING"),
             _ => (palette.text_muted, "· STANDBY"),
         };
 
@@ -8623,8 +8319,8 @@ fn draw_web_analytics_resume_panel(
             rows.push(Row::new(vec![
                 Cell::from(p.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
                 Cell::from(p.domain.clone()).style(Style::default().fg(palette.accent)),
-                Cell::from(format!("{}", p.pageviews)).style(Style::default().fg(palette.chart_cpu)),
-                Cell::from(format!("{}", p.visitors)).style(Style::default().fg(palette.chart_ram)),
+                Cell::from(format!("{}", p.pageviews)).style(Style::default().fg(palette.chart[0])),
+                Cell::from(format!("{}", p.visitors)).style(Style::default().fg(palette.chart[1])),
                 Cell::from(stat_label).style(Style::default().fg(stat_color).add_modifier(Modifier::BOLD)),
             ]));
         }
@@ -8647,8 +8343,8 @@ fn draw_web_analytics_resume_panel(
             Cell::from("TOTAL PAGEVIEWS").style(Style::default().fg(palette.text_muted)),
             Cell::from(format!("{}", a.pageviews)).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
             Cell::from("UNIQUE VISITORS").style(Style::default().fg(palette.text_muted)),
-            Cell::from(format!("{}", a.unique_visitors)).style(Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD)),
-            Cell::from(format!("Bounce: {:.1}%", a.bounce_rate)).style(Style::default().fg(palette.status_warn)),
+            Cell::from(format!("{}", a.unique_visitors)).style(Style::default().fg(palette.success).add_modifier(Modifier::BOLD)),
+            Cell::from(format!("Bounce: {:.1}%", a.bounce_rate)).style(Style::default().fg(palette.warning)),
         ]));
     }
 
@@ -8664,7 +8360,7 @@ fn draw_web_analytics_resume_panel(
     )
     .header(
         Row::new(vec!["PRODUCT / SITE", "DOMAIN / URL", "VIEWS", "VISITORS", "STATUS"])
-            .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+            .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
     );
     f.render_widget(table, inner);
 }
@@ -8674,7 +8370,7 @@ fn draw_web_analytics_resume_panel2(
     f: &mut Frame,
     app: &mut CockpitApp,
     area: Rect,
-    palette: &ThemePalette,
+    palette: &catui::Theme,
     _scroll: usize,
     is_focused: bool,
 ) {
@@ -8686,7 +8382,7 @@ fn draw_web_analytics_resume_panel2(
     let block = Block::default()
         .borders(Borders::ALL)
         .title(format!(" 🌐 Product Landing Pages & Top Referrers{focus_hint} "))
-        .border_style(Style::default().fg(if is_focused { palette.status_ok } else { palette.border }));
+        .border_style(Style::default().fg(if is_focused { palette.success } else { palette.border }));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -8694,17 +8390,17 @@ fn draw_web_analytics_resume_panel2(
     if a.top_pages.is_empty() {
         rows.push(Row::new(vec![
             Cell::from("caterm.fathforce.com/").style(Style::default().fg(Color::White)),
-            Cell::from("https://google.com").style(Style::default().fg(palette.chart_cpu)),
+            Cell::from("https://google.com").style(Style::default().fg(palette.chart[0])),
             Cell::from("Direct / Search").style(Style::default().fg(palette.text_muted)),
         ]));
         rows.push(Row::new(vec![
             Cell::from("fathstore.com/pos").style(Style::default().fg(Color::White)),
-            Cell::from("Direct").style(Style::default().fg(palette.chart_cpu)),
+            Cell::from("Direct").style(Style::default().fg(palette.chart[0])),
             Cell::from("Merchant Portal").style(Style::default().fg(palette.text_muted)),
         ]));
         rows.push(Row::new(vec![
             Cell::from("caui.fathforce.com/docs").style(Style::default().fg(Color::White)),
-            Cell::from("GitHub / Repo").style(Style::default().fg(palette.chart_cpu)),
+            Cell::from("GitHub / Repo").style(Style::default().fg(palette.chart[0])),
             Cell::from("Dev Documentation").style(Style::default().fg(palette.text_muted)),
         ]));
     } else {
@@ -8713,7 +8409,7 @@ fn draw_web_analytics_resume_panel2(
             rows.push(Row::new(vec![
                 Cell::from(url.clone()).style(Style::default().fg(Color::White)),
                 Cell::from(format!("{count} views")).style(Style::default().fg(palette.accent)),
-                Cell::from(ref_str).style(Style::default().fg(palette.chart_cpu)),
+                Cell::from(ref_str).style(Style::default().fg(palette.chart[0])),
             ]));
         }
     }
@@ -8728,7 +8424,7 @@ fn draw_web_analytics_resume_panel2(
     )
     .header(
         Row::new(vec!["LANDING PAGE", "TRAFFIC / VIEWS", "SOURCE / REFERRER"])
-            .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+            .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
     );
     f.render_widget(table, inner);
 }
@@ -8736,7 +8432,7 @@ fn draw_web_analytics_resume_panel2(
 // ── Tab 2: Project & Containers (Tracked Projects + Docker Lifecycle) ────────
 
 fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(8)])
@@ -8965,9 +8661,9 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                         let is_sel = real_idx == app.selected_project;
                         let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
                         let (dirty_badge, dirty_col) = if p.is_dirty {
-                            ("● DIRTY", palette.status_warn)
+                            ("● DIRTY", palette.warning)
                         } else {
-                            ("● CLEAN", palette.status_ok)
+                            ("● CLEAN", palette.success)
                         };
                         let repos_str = format!("📦 {}", p.repos.len());
                         let cont_str = if p.containers.is_empty() { "-".to_string() } else { format!("🐳 {}", p.containers.len()) };
@@ -8977,9 +8673,9 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                         Row::new(vec![
                             Cell::from(p.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
                             Cell::from(p.category.clone()).style(Style::default().fg(palette.accent)),
-                            Cell::from(repos_str).style(Style::default().fg(palette.chart_cpu)),
-                            Cell::from(cont_str).style(Style::default().fg(palette.status_ok)),
-                            Cell::from(svc_str).style(Style::default().fg(palette.status_warn)),
+                            Cell::from(repos_str).style(Style::default().fg(palette.chart[0])),
+                            Cell::from(cont_str).style(Style::default().fg(palette.success)),
+                            Cell::from(svc_str).style(Style::default().fg(palette.warning)),
                             Cell::from(db_str).style(Style::default().fg(palette.accent)),
                             Cell::from(dirty_badge).style(Style::default().fg(dirty_col).add_modifier(Modifier::BOLD)),
                         ])
@@ -9002,7 +8698,7 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             )
             .header(
                 Row::new(vec!["WORKSPACE", "CAT", "REPOS", "CONT", "SVC", "DBS", "STATUS"])
-                    .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+                    .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
             );
             f.render_widget(table, inner);
 
@@ -9053,17 +8749,17 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                     vec![Row::new(vec![Cell::from("No git repos detected in workspace").style(Style::default().fg(palette.text_muted))])]
                 } else {
                     proj.repos.iter().map(|r| {
-                        let (d_icon, d_col) = if r.is_dirty { ("● DIRTY", palette.status_warn) } else { ("● CLEAN", palette.status_ok) };
+                        let (d_icon, d_col) = if r.is_dirty { ("● DIRTY", palette.warning) } else { ("● CLEAN", palette.success) };
                         Row::new(vec![
                             Cell::from(r.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                            Cell::from(r.branch.clone()).style(Style::default().fg(palette.chart_cpu)),
+                            Cell::from(r.branch.clone()).style(Style::default().fg(palette.chart[0])),
                             Cell::from(d_icon).style(Style::default().fg(d_col).add_modifier(Modifier::BOLD)),
                             Cell::from(if r.path.is_empty() { "root".to_string() } else { r.path.clone() }).style(Style::default().fg(palette.text_muted)),
                         ])
                     }).collect()
                 };
                 let r_table = Table::new(repo_rows, [Constraint::Length(22), Constraint::Length(14), Constraint::Length(12), Constraint::Min(15)])
-                    .header(Row::new(vec!["REPO", "BRANCH", "STATUS", "PATH"]).style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)));
+                    .header(Row::new(vec!["REPO", "BRANCH", "STATUS", "PATH"]).style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)));
                 f.render_widget(r_table, r_inner);
 
                 // 2. Containers Card
@@ -9079,21 +8775,21 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 } else {
                     proj.containers.iter().map(|c| {
                         let (s_icon, s_col) = match c.state.as_str() {
-                            "running" => ("● RUNNING", palette.status_ok),
-                            "paused" => ("● PAUSED", palette.status_warn),
-                            "defined" => ("◌ DEFINED", palette.chart_cpu),
-                            _ => ("✖ EXITED", palette.status_err),
+                            "running" => ("● RUNNING", palette.success),
+                            "paused" => ("● PAUSED", palette.warning),
+                            "defined" => ("◌ DEFINED", palette.chart[0]),
+                            _ => ("✖ EXITED", palette.danger),
                         };
                         Row::new(vec![
                             Cell::from(c.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                            Cell::from(c.image.clone()).style(Style::default().fg(palette.chart_cpu)),
+                            Cell::from(c.image.clone()).style(Style::default().fg(palette.chart[0])),
                             Cell::from(s_icon).style(Style::default().fg(s_col).add_modifier(Modifier::BOLD)),
                             Cell::from(c.ports.clone()).style(Style::default().fg(palette.text_muted)),
                         ])
                     }).collect()
                 };
                 let c_table = Table::new(cont_rows, [Constraint::Length(22), Constraint::Length(22), Constraint::Length(14), Constraint::Min(15)])
-                    .header(Row::new(vec!["CONTAINER", "IMAGE", "STATE", "PORTS"]).style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)));
+                    .header(Row::new(vec!["CONTAINER", "IMAGE", "STATE", "PORTS"]).style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)));
                 f.render_widget(c_table, c_inner);
 
                 // 3. Services Card
@@ -9109,19 +8805,19 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 } else {
                     proj.services.iter().map(|s| {
                         let (st_icon, st_col) = match s.state.as_str() {
-                            "up" | "online" => ("● ONLINE", palette.status_ok),
-                            _ => ("✖ DOWN", palette.status_err),
+                            "up" | "online" => ("● ONLINE", palette.success),
+                            _ => ("✖ DOWN", palette.danger),
                         };
                         Row::new(vec![
                             Cell::from(s.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
                             Cell::from(format!("{}:{}", s.host, s.port)).style(Style::default().fg(palette.accent)),
-                            Cell::from(s.protocol.to_uppercase()).style(Style::default().fg(palette.chart_cpu)),
+                            Cell::from(s.protocol.to_uppercase()).style(Style::default().fg(palette.chart[0])),
                             Cell::from(st_icon).style(Style::default().fg(st_col).add_modifier(Modifier::BOLD)),
                         ])
                     }).collect()
                 };
                 let s_table = Table::new(svc_rows, [Constraint::Length(22), Constraint::Length(20), Constraint::Length(12), Constraint::Min(12)])
-                    .header(Row::new(vec!["SERVICE", "HOST:PORT", "PROTOCOL", "STATE"]).style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)));
+                    .header(Row::new(vec!["SERVICE", "HOST:PORT", "PROTOCOL", "STATE"]).style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)));
                 f.render_widget(s_table, s_inner);
 
                 // 4. Databases Card
@@ -9137,14 +8833,14 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 } else {
                     proj.databases.iter().map(|d| {
                         let (db_st, db_col) = match d.state.as_str() {
-                            "up" | "online" => ("● ONLINE", palette.status_ok),
-                            "file" => ("● FILE", palette.chart_cpu),
-                            _ => ("✖ STOPPED", palette.status_err),
+                            "up" | "online" => ("● ONLINE", palette.success),
+                            "file" => ("● FILE", palette.chart[0]),
+                            _ => ("✖ STOPPED", palette.danger),
                         };
                         let port_str = if d.port > 0 { format!(":{}", d.port) } else { "local".to_string() };
                         Row::new(vec![
                             Cell::from(d.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                            Cell::from(d.engine.to_uppercase()).style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+                            Cell::from(d.engine.to_uppercase()).style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
                             Cell::from(port_str).style(Style::default().fg(palette.accent)),
                             Cell::from(db_st).style(Style::default().fg(db_col).add_modifier(Modifier::BOLD)),
                             Cell::from(d.database.clone()).style(Style::default().fg(palette.text_muted)),
@@ -9152,7 +8848,7 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                     }).collect()
                 };
                 let d_table = Table::new(db_rows, [Constraint::Length(20), Constraint::Length(12), Constraint::Length(10), Constraint::Length(12), Constraint::Min(16)])
-                    .header(Row::new(vec!["DATABASE", "ENGINE", "PORT", "STATUS", "DETAILS"]).style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)));
+                    .header(Row::new(vec!["DATABASE", "ENGINE", "PORT", "STATUS", "DETAILS"]).style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)));
                 f.render_widget(d_table, d_inner);
             } else {
                 let empty_block = Block::default()
@@ -9174,13 +8870,13 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             for (p_idx, p) in app.latest_snap.tracked_projects.iter().enumerate() {
                 let is_sel = p_idx == app.selected_project;
                 let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
-                let (dirty_badge, dirty_col) = if p.is_dirty { ("● DIRTY", palette.status_warn) } else { ("● CLEAN", palette.status_ok) };
+                let (dirty_badge, dirty_col) = if p.is_dirty { ("● DIRTY", palette.warning) } else { ("● CLEAN", palette.success) };
 
                 // Project Header Row
                 tree_rows.push(
                     Row::new(vec![
                         Cell::from(format!("▼ 📁 [Project] {} ({})", p.name, p.category)).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                        Cell::from(p.summary_line()).style(Style::default().fg(palette.chart_cpu)),
+                        Cell::from(p.summary_line()).style(Style::default().fg(palette.chart[0])),
                         Cell::from(dirty_badge).style(Style::default().fg(dirty_col).add_modifier(Modifier::BOLD)),
                         Cell::from(p.path.clone()).style(Style::default().fg(palette.text_muted)),
                     ])
@@ -9189,9 +8885,9 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
                 // Child Repos
                 for r in &p.repos {
-                    let (rd_icon, rd_col) = if r.is_dirty { ("● DIRTY", palette.status_warn) } else { ("● CLEAN", palette.status_ok) };
+                    let (rd_icon, rd_col) = if r.is_dirty { ("● DIRTY", palette.warning) } else { ("● CLEAN", palette.success) };
                     tree_rows.push(Row::new(vec![
-                        Cell::from(format!("  ├── 📦 Repo: {}", r.name)).style(Style::default().fg(palette.chart_cpu)),
+                        Cell::from(format!("  ├── 📦 Repo: {}", r.name)).style(Style::default().fg(palette.chart[0])),
                         Cell::from(format!("git:{}", r.branch)).style(Style::default().fg(palette.accent)),
                         Cell::from(rd_icon).style(Style::default().fg(rd_col)),
                         Cell::from(if r.path.is_empty() { "root".to_string() } else { r.path.clone() }).style(Style::default().fg(palette.text_muted)),
@@ -9201,13 +8897,13 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 // Child Containers
                 for c in &p.containers {
                     let (c_st, c_col) = match c.state.as_str() {
-                        "running" => ("● RUNNING", palette.status_ok),
-                        "paused" => ("● PAUSED", palette.status_warn),
-                        "defined" => ("◌ DEFINED", palette.chart_cpu),
-                        _ => ("✖ EXITED", palette.status_err),
+                        "running" => ("● RUNNING", palette.success),
+                        "paused" => ("● PAUSED", palette.warning),
+                        "defined" => ("◌ DEFINED", palette.chart[0]),
+                        _ => ("✖ EXITED", palette.danger),
                     };
                     tree_rows.push(Row::new(vec![
-                        Cell::from(format!("  ├── 🐳 Container: {}", c.name)).style(Style::default().fg(palette.status_ok)),
+                        Cell::from(format!("  ├── 🐳 Container: {}", c.name)).style(Style::default().fg(palette.success)),
                         Cell::from(c.image.clone()).style(Style::default().fg(palette.text_muted)),
                         Cell::from(c_st).style(Style::default().fg(c_col).add_modifier(Modifier::BOLD)),
                         Cell::from(c.ports.clone()).style(Style::default().fg(palette.text_muted)),
@@ -9217,11 +8913,11 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 // Child Services
                 for s in &p.services {
                     let (s_st, s_col) = match s.state.as_str() {
-                        "up" | "online" => ("● ONLINE", palette.status_ok),
-                        _ => ("✖ DOWN", palette.status_err),
+                        "up" | "online" => ("● ONLINE", palette.success),
+                        _ => ("✖ DOWN", palette.danger),
                     };
                     tree_rows.push(Row::new(vec![
-                        Cell::from(format!("  ├── ⚙ Service: {}", s.name)).style(Style::default().fg(palette.status_warn)),
+                        Cell::from(format!("  ├── ⚙ Service: {}", s.name)).style(Style::default().fg(palette.warning)),
                         Cell::from(format!("{}:{}/{}", s.host, s.port, s.protocol)).style(Style::default().fg(palette.accent)),
                         Cell::from(s_st).style(Style::default().fg(s_col).add_modifier(Modifier::BOLD)),
                         Cell::from("Active process / listener").style(Style::default().fg(palette.text_muted)),
@@ -9231,14 +8927,14 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 // Child Databases
                 for d in &p.databases {
                     let (d_st, d_col) = match d.state.as_str() {
-                        "up" | "online" => ("● ONLINE", palette.status_ok),
-                        "file" => ("● FILE", palette.chart_cpu),
-                        _ => ("✖ STOPPED", palette.status_err),
+                        "up" | "online" => ("● ONLINE", palette.success),
+                        "file" => ("● FILE", palette.chart[0]),
+                        _ => ("✖ STOPPED", palette.danger),
                     };
                     let port_str = if d.port > 0 { format!(":{}", d.port) } else { "local".to_string() };
                     tree_rows.push(Row::new(vec![
                         Cell::from(format!("  └── 🗄 DB: {} ({})", d.name, d.engine.to_uppercase())).style(Style::default().fg(palette.accent)),
-                        Cell::from(port_str).style(Style::default().fg(palette.status_warn)),
+                        Cell::from(port_str).style(Style::default().fg(palette.warning)),
                         Cell::from(d_st).style(Style::default().fg(d_col).add_modifier(Modifier::BOLD)),
                         Cell::from(d.database.clone()).style(Style::default().fg(palette.text_muted)),
                     ]));
@@ -9256,7 +8952,7 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             )
             .header(
                 Row::new(vec!["WORKSPACE & RESOURCE HIERARCHY", "DETAILS / CONFIG", "STATUS", "LOCATION"])
-                    .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+                    .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
             );
             f.render_widget(tree_table, inner);
 
@@ -9291,14 +8987,14 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                     let is_sel = i == app.selected_container;
                     let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
                     let (state_icon, state_col) = match c.state.as_str() {
-                        "running" => ("● RUNNING", palette.status_ok),
-                        "paused" => ("● PAUSED", palette.status_warn),
-                        _ => ("✖ EXITED", palette.status_err),
+                        "running" => ("● RUNNING", palette.success),
+                        "paused" => ("● PAUSED", palette.warning),
+                        _ => ("✖ EXITED", palette.danger),
                     };
 
                     Row::new(vec![
                         Cell::from(c.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                        Cell::from(c.image.clone()).style(Style::default().fg(palette.chart_cpu)),
+                        Cell::from(c.image.clone()).style(Style::default().fg(palette.chart[0])),
                         Cell::from(state_icon).style(Style::default().fg(state_col).add_modifier(Modifier::BOLD)),
                         Cell::from(c.status_detail.clone()).style(Style::default().fg(palette.text_muted)),
                     ])
@@ -9317,7 +9013,7 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             )
             .header(
                 Row::new(vec!["CONTAINER NAME", "IMAGE", "STATE", "STATUS / PORTS"])
-                    .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+                    .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
             );
             f.render_widget(table, inner);
 
@@ -9341,7 +9037,7 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── Tab 3: Uptime (Endpoint Monitors, HTTP/HTTPS, TCP, Cloudflare tunnels) ───
 
 fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(4), Constraint::Min(8)])
@@ -9471,9 +9167,9 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             let is_sel = i == app.selected_monitor;
             let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
             let (status_badge, badge_color) = if m.is_up {
-                (format!("● UP ({:.1}%)", m.uptime_pct), palette.status_ok)
+                (format!("● UP ({:.1}%)", m.uptime_pct), palette.success)
             } else {
-                (format!("✖ DOWN ({:.1}%)", m.uptime_pct), palette.status_err)
+                (format!("✖ DOWN ({:.1}%)", m.uptime_pct), palette.danger)
             };
 
             let latency_str = m
@@ -9501,11 +9197,11 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 }
             };
             let code_color = if !m.is_up {
-                palette.status_err
+                palette.danger
             } else if m.status_code.map(|c| (200..=299).contains(&c)).unwrap_or(false) {
-                palette.chart_cpu
+                palette.chart[0]
             } else {
-                palette.status_warn
+                palette.warning
             };
 
             let mut history_spans: Vec<Span> = Vec::with_capacity(20);
@@ -9569,7 +9265,7 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             "HTTP / ERR",
             "⊕",
         ])
-        .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+        .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
     );
     f.render_widget(table, inner);
 
@@ -9596,7 +9292,7 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 }
 
 fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let popup_area = centered_rect(68, 60, area);
     f.render_widget(Clear, popup_area);
 
@@ -9648,9 +9344,9 @@ fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     }
 
     let status_label = if monitor.is_up {
-        Span::styled("● UP (Healthy)", Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD))
+        Span::styled("● UP (Healthy)", Style::default().fg(palette.success).add_modifier(Modifier::BOLD))
     } else {
-        Span::styled("✖ DOWN (Unreachable)", Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD))
+        Span::styled("✖ DOWN (Unreachable)", Style::default().fg(palette.danger).add_modifier(Modifier::BOLD))
     };
 
     let latency_span = match monitor.latency_ms {
@@ -9660,14 +9356,14 @@ fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let code_span = match monitor.status_code {
         Some(c) => {
-            let col = if monitor.is_up { palette.status_ok } else { palette.status_err };
+            let col = if monitor.is_up { palette.success } else { palette.danger };
             Span::styled(c.to_string(), Style::default().fg(col).add_modifier(Modifier::BOLD))
         }
         None => {
             if let Some(ref err) = monitor.error {
-                Span::styled(format!("ERR: {err}"), Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD))
+                Span::styled(format!("ERR: {err}"), Style::default().fg(palette.danger).add_modifier(Modifier::BOLD))
             } else if !monitor.is_up {
-                Span::styled("ERR: Down".to_string(), Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD))
+                Span::styled("ERR: Down".to_string(), Style::default().fg(palette.danger).add_modifier(Modifier::BOLD))
             } else {
                 Span::styled("--".to_string(), Style::default().fg(Color::DarkGray))
             }
@@ -9716,7 +9412,7 @@ fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if let Some(ref err) = monitor.error {
         if !monitor.is_up {
             lines.push(Line::from(vec![
-                Span::styled("Failure Cause: ", Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD)),
+                Span::styled("Failure Cause: ", Style::default().fg(palette.danger).add_modifier(Modifier::BOLD)),
                 Span::styled(format!("ERR: {err}"), Style::default().fg(Color::LightRed)),
             ]));
         }
@@ -9786,7 +9482,7 @@ fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── Tab 4: Server (Multi-Node Server Resources & Latency Matrix) ─────────────
 
 fn draw_topology_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(8)])
@@ -9841,7 +9537,7 @@ fn draw_topology_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     // Server Tier
     map_lines.push(Line::from(Span::styled(
         "SERVER TIER:",
-        Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD),
+        Style::default().fg(palette.warning).add_modifier(Modifier::BOLD),
     )));
     for (i, (node, lat)) in app.server_probe_results.iter().enumerate() {
         let (status, color) = node_status(*lat);
@@ -9878,7 +9574,7 @@ fn draw_topology_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     // Database & Infra Tier
     map_lines.push(Line::from(Span::styled(
         "DATABASES & INFRA TIER:",
-        Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD),
+        Style::default().fg(palette.success).add_modifier(Modifier::BOLD),
     )));
     let container_count = snap.docker_containers.len().max(3);
     for i in 0..container_count {
@@ -9959,7 +9655,7 @@ fn draw_topology_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 }
 
 fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(8)])
@@ -10040,8 +9736,8 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             ("--".to_string(), "◌ INACTIVE", palette.text_muted)
         } else {
             match lat {
-                Some(ms) => (format!("{ms}ms"), "● REACHABLE", palette.status_ok),
-                None => ("--".to_string(), "✖ UNREACHABLE", palette.status_err),
+                Some(ms) => (format!("{ms}ms"), "● REACHABLE", palette.success),
+                None => ("--".to_string(), "✖ UNREACHABLE", palette.danger),
             }
         };
         rows.push(
@@ -10064,7 +9760,7 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     )
     .header(
         Row::new(vec!["SERVER NODE", "STATUS", "RTT LATENCY"])
-            .style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)),
+            .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
     );
     f.render_widget(table, list_inner);
 
@@ -10103,26 +9799,26 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ]));
         details.push(Line::from(vec![
             Span::styled("Memory (RAM): ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{}/{} MB (Cached: {} MB, Free: {} MB)", snap.ram_used_mb, snap.ram_total_mb, snap.ram_cached_mb, snap.ram_available_mb), Style::default().fg(palette.chart_cpu)),
+            Span::styled(format!("{}/{} MB (Cached: {} MB, Free: {} MB)", snap.ram_used_mb, snap.ram_total_mb, snap.ram_cached_mb, snap.ram_available_mb), Style::default().fg(palette.chart[0])),
         ]));
         details.push(Line::from(vec![
             Span::styled("Storage/NVMe: ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("Root /: {}G / {}G", snap.disk_used_gb, snap.disk_total_gb), Style::default().fg(palette.status_ok)),
+            Span::styled(format!("Root /: {}G / {}G", snap.disk_used_gb, snap.disk_total_gb), Style::default().fg(palette.success)),
         ]));
         if let Some(disk) = snap.disk_health.first() {
             let health_color = if disk.health_status.contains("HEALTHY") || disk.health_status.contains("GOOD") {
-                palette.status_ok
+                palette.success
             } else if disk.health_status.contains("WARN") {
-                palette.status_warn
+                palette.warning
             } else {
-                palette.status_err
+                palette.danger
             };
             let temp_color = if disk.temperature_c > 75.0 {
-                palette.status_err
+                palette.danger
             } else if disk.temperature_c > 60.0 {
-                palette.status_warn
+                palette.warning
             } else {
-                palette.status_ok
+                palette.success
             };
             details.push(Line::from(vec![
                 Span::styled("SSD SMART:    ", Style::default().fg(palette.text_muted)),
@@ -10133,10 +9829,10 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         }
         details.push(Line::from(vec![
             Span::styled("Thermal State:", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{:.1}°C (Fan: {})", snap.cpu_temp_c, snap.fan_speed.as_deref().unwrap_or("Dynamic")), Style::default().fg(if snap.cpu_temp_c > 85.0 { palette.status_err } else { palette.status_ok })),
+            Span::styled(format!("{:.1}°C (Fan: {})", snap.cpu_temp_c, snap.fan_speed.as_deref().unwrap_or("Dynamic")), Style::default().fg(if snap.cpu_temp_c > 85.0 { palette.danger } else { palette.success })),
         ]));
         details.push(Line::from(""));
-        details.push(Line::from(Span::styled("Per-Core Telemetry Grid:", Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD))));
+        details.push(Line::from(Span::styled("Per-Core Telemetry Grid:", Style::default().fg(palette.warning).add_modifier(Modifier::BOLD))));
         for row in 0..4 {
             let left_spans = format_core_span(snap.cpus.get(row), row, 6);
             let right_spans = format_core_span(snap.cpus.get(row + 4), row + 4, 6);
@@ -10166,13 +9862,13 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ]));
         details.push(Line::from(vec![
             Span::styled("Services:      ", Style::default().fg(palette.text_muted)),
-            Span::styled(svcs.clone(), Style::default().fg(palette.status_warn)),
+            Span::styled(svcs.clone(), Style::default().fg(palette.warning)),
         ]));
         details.push(Line::from(vec![
             Span::styled("Node State:    ", Style::default().fg(palette.text_muted)),
             Span::styled(
                 if active_state { "● ACTIVE (Probing & Armada Enabled)" } else { "◌ INACTIVE (Probes Disabled)" },
-                Style::default().fg(if active_state { palette.status_ok } else { palette.text_muted }).add_modifier(Modifier::BOLD),
+                Style::default().fg(if active_state { palette.success } else { palette.text_muted }).add_modifier(Modifier::BOLD),
             ),
         ]));
         details.push(Line::from(""));
@@ -10188,7 +9884,7 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── Tab 7: Log (Live / Buffered Stream Viewer with Level Filtering) ──────────
 
 fn draw_log_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(8)])
@@ -10273,9 +9969,9 @@ fn draw_log_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         .skip(app.log_scroll)
         .map(|(lvl, src, msg)| {
             let (badge, col) = match lvl.as_str() {
-                "ERROR" => ("✖ ERROR", palette.status_err),
-                "WARN" => ("⚠ WARN ", palette.status_warn),
-                _ => ("● INFO ", palette.status_ok),
+                "ERROR" => ("✖ ERROR", palette.danger),
+                "WARN" => ("⚠ WARN ", palette.warning),
+                _ => ("● INFO ", palette.success),
             };
             Line::from(vec![
                 Span::styled(format!("{:<8} ", badge), Style::default().fg(col).add_modifier(Modifier::BOLD)),
@@ -10291,7 +9987,7 @@ fn draw_log_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── Tab 8: Terminal (Embedded Terminal / Command Execution Runner Pane) ───────
 
 fn draw_terminal_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(8), Constraint::Length(3)])
@@ -10313,11 +10009,11 @@ fn draw_terminal_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         Span::raw(" │ Quick Presets: "),
         Span::styled(" [cas doctor] ", Style::default().fg(palette.accent)),
         Span::raw(" "),
-        Span::styled(" [cas git-status] ", Style::default().fg(palette.chart_cpu)),
+        Span::styled(" [cas git-status] ", Style::default().fg(palette.chart[0])),
         Span::raw(" "),
-        Span::styled(" [docker ps] ", Style::default().fg(palette.status_ok)),
+        Span::styled(" [docker ps] ", Style::default().fg(palette.success)),
         Span::raw(" "),
-        Span::styled(" [tailscale status] ", Style::default().fg(palette.status_warn)),
+        Span::styled(" [tailscale status] ", Style::default().fg(palette.warning)),
     ];
     f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
 
@@ -10336,7 +10032,7 @@ fn draw_terminal_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             let col = if l.starts_with("$") {
                 palette.accent
             } else if l.starts_with("!") || l.starts_with("✗") {
-                palette.status_err
+                palette.danger
             } else {
                 Color::White
             };
@@ -10348,7 +10044,7 @@ fn draw_terminal_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let in_block = Block::default()
         .borders(Borders::ALL)
         .title(" Command Input ($ > Enter to run | Esc to clear) ")
-        .border_style(Style::default().fg(palette.status_ok));
+        .border_style(Style::default().fg(palette.success));
     let in_inner = in_block.inner(chunks[2]);
     f.render_widget(in_block, chunks[2]);
 
@@ -10363,7 +10059,7 @@ fn draw_terminal_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── Tab 9: AI (Workspace AI Chat Connected to OmniRoute / 9router) ────────────
 
 fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(8), Constraint::Length(3)])
@@ -10465,7 +10161,7 @@ fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 };
                 (text, Style::default().fg(Color::White))
             } else if l.starts_with("Error:") {
-                (l.clone(), Style::default().fg(palette.status_err).add_modifier(Modifier::BOLD))
+                (l.clone(), Style::default().fg(palette.danger).add_modifier(Modifier::BOLD))
             } else {
                 (l.clone(), Style::default().fg(palette.text_muted))
             };
@@ -10516,9 +10212,9 @@ fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             " Prompt Input ($ > Enter to send | 'm': Model | 'c': Clear) ".to_string()
         })
         .border_style(if app.is_chat_processing {
-            Style::default().fg(palette.status_warn)
+            Style::default().fg(palette.warning)
         } else {
-            Style::default().fg(palette.status_ok)
+            Style::default().fg(palette.success)
         });
     let in_inner = in_block.inner(chunks[2]);
     f.render_widget(in_block, chunks[2]);
@@ -10538,7 +10234,7 @@ fn draw_setting_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 }
 
 fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let mood_color = match app.pet_mood {
         crate::pet::PetMood::Overheated => Color::LightRed,
         crate::pet::PetMood::Sick => Color::Magenta,
@@ -10797,7 +10493,7 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── Pet Switch Confirmation Modal ───────────────────────────────────────────
 
 fn draw_pet_switch_confirm_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let popup_area = centered_rect(52, 13, area);
     f.render_widget(Clear, popup_area);
 
@@ -10958,7 +10654,7 @@ fn draw_analytics_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 }
 
 fn draw_analytics_detail_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -11214,7 +10910,7 @@ fn draw_analytics_detail_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 }
 
 fn draw_analytics_list_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -11322,7 +11018,7 @@ fn draw_analytics_list_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         };
 
         let row_style = if is_selected {
-            Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.status_ok).add_modifier(Modifier::BOLD)
+            Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.success).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::Rgb(255, 255, 255))
         };
@@ -11363,7 +11059,7 @@ fn draw_analytics_list_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         Constraint::Length(10),
         Constraint::Min(8),
     ])
-    .header(Row::new(header_cells).style(Style::default().fg(palette.status_warn).add_modifier(Modifier::BOLD)))
+    .header(Row::new(header_cells).style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)))
     .style(Style::default().fg(palette.text_muted));
 
     f.render_widget(sites_table, main_inner);
@@ -11378,7 +11074,7 @@ fn draw_analytics_list_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 }
 
 fn draw_site_import_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let popup_area = centered_rect(65, 42, area);
     f.render_widget(Clear, popup_area);
 
@@ -11476,7 +11172,7 @@ fn draw_site_import_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── Pro Modal Wizard (Phase 4) ──────────────────────────────────────────────
 
 fn draw_pro_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let popup_area = centered_rect(65, 46, area);
     f.render_widget(Clear, popup_area);
 
@@ -11684,7 +11380,7 @@ fn draw_pro_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 }
 
 fn draw_analytics_script_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let modal_width = 96.min(area.width.saturating_sub(2));
     let modal_height = 24.min(area.height.saturating_sub(2));
     let x = (area.width.saturating_sub(modal_width)) / 2;
@@ -11698,7 +11394,7 @@ fn draw_analytics_script_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) 
         .borders(Borders::ALL)
         .title(format!(" 📋 Sovereign Web Analytics · Tracker Templates (Site ID: '{active_site}') "))
         .title_alignment(Alignment::Center)
-        .border_style(Style::default().fg(palette.status_ok));
+        .border_style(Style::default().fg(palette.success));
 
     let inner = block.inner(modal_area);
     f.render_widget(block, modal_area);
@@ -11905,7 +11601,7 @@ fn draw_audit_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── Tab 4: Settings GUI (Interactive visual configuration form) ─────────────
 
 fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(8)])
@@ -11964,15 +11660,15 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let btn_save = Span::styled(
         " [💾 Save] ",
-        Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.status_ok).add_modifier(Modifier::BOLD),
+        Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.success).add_modifier(Modifier::BOLD),
     );
     let btn_reload = Span::styled(
         " [↺ Reload] ",
-        Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.status_warn).add_modifier(Modifier::BOLD),
+        Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.warning).add_modifier(Modifier::BOLD),
     );
     let btn_clear = Span::styled(
         " [🗑 Clear Chat] ",
-        Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.status_err).add_modifier(Modifier::BOLD),
+        Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.danger).add_modifier(Modifier::BOLD),
     );
     let btn_vacuum = Span::styled(
         " [🧹 Vacuum DB] ",
@@ -12234,7 +11930,7 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── Tab 12: Turbo & Performance Overclock Engine ─────────────────────────────
 
 fn draw_turbo_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -12450,33 +12146,27 @@ fn draw_turbo_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── Footer & Compact Fallback ────────────────────────────────────────────────
 
 fn draw_footer(f: &mut Frame, app: &CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
-    let keybinds = " [1-9/0/-/=]: Tabs │ Tab: Cycle │ ↑/↓: Nav │ Enter: Act │ ?: Help │ Esc: Back ";
-    let content = if let Some((msg, _)) = &app.notification {
-        Line::from(vec![
-            Span::styled(
-                format!(" ★ {msg} "),
-                Style::default()
-                    .fg(Color::Rgb(0, 0, 0))
-                    .bg(palette.status_warn)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" "),
-            Span::styled(keybinds, Style::default().fg(palette.text_muted)),
-        ])
-    } else {
-        Line::from(Span::styled(keybinds, Style::default().fg(palette.text_muted)))
-    };
-
-    f.render_widget(Paragraph::new(content).alignment(Alignment::Left), area);
+    let palette = cockpit_theme(&app.cfg.output.theme);
+    let toast = app.notification.as_ref().map(|(msg, created)| catui::widgets::Toast {
+        message: msg.clone(),
+        status: catui::Status::Warning,
+        created: *created,
+        ttl: Duration::from_secs(4),
+    });
+    f.render_widget(
+        catui::widgets::Footer::new(&palette)
+            .toast(toast.as_ref())
+            .hints(catui::widgets::Footer::standard_hints("1-9/0/-/=")),
+        area,
+    );
 }
 
 fn draw_compact_fallback(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" CAShell Cockpit (Compact View) ")
-        .border_style(Style::default().fg(palette.status_warn));
+        .border_style(Style::default().fg(palette.warning));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -12511,7 +12201,7 @@ fn draw_compact_fallback(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── Keybindings Help Modal ───────────────────────────────────────────────────
 
 fn draw_help_modal(f: &mut Frame, app: &CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let modal_width = 72.min(area.width.saturating_sub(4));
     let modal_height = 20.min(area.height.saturating_sub(2));
     let x = (area.width.saturating_sub(modal_width)) / 2;
@@ -12613,30 +12303,11 @@ fn draw_help_modal(f: &mut Frame, app: &CockpitApp, area: Rect) {
     f.render_widget(table, inner);
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
-}
 
 // ── Cron & Scheduled Jobs View ─────────────────────────────────────────────
 
 fn draw_cron_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(5)])
@@ -12667,7 +12338,7 @@ fn draw_cron_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 Span::styled(format!("{:<15} ", j.schedule), Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD)),
                 Span::styled(format!("{:<30} ", j.command), Style::default().fg(Color::White)),
                 Span::styled("[User Crontab] ", Style::default().fg(palette.text_muted)),
-                Span::styled("● ACTIVE", Style::default().fg(palette.status_ok)),
+                Span::styled("● ACTIVE", Style::default().fg(palette.success)),
             ])));
         }
     }
@@ -12679,7 +12350,7 @@ fn draw_cron_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                     Span::styled(format!("{:<15} ", j.schedule), Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD)),
                     Span::styled(format!("{:<30} ", j.command), Style::default().fg(Color::White)),
                     Span::styled(format!("[{}] ", j.description), Style::default().fg(palette.accent)),
-                    Span::styled("● MANAGED", Style::default().fg(palette.status_ok)),
+                    Span::styled("● MANAGED", Style::default().fg(palette.success)),
                 ])));
             }
         }
@@ -12704,7 +12375,7 @@ fn draw_cron_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── Virtual Pet (Tamagotchi) Modal ──────────────────────────────────────────
 
 fn draw_pet_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let popup_area = centered_rect(60, 60, area);
     f.render_widget(Clear, popup_area);
 
@@ -12748,7 +12419,7 @@ fn draw_pet_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             ]));
             lines.push(Line::from(vec![
                 Span::styled("Tahap: ", Style::default().fg(palette.text_muted)),
-                Span::styled(stage.display_name(), Style::default().fg(palette.status_ok).add_modifier(Modifier::BOLD)),
+                Span::styled(stage.display_name(), Style::default().fg(palette.success).add_modifier(Modifier::BOLD)),
                 Span::raw("  │  "),
                 Span::styled("XP: ", Style::default().fg(palette.text_muted)),
                 Span::styled(format!("{}/{}", pet.xp, stage.next_threshold()), Style::default().fg(Color::Yellow)),
@@ -12760,7 +12431,7 @@ fn draw_pet_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             ]));
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("[Feed Pet (+10 XP)] (Press 'f')", Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
+                Span::styled("[Feed Pet (+10 XP)] (Press 'f')", Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.success).add_modifier(Modifier::BOLD)),
                 Span::raw("  "),
                 Span::styled("[New Pet] (Press 'n')", Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.highlight_bg)),
                 Span::raw("  "),
@@ -12787,7 +12458,7 @@ fn draw_pet_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── Cron Job Wizard Modal ───────────────────────────────────────────────────
 
 fn draw_cron_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let popup_area = centered_rect(50, 40, area);
     f.render_widget(Clear, popup_area);
 
@@ -12810,7 +12481,7 @@ fn draw_cron_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("[Save Job] (Enter)", Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.status_ok).add_modifier(Modifier::BOLD)),
+            Span::styled("[Save Job] (Enter)", Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.success).add_modifier(Modifier::BOLD)),
             Span::raw("  "),
             Span::styled("[Cancel] (Esc)", Style::default().fg(palette.text_muted)),
         ]),
@@ -12821,7 +12492,7 @@ fn draw_cron_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── CRUD Add Wizards (Server / Project / Docker Container / Uptime Monitor) ──
 
 fn draw_server_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let popup_area = centered_rect(65, 52, area);
     f.render_widget(Clear, popup_area);
 
@@ -12836,7 +12507,7 @@ fn draw_server_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let block = Block::default()
         .title(wizard_title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(if is_edit { palette.status_warn } else { palette.accent }).add_modifier(Modifier::BOLD));
+        .border_style(Style::default().fg(if is_edit { palette.warning } else { palette.accent }).add_modifier(Modifier::BOLD));
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
@@ -12979,7 +12650,7 @@ fn draw_server_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 }
 
 fn draw_project_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let popup_area = centered_rect(65, 46, area);
     f.render_widget(Clear, popup_area);
 
@@ -13096,7 +12767,7 @@ fn draw_project_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 }
 
 fn draw_container_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let popup_area = centered_rect(65, 52, area);
     f.render_widget(Clear, popup_area);
 
@@ -13214,7 +12885,7 @@ fn draw_container_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 }
 
 fn draw_monitor_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let popup_area = centered_rect(65, 42, area);
     f.render_widget(Clear, popup_area);
 
@@ -13333,210 +13004,85 @@ fn draw_monitor_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── Quit Confirmation Modal ──────────────────────────────────────────────────
 
 fn draw_quit_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
-    let popup_area = centered_rect(54, 12, area);
-    f.render_widget(Clear, popup_area);
-
-    let block = Block::default()
-        .title(" ⚠ Exit CAShell Sovereign Cockpit ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
-    let inner = block.inner(popup_area);
-    f.render_widget(block, popup_area);
-
-    let lines = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            " Are you sure you want to exit the cockpit? ",
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(
-            " Background daemons & monitoring will continue to run. ",
-            Style::default().fg(palette.text_muted),
-        )),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                " [Y] Yes, Exit ",
-                Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("    "),
-            Span::styled(
-                " [N / Esc] Cancel & Stay ",
-                Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD),
-            ),
-        ]),
-    ];
-    f.render_widget(
-        Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center),
-        inner,
-    );
-
-    // Register mouse hitboxes for [Yes] and [Cancel]
-    let btn_y = inner.y + 4;
-    let yes_w = 15u16;
-    let gap_w = 4u16;
-    let cancel_w = 25u16;
-    let total_w = yes_w + gap_w + cancel_w;
-    let start_x = inner.x + (inner.width.saturating_sub(total_w)) / 2;
-
-    app.register_hitbox(
-        Rect { x: start_x, y: btn_y, width: yes_w, height: 1 },
-        HitboxAction::ConfirmQuit,
-    );
-    app.register_hitbox(
-        Rect { x: start_x + yes_w + gap_w, y: btn_y, width: cancel_w, height: 1 },
-        HitboxAction::CancelQuit,
-    );
+    let palette = cockpit_theme(&app.cfg.output.theme);
+    let dlg = || {
+        catui::widgets::ConfirmDialog::new(
+            &palette,
+            "⚠ Exit CAShell Sovereign Cockpit",
+            "Are you sure you want to exit the cockpit? Background daemons & monitoring will continue to run.",
+        )
+        .labels("Y: Yes, Exit", "N/Esc: Cancel & Stay")
+        .severity(catui::Status::Warning)
+    };
+    for (rect, choice) in dlg().hitboxes(area) {
+        let action = match choice {
+            catui::widgets::ConfirmChoice::Confirm => HitboxAction::ConfirmQuit,
+            catui::widgets::ConfirmChoice::Cancel => HitboxAction::CancelQuit,
+        };
+        app.register_hitbox(rect, action);
+    }
+    f.render_widget(dlg(), area);
 }
 
 // ── Delete Confirmation Modal ────────────────────────────────────────────────
 
 fn draw_delete_confirm_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
-    let popup_area = centered_rect(58, 13, area);
-    f.render_widget(Clear, popup_area);
-
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let target_label = app.pending_delete_target.label();
-    let title = format!(" 🗑 Confirm Deletion — {target_label} ");
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD));
-    let inner = block.inner(popup_area);
-    f.render_widget(block, popup_area);
-
     let label = if app.pending_delete_label.is_empty() {
         "this resource".to_string()
     } else {
         app.pending_delete_label.clone()
     };
-
-    let lines = vec![
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(" Are you sure you want to permanently delete: ", Style::default().fg(Color::White)),
-        ]),
-        Line::from(vec![
-            Span::styled(format!(" ✖ {label} "), Style::default().fg(Color::Rgb(255, 120, 120)).add_modifier(Modifier::BOLD)),
-        ]),
-        Line::from(Span::styled(
-            " This action will immediately remove the resource and cannot be undone. ",
-            Style::default().fg(palette.text_muted),
-        )),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                " [Y] Yes, Delete ",
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("    "),
-            Span::styled(
-                " [N / Esc] Cancel & Keep ",
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-            ),
-        ]),
-    ];
-    f.render_widget(
-        Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center),
-        inner,
+    let message = format!(
+        "Are you sure you want to permanently delete: {label}? This action will immediately remove the resource and cannot be undone."
     );
-
-    // Register mouse hitboxes for [Yes, Delete] and [Cancel & Keep]
-    let btn_y = inner.y + 5;
-    let yes_w = 17u16;
-    let gap_w = 4u16;
-    let cancel_w = 25u16;
-    let total_w = yes_w + gap_w + cancel_w;
-    let start_x = inner.x + (inner.width.saturating_sub(total_w)) / 2;
-
-    app.register_hitbox(
-        Rect { x: start_x, y: btn_y, width: yes_w, height: 1 },
-        HitboxAction::ConfirmDelete,
-    );
-    app.register_hitbox(
-        Rect { x: start_x + yes_w + gap_w, y: btn_y, width: cancel_w, height: 1 },
-        HitboxAction::CancelDelete,
-    );
+    let title = format!("🗑 Confirm Deletion — {target_label}");
+    let dlg = || {
+        catui::widgets::ConfirmDialog::new(&palette, title.clone(), message.clone())
+            .labels("Y: Yes, Delete", "N/Esc: Cancel & Keep")
+            .severity(catui::Status::Critical)
+    };
+    for (rect, choice) in dlg().hitboxes(area) {
+        let action = match choice {
+            catui::widgets::ConfirmChoice::Confirm => HitboxAction::ConfirmDelete,
+            catui::widgets::ConfirmChoice::Cancel => HitboxAction::CancelDelete,
+        };
+        app.register_hitbox(rect, action);
+    }
+    f.render_widget(dlg(), area);
 }
 
 // ── Process Kill Confirmation Modal ──────────────────────────────────────────
 
 fn draw_kill_process_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
-    let popup_area = centered_rect(58, 12, area);
-    f.render_widget(Clear, popup_area);
-
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let (pid, name) = app
         .pending_kill_proc
         .clone()
         .unwrap_or((0, "unknown".to_string()));
-
-    let block = Block::default()
-        .title(" ■ Confirm Process Kill ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD));
-    let inner = block.inner(popup_area);
-    f.render_widget(block, popup_area);
-
-    let lines = vec![
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                format!(" Confirm Kill PID {pid} ({name})? "),
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        Line::from(Span::styled(
-            " This will send SIGTERM (or [9] for SIGKILL) to stop the process. ",
-            Style::default().fg(palette.text_muted),
-        )),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                " [y] Confirm ",
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("    "),
-            Span::styled(
-                " [n] Cancel ",
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("    "),
-            Span::styled(
-                " [9] Force Kill ",
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-            ),
-        ]),
-    ];
-    f.render_widget(
-        Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center),
-        inner,
+    let message = format!(
+        "Confirm Kill PID {pid} ({name})? This will send SIGTERM. Press [9] for Force Kill (SIGKILL)."
     );
-
-    // Register mouse hitboxes
-    let btn_y = inner.y + 4;
-    let yes_w = 13u16;
-    let gap_w = 4u16;
-    let no_w = 12u16;
-    let force_w = 16u16;
-    let total_w = yes_w + gap_w + no_w + gap_w + force_w;
-    let start_x = inner.x + (inner.width.saturating_sub(total_w)) / 2;
-
-    app.register_hitbox(
-        Rect { x: start_x, y: btn_y, width: yes_w, height: 1 },
-        HitboxAction::ConfirmKillProcess,
-    );
-    app.register_hitbox(
-        Rect { x: start_x + yes_w + gap_w, y: btn_y, width: no_w, height: 1 },
-        HitboxAction::CancelKillProcess,
-    );
+    let dlg = || {
+        catui::widgets::ConfirmDialog::new(&palette, "Confirm Process Kill", message.clone())
+            .labels("y: Confirm", "n: Cancel")
+            .severity(catui::Status::Critical)
+    };
+    for (rect, choice) in dlg().hitboxes(area) {
+        let action = match choice {
+            catui::widgets::ConfirmChoice::Confirm => HitboxAction::ConfirmKillProcess,
+            catui::widgets::ConfirmChoice::Cancel => HitboxAction::CancelKillProcess,
+        };
+        app.register_hitbox(rect, action);
+    }
+    f.render_widget(dlg(), area);
 }
 
 // ── CrystalDisk SSD Diagnostic modal ─────────────────────────────────────────
 
 fn draw_disk_health_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let popup_area = centered_rect(76, 75, area);
     f.render_widget(Clear, popup_area);
 
@@ -13557,17 +13103,17 @@ fn draw_disk_health_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let d = &disks[disk_idx];
 
     let health_color = if d.health_status.contains("GOOD") || d.health_status.contains("HEALTHY") {
-        palette.status_ok
+        palette.success
     } else if d.health_status.contains("WARN") {
-        palette.status_warn
+        palette.warning
     } else {
-        palette.status_err
+        palette.danger
     };
 
     let temp_color = if d.temperature_c >= 75.0 {
-        palette.status_err
+        palette.danger
     } else if d.temperature_c >= 60.0 {
-        palette.status_warn
+        palette.warning
     } else {
         Color::Cyan
     };
@@ -13649,7 +13195,7 @@ fn draw_disk_health_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ]),
         Line::from(Span::styled(
             if d.critical_warnings > 0 { "  CRITICAL SMART WARNINGS" } else { "  Nominal S.M.A.R.T. Endurance" },
-            Style::default().fg(if d.critical_warnings > 0 { palette.status_err } else { palette.text_muted }),
+            Style::default().fg(if d.critical_warnings > 0 { palette.danger } else { palette.text_muted }),
         )),
     ];
     f.render_widget(Paragraph::new(health_text), hb_inner);
@@ -13696,7 +13242,7 @@ fn draw_disk_health_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     );
     let wear_gauge = Gauge::default()
         .block(Block::default().borders(Borders::NONE))
-        .gauge_style(Style::default().fg(if d.wear_level_pct > 80 { palette.status_err } else { palette.accent }).bg(Color::DarkGray))
+        .gauge_style(Style::default().fg(if d.wear_level_pct > 80 { palette.danger } else { palette.accent }).bg(Color::DarkGray))
         .ratio(wear_ratio)
         .label(Span::styled(
             wear_label,
@@ -13726,11 +13272,11 @@ fn draw_disk_health_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ]),
         Line::from(vec![
             Span::styled(" Unsafe Shutdowns:           ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{}", d.unsafe_shutdowns), Style::default().fg(if d.unsafe_shutdowns > 50 { palette.status_warn } else { Color::White })),
+            Span::styled(format!("{}", d.unsafe_shutdowns), Style::default().fg(if d.unsafe_shutdowns > 50 { palette.warning } else { Color::White })),
             Span::styled("  │  Critical Warnings: ", Style::default().fg(palette.text_muted)),
             Span::styled(
                 format!("{}", d.critical_warnings),
-                Style::default().fg(if d.critical_warnings > 0 { palette.status_err } else { palette.status_ok }).add_modifier(Modifier::BOLD),
+                Style::default().fg(if d.critical_warnings > 0 { palette.danger } else { palette.success }).add_modifier(Modifier::BOLD),
             ),
         ]),
     ];
@@ -13798,7 +13344,7 @@ fn draw_disk_health_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── Master Password Lock Screen ──────────────────────────────────────────────
 
 fn draw_lock_screen(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let popup_area = centered_rect(58, 16, area);
     f.render_widget(Clear, popup_area);
 
@@ -13876,7 +13422,7 @@ fn draw_lock_screen(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── Set Master Password Modal ────────────────────────────────────────────────
 
 fn draw_set_password_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = ThemePalette::get(&app.cfg.output.theme);
+    let palette = cockpit_theme(&app.cfg.output.theme);
     let popup_area = centered_rect(62, 20, area);
     f.render_widget(Clear, popup_area);
 
@@ -13953,14 +13499,41 @@ mod tests {
 
     #[test]
     fn test_theme_palette_contrast_rules() {
+        fn luminance(c: Color) -> f32 {
+            match c {
+                Color::Rgb(r, g, b) => (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32) / 255.0,
+                Color::Black => 0.0,
+                other => panic!("unexpected non-RGB highlight_fg {other:?}"),
+            }
+        }
         for &name in THEME_OPTIONS {
-            let p = ThemePalette::get(name);
-            // Contrast rule 1: Active tab highlighted text MUST be black (Color::Rgb(0, 0, 0))
-            assert_eq!(p.highlight_fg, Color::Rgb(0, 0, 0));
+            // Unadapted preset (independent of the test runner's terminal colour depth).
+            let p = catui::Theme::from_name_or(name, catui::ThemePreset::CaClassic);
+            assert_eq!(catui::ThemePreset::parse(name), Some(p.preset), "{name} must be a CATUI preset id");
+            // Contrast rule 1: active-tab text must be dark on dark themes (was: exactly black).
+            if p.mode == catui::Mode::Dark {
+                assert!(luminance(p.highlight_fg) < 0.1, "{name}: highlight_fg too light");
+            }
             // Contrast rule 2: Never identical text and background
             assert_ne!(p.highlight_fg, p.highlight_bg);
             assert_ne!(p.text, p.row_selected_bg);
         }
+    }
+
+    #[test]
+    fn test_legacy_theme_names_still_resolve() {
+        use catui::ThemePreset as P;
+        for (name, want) in [
+            ("ca-classic", P::CaClassic),
+            ("cad-cyberpunk", P::Cyberpunk),
+            ("tokyo-night", P::TokyoNight),
+            ("monokai", P::Monokai),
+            ("nord", P::Nord),
+            ("high-contrast", P::HighContrast),
+        ] {
+            assert_eq!(cockpit_theme(name).preset, want, "{name}");
+        }
+        assert_eq!(cockpit_theme("something-unknown").preset, P::CaClassic);
     }
 
     #[test]
@@ -14126,7 +13699,7 @@ mod tests {
     #[test]
     fn test_render_braille_curve_dimensions() {
         let data = vec![10.0, 20.0, 50.0, 80.0, 30.0];
-        let lines = render_braille_curve(&data, 40, 2);
+        let lines = cpu_braille_lines(&cockpit_theme("ca-classic"), &data, 40, 2);
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].spans.len(), 40);
         assert_eq!(lines[1].spans.len(), 40);
@@ -14853,7 +14426,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).expect("terminal");
 
         // 1. Test resume panel rendering
-        let palette = ThemePalette::get(&app.cfg.output.theme);
+        let palette = cockpit_theme(&app.cfg.output.theme);
         terminal
             .draw(|f| {
                 let area = f.area();

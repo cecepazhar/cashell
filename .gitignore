@@ -6,3 +6,6 @@
 /target-arm64
 /target-bookworm
 .rustup/
+
+# override lokal catui
+.cargo/config.toml
