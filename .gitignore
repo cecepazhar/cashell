@@ -9,3 +9,6 @@
 
 # override lokal catui
 .cargo/config.toml
+
+# Agent skills
+skills/

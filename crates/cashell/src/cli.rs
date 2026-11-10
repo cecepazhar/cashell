@@ -86,6 +86,9 @@ pub enum Commands {
     /// 24/7 fleet & health monitoring daemon & HTTP API
     Daemon(DaemonCommand),
 
+    /// Manage offline-first license key & billing (format: CASH99-RAND6-CK)
+    License(crate::commands::license::LicenseCommand),
+
     /// Pro multi-device zero-knowledge sync: login, status, sync, push, pull, devices, logout
     Pro(ProCommand),
 

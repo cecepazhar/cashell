@@ -32,3 +32,5 @@ use std::path::Path;
 pub fn load_config(path: &Option<std::path::PathBuf>) -> Result<Config> {
     Config::load(path.as_deref().map(Path::new))
 }
+
+pub mod license;

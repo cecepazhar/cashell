@@ -13,7 +13,9 @@
 //! - Robust RAII terminal guard with panic recovery + compact fallback for < 80x24 terminals.
 
 use crate::config::Config;
-use crate::systat::{snapshot, AnalyticSiteItem, CpuCoreInfo, SysSnapshot};
+use crate::systat::{
+    snapshot_slow, snapshot_telemetry, AnalyticSiteItem, CpuCoreInfo, SysSnapshot,
+};
 use anyhow::Result;
 use clap::Parser;
 use crossterm::event::{self, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
@@ -821,7 +823,9 @@ pub struct CockpitApp {
 
 impl CockpitApp {
     pub fn new(cfg: &Config) -> Self {
-        let snap = snapshot();
+        let mut snap = snapshot_telemetry();
+        snap.fleet_nodes = crate::systat::probe_fleet_nodes(snap.cpu_pct, 0, 0);
+        snap.service_health = crate::systat::probe_services_health(0, 0);
         let mut cpu_history = VecDeque::with_capacity(MAX_CPU_SAMPLES);
         let mut ram_history = VecDeque::with_capacity(MAX_CPU_SAMPLES);
         let ram_pct = (snap.ram_used_mb * 100)
@@ -2257,8 +2261,19 @@ impl CockpitApp {
     }
 
     pub fn sample_system(&mut self) {
-        let snap = crate::systat::snapshot();
+        let snap = snapshot_telemetry();
         self.ingest_snapshot(snap);
+        if let Ok(db) = crate::db::Database::open() {
+            if let Ok(summary) = db.get_analytics_summary(self.analytics_site_filter.as_deref()) {
+                self.latest_snap.web_analytics = summary;
+            }
+        }
+    }
+
+    /// Merge slow-probe data (Docker, projects, uptime, fleet, GPU) into the
+    /// current snapshot without disturbing the fast CPU/RAM/disk samples.
+    pub fn ingest_slow_snapshot(&mut self, slow: SysSnapshot) {
+        self.latest_snap.merge_slow(slow);
     }
 
     pub fn analytic_sites(&self) -> Vec<AnalyticSiteItem> {
@@ -3768,12 +3783,32 @@ pub fn run(_cmd: &CockpitCommand, cfg: &Config) -> Result<()> {
 
     let stats_thread = std::thread::spawn(move || {
         while r_thread.load(Ordering::Relaxed) {
-            let snap = snapshot();
+            let snap = snapshot_telemetry();
             if snap_tx.send(snap).is_err() {
                 break;
             }
             for _ in 0..10 {
                 if !r_thread.load(Ordering::Relaxed) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+    });
+
+    // Slow probes (Docker, project tree scan, uptime HTTP, fleet ping) run on a
+    // much lower cadence so they never block the 1s telemetry loop.
+    let r_slow = running.clone();
+    let (slow_tx, slow_rx) = mpsc::channel::<SysSnapshot>();
+    let slow_thread = std::thread::spawn(move || {
+        while r_slow.load(Ordering::Relaxed) {
+            let snap = snapshot_slow();
+            if slow_tx.send(snap).is_err() {
+                break;
+            }
+            // ~60s between slow refresh cycles, in interruptible slices.
+            for _ in 0..600 {
+                if !r_slow.load(Ordering::Relaxed) {
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(100));
@@ -3836,12 +3871,14 @@ pub fn run(_cmd: &CockpitCommand, cfg: &Config) -> Result<()> {
         }
     });
 
-    let res = event_loop(terminal, &mut app, &snap_rx, &sync_rx);
+    let res = event_loop(terminal, &mut app, &snap_rx, &slow_rx, &sync_rx);
 
     running.store(false, Ordering::Relaxed);
     drop(snap_rx);
+    drop(slow_rx);
     drop(sync_rx);
     let _ = stats_thread.join();
+    let _ = slow_thread.join();
     let _ = sync_thread.join();
 
     res
@@ -3853,12 +3890,18 @@ fn event_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut CockpitApp,
     snap_rx: &mpsc::Receiver<SysSnapshot>,
+    slow_rx: &mpsc::Receiver<SysSnapshot>,
     sync_rx: &mpsc::Receiver<SyncEvent>,
 ) -> Result<()> {
     loop {
-        // Ingest telemetry if available
+        // Ingest fast telemetry if available
         while let Ok(snap) = snap_rx.try_recv() {
             app.ingest_snapshot(snap);
+        }
+
+        // Merge slower probe data (Docker/projects/uptime/fleet/GPU)
+        while let Ok(slow) = slow_rx.try_recv() {
+            app.ingest_slow_snapshot(slow);
         }
 
         // Ingest background sync events (Phase 4)
@@ -4367,6 +4410,11 @@ fn handle_key_event<B: ratatui::backend::Backend>(
     app: &mut CockpitApp,
     terminal: &mut Terminal<B>,
 ) -> Result<bool> {
+    // Universal Emergency Exit on Ctrl+C (guarantees clean terminal restoration from any screen/modal)
+    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        return Ok(true);
+    }
+
     // 0. Master Password Lock Screen Input Handling
     if app.is_locked {
         match key.code {
@@ -11293,7 +11341,7 @@ fn draw_pro_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     lines.push(Line::from(vec![
         Span::styled(prefix1, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        Span::styled("License / Passphrase: ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled("License Key (e.g. CASH99-FOUNDR-3): ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         token_val,
     ]));
 
@@ -14497,6 +14545,29 @@ mod tests {
 
         assert!(modal_content.contains("Failure Cause:"));
         assert!(modal_content.contains("ERR: Timeout"));
+    }
+
+    #[test]
+    fn test_ctrl_c_universal_emergency_exit() {
+        let mut app = CockpitApp::new(&Config::default());
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        // 1. Normal screen: Ctrl+C returns Ok(true) to cleanly exit
+        let ctrl_c = event::KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        let res = handle_key_event(ctrl_c, &mut app, &mut terminal);
+        assert_eq!(res.unwrap(), true);
+
+        // 2. Inside locked master password screen: Ctrl+C still returns Ok(true)
+        app.is_locked = true;
+        let res_locked = handle_key_event(ctrl_c, &mut app, &mut terminal);
+        assert_eq!(res_locked.unwrap(), true);
+
+        // 3. Inside server wizard modal: Ctrl+C still returns Ok(true)
+        app.is_locked = false;
+        app.show_server_wizard = true;
+        let res_modal = handle_key_event(ctrl_c, &mut app, &mut terminal);
+        assert_eq!(res_modal.unwrap(), true);
     }
 }
 pub(crate) fn noop() {}

@@ -14,7 +14,7 @@
 //! Background thread updates telemetry every ~500ms via `std::sync::mpsc`.
 
 use crate::config::Config;
-use crate::systat::{snapshot, SysSnapshot};
+use crate::systat::{snapshot_telemetry, SysSnapshot};
 use anyhow::Result;
 use clap::Parser;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
@@ -68,7 +68,7 @@ pub struct ChatApp {
 
 impl ChatApp {
     fn new() -> Self {
-        let snap = snapshot();
+        let snap = snapshot_telemetry();
         // ponytail: pre-fill the 60-sample ring buffer with initial snapshot so
         // the CPU chart renders a full baseline rather than a single disjoint point.
         let mut cpu_history = VecDeque::with_capacity(MAX_HISTORY);
@@ -182,7 +182,7 @@ pub fn run(_cmd: &ChatCommand, cfg: &Config) -> Result<()> {
 
     let stats_thread = std::thread::spawn(move || {
         while r_thread.load(Ordering::Relaxed) {
-            let snap = snapshot();
+            let snap = snapshot_telemetry();
             if snap_tx.send(snap).is_err() {
                 break;
             }

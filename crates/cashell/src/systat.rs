@@ -329,13 +329,26 @@ struct NetRateState {
 
 static NET_RATE_TRACKER: Mutex<Option<NetRateState>> = Mutex::new(None);
 
-pub fn snapshot() -> SysSnapshot {
-    use sysinfo::{Components, System};
+static TELEMETRY_SYS: Mutex<Option<sysinfo::System>> = Mutex::new(None);
 
-    let mut sys = System::new_all();
-    sys.refresh_all();
-    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+/// Fast, side-effect-free telemetry for UI refresh loops.
+///
+/// Reads only `sysinfo` + `/proc` + `/sys`. It never spawns external
+/// processes, never performs network I/O, and never walks project trees, so
+/// it is safe to call every 500 ms from a TUI render loop.
+pub fn snapshot_telemetry() -> SysSnapshot {
+    use sysinfo::{Components, CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
+
+    let mut lock = TELEMETRY_SYS.lock().unwrap_or_else(|e| e.into_inner());
+    let sys = lock.get_or_insert_with(|| {
+        let refresh = RefreshKind::new()
+            .with_cpu(CpuRefreshKind::everything())
+            .with_memory(MemoryRefreshKind::everything());
+        System::new_with_specifics(refresh)
+    });
+
     sys.refresh_cpu_usage();
+    sys.refresh_memory();
 
     let cpu_count = sys.cpus().len();
     let cpu_pct: f32 = sys.cpus().iter().map(|c| c.cpu_usage()).sum::<f32>()
@@ -355,13 +368,12 @@ pub fn snapshot() -> SysSnapshot {
         })
         .collect();
 
-    let ram_total = sys.total_memory();
-    let ram_used = sys.used_memory();
-    let ram_available = sys.available_memory();
-    let ram_cached = read_cached_mem_mb();
-
-    let swap_total = sys.total_swap();
-    let swap_used = sys.used_swap();
+    let ram_total_mb = sys.total_memory() / 1024 / 1024;
+    let ram_used_mb = sys.used_memory() / 1024 / 1024;
+    let ram_available_mb = sys.available_memory() / 1024 / 1024;
+    let ram_cached_mb = read_cached_mem_mb();
+    let swap_total_mb = sys.total_swap() / 1024 / 1024;
+    let swap_used_mb = sys.used_swap() / 1024 / 1024;
 
     let mounts = probe_mounts();
     let (disk_used_gb, disk_total_gb) = mounts
@@ -374,7 +386,6 @@ pub fn snapshot() -> SysSnapshot {
         .filter(|t| t.is_finite())
         .fold(0.0f32, f32::max);
 
-    let (gpu_label, gpu_pct, gpu_mem_used_mb, gpu_mem_total_mb, gpu_temp_c) = probe_gpu();
     let fan_speed = probe_fan();
 
     let (
@@ -386,37 +397,19 @@ pub fn snapshot() -> SysSnapshot {
     ) = probe_networks();
 
     let top_processes = probe_top_processes(&sys);
-    let mesh_peers = probe_mesh();
-    let docker_containers = probe_docker_containers();
-    let tracked_projects = probe_tracked_projects();
-    let uptime_monitors = probe_uptime_monitors();
-
-    let ram_used_mb = ram_used / 1024 / 1024;
-    let ram_total_mb = ram_total / 1024 / 1024;
-    let ram_pct = (ram_used_mb * 100).checked_div(ram_total_mb).unwrap_or(0) as u8;
-    let disk_pct = (disk_used_gb * 100).checked_div(disk_total_gb).unwrap_or(0) as u8;
-    let fleet_nodes = probe_fleet_nodes(cpu_pct, ram_pct, disk_pct);
-    let running_containers = docker_containers.iter().filter(|c| c.state == "running").count();
-    let service_health = probe_services_health(running_containers, docker_containers.len());
-    let web_analytics = probe_analytics_summary();
-    let disk_health = probe_storage_health();
 
     SysSnapshot {
         cpu_pct,
         ram_used_mb,
         ram_total_mb,
-        ram_available_mb: ram_available / 1024 / 1024,
-        ram_cached_mb: ram_cached,
-        swap_used_mb: swap_used / 1024 / 1024,
-        swap_total_mb: swap_total / 1024 / 1024,
+        ram_available_mb,
+        ram_cached_mb,
+        swap_used_mb,
+        swap_total_mb,
         disk_used_gb,
         disk_total_gb,
         cpu_temp_c,
-        gpu_label,
-        gpu_pct,
-        gpu_mem_used_mb,
-        gpu_mem_total_mb,
-        gpu_temp_c,
+        gpu_label: "No GPU".to_string(),
         fan_speed,
         load_avg,
         cpus,
@@ -427,7 +420,35 @@ pub fn snapshot() -> SysSnapshot {
         net_total_tx_gb,
         active_net_iface,
         top_processes,
-        mesh_peers,
+        ..Default::default()
+    }
+}
+
+/// Slow-changing telemetry that shells out or performs network/filesystem I/O.
+///
+/// This is intentionally separate from [`snapshot_telemetry`] so the TUI can
+/// keep rendering while these probes run in a background thread.
+pub fn snapshot_slow() -> SysSnapshot {
+    let (gpu_label, gpu_pct, gpu_mem_used_mb, gpu_mem_total_mb, gpu_temp_c) = probe_gpu();
+    let docker_containers = probe_docker_containers();
+    let running_containers = docker_containers
+        .iter()
+        .filter(|c| c.state == "running")
+        .count();
+    let service_health = probe_services_health(running_containers, docker_containers.len());
+    let tracked_projects = probe_tracked_projects_with(&docker_containers);
+    let uptime_monitors = probe_uptime_monitors();
+    let mesh_peers = probe_mesh();
+    let web_analytics = probe_analytics_summary();
+    let disk_health = probe_storage_health();
+    let fleet_nodes = probe_fleet_nodes(0.0, 0, 0);
+
+    SysSnapshot {
+        gpu_label,
+        gpu_pct,
+        gpu_mem_used_mb,
+        gpu_mem_total_mb,
+        gpu_temp_c,
         docker_containers,
         tracked_projects,
         uptime_monitors,
@@ -435,7 +456,53 @@ pub fn snapshot() -> SysSnapshot {
         service_health,
         web_analytics,
         disk_health,
+        mesh_peers,
+        ..Default::default()
     }
+}
+
+impl SysSnapshot {
+    /// Merge slow-probe fields into a fast telemetry snapshot without
+    /// overwriting freshly sampled CPU/RAM/disk/network values.
+    pub fn merge_slow(&mut self, slow: SysSnapshot) {
+        self.gpu_label = slow.gpu_label;
+        self.gpu_pct = slow.gpu_pct;
+        self.gpu_mem_used_mb = slow.gpu_mem_used_mb;
+        self.gpu_mem_total_mb = slow.gpu_mem_total_mb;
+        self.gpu_temp_c = slow.gpu_temp_c;
+        self.docker_containers = slow.docker_containers;
+        self.tracked_projects = slow.tracked_projects;
+        self.uptime_monitors = slow.uptime_monitors;
+        self.fleet_nodes = slow.fleet_nodes;
+        self.service_health = slow.service_health;
+        self.web_analytics = slow.web_analytics;
+        self.disk_health = slow.disk_health;
+        self.mesh_peers = slow.mesh_peers;
+
+        // `snapshot_slow()` cannot know the local CPU/RAM/disk values, so
+        // refresh the synthetic local fleet node from the fast sample.
+        let ram_pct = (self.ram_used_mb * 100)
+            .checked_div(self.ram_total_mb)
+            .unwrap_or(0) as u8;
+        let disk_pct = (self.disk_used_gb * 100)
+            .checked_div(self.disk_total_gb)
+            .unwrap_or(0) as u8;
+        if let Some(local) = self.fleet_nodes.iter_mut().find(|n| n.ip == "127.0.0.1") {
+            local.cpu_pct = Some(self.cpu_pct);
+            local.ram_pct = Some(ram_pct);
+            local.disk_pct = Some(disk_pct);
+        }
+    }
+}
+
+/// Full telemetry: fast local metrics + all slow probes.
+///
+/// Prefer [`snapshot_telemetry`] in render loops; this is for one-shot CLI
+/// output and explicit refresh actions.
+pub fn snapshot() -> SysSnapshot {
+    let mut snap = snapshot_telemetry();
+    snap.merge_slow(snapshot_slow());
+    snap
 }
 
 // ── Sovereign Web Analytics Probe (Umami-like) ──────────────────────────────
@@ -780,6 +847,12 @@ pub fn probe_services_health(docker_running: usize, docker_total: usize) -> Vec<
 
 pub fn probe_tracked_projects() -> Vec<TrackedProject> {
     let known_containers = probe_docker_containers();
+    probe_tracked_projects_with(&known_containers)
+}
+
+/// Same as [`probe_tracked_projects`], but reuses an already-collected
+/// container list so callers don't pay for `docker ps` / SSH twice.
+pub fn probe_tracked_projects_with(known_containers: &[DockerContainerInfo]) -> Vec<TrackedProject> {
     let mut list = Vec::new();
 
     if let Some(home) = dirs::home_dir() {
@@ -793,7 +866,7 @@ pub fn probe_tracked_projects() -> Vec<TrackedProject> {
                         if !name.starts_with('.') && !name.starts_with('_') && name != "target" && name != "node_modules" {
                             let is_git = p.join(".git").exists();
                             if is_git || p.join("Cargo.toml").exists() || p.join("package.json").exists() || p.join("go.mod").exists() {
-                                let proj = build_project_workspace(&name, &p, cat, &known_containers);
+                                let proj = build_project_workspace(&name, &p, cat, known_containers);
                                 list.push(proj);
                             }
                         }
@@ -819,7 +892,7 @@ pub fn probe_tracked_projects() -> Vec<TrackedProject> {
             if p.is_dir() {
                 let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
                 if !name.is_empty() && !list.iter().any(|item| item.name == name) {
-                    let proj = build_project_workspace(&name, &p, "Custom", &known_containers);
+                    let proj = build_project_workspace(&name, &p, "Custom", known_containers);
                     list.push(proj);
                 }
             }
@@ -833,7 +906,7 @@ pub fn probe_tracked_projects() -> Vec<TrackedProject> {
                 if !list.iter().any(|item| item.name == proj.name) {
                     let p = std::path::PathBuf::from(&proj.path);
                     if p.is_dir() {
-                        let ws = build_project_workspace(&proj.name, &p, &proj.category, &known_containers);
+                        let ws = build_project_workspace(&proj.name, &p, &proj.category, known_containers);
                         list.push(ws);
                     } else {
                         list.push(TrackedProject {
@@ -2454,5 +2527,54 @@ mod tests {
         assert_eq!(parsed.wear_level_pct, 5);
         assert_eq!(parsed.health_status, "HEALTHY (95%)");
         assert_eq!(parsed.power_on_hours, 5100);
+    }
+
+    #[test]
+    fn test_telemetry_snapshot_does_not_run_slow_probes() {
+        let snap = snapshot_telemetry();
+        assert!(snap.ram_total_mb > 0, "RAM total should be populated");
+        assert!(!snap.cpus.is_empty(), "CPU cores should be populated");
+        // Slow probes are deliberately not executed on the hot path.
+        assert!(snap.docker_containers.is_empty());
+        assert!(snap.tracked_projects.is_empty());
+        assert!(snap.uptime_monitors.is_empty());
+        assert!(snap.mesh_peers.is_empty());
+    }
+
+    #[test]
+    fn test_merge_slow_preserves_fast_metrics() {
+        let mut fast = SysSnapshot {
+            cpu_pct: 37.5,
+            ram_used_mb: 512,
+            ram_total_mb: 2048,
+            disk_used_gb: 10,
+            disk_total_gb: 100,
+            ..Default::default()
+        };
+        let slow = SysSnapshot {
+            docker_containers: vec![DockerContainerInfo {
+                name: "test".to_string(),
+                state: "running".to_string(),
+                ..Default::default()
+            }],
+            fleet_nodes: vec![FleetNodeResume {
+                ip: "127.0.0.1".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        fast.merge_slow(slow);
+        assert_eq!(fast.cpu_pct, 37.5);
+        assert_eq!(fast.ram_used_mb, 512);
+        assert_eq!(fast.docker_containers.len(), 1);
+        let local = fast
+            .fleet_nodes
+            .iter()
+            .find(|n| n.ip == "127.0.0.1")
+            .expect("local fleet node");
+        assert_eq!(local.cpu_pct, Some(37.5));
+        assert_eq!(local.ram_pct, Some(25));
+        assert_eq!(local.disk_pct, Some(10));
     }
 }
