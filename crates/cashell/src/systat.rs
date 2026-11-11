@@ -596,7 +596,7 @@ pub fn probe_fleet_nodes(local_cpu: f32, local_ram_pct: u8, local_disk_pct: u8) 
     use rayon::prelude::*;
 
     let local = FleetNodeResume {
-        name: "Local ThinkPad X1".to_string(),
+        name: format!("Local ({})", sysinfo::System::host_name().unwrap_or_else(|| "Host".to_string())),
         ip: "127.0.0.1".to_string(),
         status: "ONLINE".to_string(),
         latency_ms: Some(0),
@@ -1439,26 +1439,7 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
     use rayon::prelude::*;
 
     let default_targets: &[(&str, &str, &str)] = &[
-        ("Landing CATerm", "https://caterm.fathforce.com/", "CA Ecosystem"),
-        ("CAMark Studio", "https://camark.fathforce.com/", "CA Ecosystem"),
-        ("CAUI Design System", "https://caui.fathforce.com/", "CA Ecosystem"),
-        ("CAGames", "https://cagames.fathforce.com/", "CA Ecosystem"),
-        ("CATable", "https://catable.fathforce.com/", "CA Ecosystem"),
-        ("CABook", "https://cabook.fathforce.com/", "CA Ecosystem"),
-        ("CAPost", "https://capost.fathforce.com/", "CA Ecosystem"),
-        ("CACode", "https://cacode.fathforce.com/", "CA Ecosystem"),
-        ("Fathforce Blog", "https://blog.fathforce.com/", "CA Ecosystem"),
-        ("Fathforce Docs", "https://docs.fathforce.com/", "CA Ecosystem"),
-        ("Fathforce Master", "https://fathforce.com/", "CA Ecosystem"),
-        ("FathStore Engine", "https://fathstore.com/", "CA Ecosystem"),
-        ("Cecep Portal", "https://cecepazhar.com/", "CA Ecosystem"),
-        ("GCC Central Core", "https://gcc.fathforce.com/", "CA Ecosystem"),
-        ("YPC (Dokploy)", "http://100.127.232.32:3000", "Fleet Nodes"),
-        ("Hostinger Gateway", "https://100.76.150.46:8443", "Fleet Nodes"),
-        ("Tencent Traefik :80", "http://100.96.8.82/", "Fleet Nodes"),
-        ("Tencent Content Hub", "http://100.96.8.82:8096/", "Fleet Nodes"),
-        ("Tencent CAOrch :8091", "http://100.96.8.82:8091/", "Fleet Nodes"),
-        ("9router AI Gateway", "http://127.0.0.1:20128/health", "Localhost"),
+        ("Localhost Web", "http://127.0.0.1:8080/", "Localhost"),
         ("CAShell Local Daemon", "http://127.0.0.1:8090/api/health", "Localhost"),
     ];
 
@@ -2420,13 +2401,13 @@ mod tests {
     fn test_fleet_node_resume_structure() {
         let node = probe_fleet_nodes(42.0, 55, 24);
         assert!(!node.is_empty());
-        let local = node.iter().find(|n| n.name == "Local ThinkPad X1").expect("local node");
+        let local = node.iter().find(|n| n.ip == "127.0.0.1").expect("local node");
         assert_eq!(local.status, "ONLINE");
         assert_eq!(local.latency_ms, Some(0));
         assert_eq!(local.cpu_pct, Some(42.0));
         assert_eq!(local.ram_pct, Some(55));
         assert_eq!(local.disk_pct, Some(24));
-        assert!(node.iter().any(|n| n.name == "Local ThinkPad X1"));
+        assert!(node.iter().any(|n| n.ip == "127.0.0.1"));
     }
 
     #[test]

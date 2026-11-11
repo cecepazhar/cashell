@@ -1575,8 +1575,9 @@ impl CockpitApp {
         let idx = self.selected_server.min(self.server_probe_results.len() - 1);
         let server_name = self.server_probe_results[idx].0.clone();
 
-        let (ip, user, port) = if server_name.starts_with("ThinkPad X1") || server_name.starts_with("Local") {
-            ("127.0.0.1".to_string(), "cecepazhar".to_string(), 22u16)
+        let (ip, user, port) = if server_name.eq_ignore_ascii_case("Local") || server_name.starts_with("ThinkPad") {
+            let default_user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
+            ("127.0.0.1".to_string(), default_user, 22u16)
         } else if let Some(cfg_node) = self.cfg.daemon.nodes.get(&server_name) {
             (
                 cfg_node.ip.clone(),
@@ -1654,29 +1655,8 @@ impl CockpitApp {
             results.push((name.clone(), probe));
         }
 
-        // 3. Ensure multi-node canonical fleet nodes (X1, YPC, Hostinger VPS, Tencent Cloud, XPC, pc-gerlink)
-        let fleet_presets = [
-            ("YPC", "100.127.232.32", 3000),
-            ("Hostinger VPS", "100.76.150.46", 80),
-            ("Tencent Cloud VPS", "43.157.208.83", 22),
-            ("XPC", "100.125.125.28", 22),
-            ("pc-gerlink", "100.102.147.90", 80),
-        ];
-        for (pname, pip, pport) in fleet_presets {
-            if !results.iter().any(|(rname, _)| rname.eq_ignore_ascii_case(pname)) {
-                let addr_str = format!("{}:{}", pip, pport);
-                if let Ok(addr) = addr_str.parse::<SocketAddr>() {
-                    let start = Instant::now();
-                    if TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok() {
-                        results.push((pname.to_string(), Some(start.elapsed().as_millis())));
-                    } else {
-                        results.push((pname.to_string(), None));
-                    }
-                } else {
-                    results.push((pname.to_string(), None));
-                }
-            }
-        }
+        // Probe user-configured daemon nodes
+        results.sort_by(|a, b| a.0.cmp(&b.0));
 
         self.server_probe_results = results;
         self.server_probe_done = true;
@@ -2293,67 +2273,49 @@ impl CockpitApp {
             }
         }
 
-        // Only merge *live public web domains* (fathforce.com / cecepazhar.com / fathstore.com)
-        // from tracked projects. Local project folders (`{id}.local`) and offline repos are
-        // excluded to keep the analytics list focused on live web properties.
-        let mut active_ids: Vec<String> = self
-            .latest_snap
-            .web_analytics
-            .product_analytics
-            .iter()
-            .filter(|p| p.status != "EMPTY")
-            .map(|p| p.product_id.clone())
-            .collect();
-
-        let public_domains: &[&str] = &[
-            "fathforce.com",
-            "cecepazhar.com",
-            "fathstore.com",
-            "fathforce.id",
-        ];
-
-        for p in &self.latest_snap.tracked_projects {
-            let id = p.name.to_lowercase().replace(' ', "-");
-            if active_ids.iter().any(|aid| aid == &id)
-                || list.iter().any(|s| s.id == id)
-            {
-                active_ids.retain(|x| x != &id);
-            }
-            // Check if the project has a live public web domain
-            let is_public_web = public_domains.iter().any(|domain| p.path.contains(domain));
-            if is_public_web {
-                active_ids.push(id.clone());
-                if !list.iter().any(|s| s.id == id) {
-                    list.push(AnalyticSiteItem {
-                        id: id.clone(),
-                        name: p.name.clone(),
-                        domain: format!("https://{id}.fathforce.com"),
-                    });
-                }
-            }
-        }
-
-        // Filter out any empty/unregistered `.local` or project folders not in `active_ids`
-        if !active_ids.is_empty() {
-            list.retain(|s| {
-                s.id.is_empty()
-                    || active_ids.contains(&s.id)
-                    || self.db.as_ref().is_some_and(|d| {
-                        d.get_analytic_sites().ok().map(|db_sites| {
-                            db_sites.iter().any(|ds| ds.id == s.id && ds.domain != format!("{}.local", s.id))
-                        }).unwrap_or(false)
-                    })
-            });
-        }
-
         list
     }
 
     pub fn import_all_landing_sites(&mut self) {
-        if let Some(ref d) = self.db {
-            let _ = d.import_default_ca_websites();
-            self.sample_system();
-            self.set_notification("✓ Imported 14 CA Ecosystem landing sites into Analytics");
+        // Look for custom import file first: ~/.config/cashell/profile.toml or sites.toml
+        let config_dir = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".config")).join("cashell");
+        let profile_path = config_dir.join("profile.toml");
+        let sites_path = config_dir.join("sites.toml");
+
+        let target_path = if profile_path.exists() {
+            Some(profile_path)
+        } else if sites_path.exists() {
+            Some(sites_path)
+        } else {
+            None
+        };
+
+        if let Some(path) = target_path {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    let mut imported = 0;
+                    if let Ok(val) = toml::from_str::<toml::Value>(&content) {
+                        if let Some(sites) = val.get("analytics_websites").and_then(|w| w.as_array()) {
+                            if let Some(ref d) = self.db {
+                                for s in sites {
+                                    if let (Some(name), Some(domain)) = (s.get("name").and_then(|v| v.as_str()), s.get("domain").and_then(|v| v.as_str())) {
+                                        let id = s.get("id").and_then(|v| v.as_str()).unwrap_or(name).to_lowercase().replace(' ', "-");
+                                        let _ = d.add_analytic_site(&id, name, domain);
+                                        imported += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    self.sample_system();
+                    self.set_notification(format!("✓ Imported {imported} sites from {}", path.display()));
+                }
+                Err(e) => {
+                    self.set_notification(format!("✗ Failed to read {}: {e}", path.display()));
+                }
+            }
+        } else {
+            self.set_notification("ℹ No ~/.config/cashell/profile.toml found. Add sites with 'a' or run 'cashell config import'");
         }
     }
 
@@ -3316,17 +3278,11 @@ impl CockpitApp {
             self.set_notification(format!("✎ Editing fleet server '{}'", server_name));
         } else {
             // Built‑in preset not in config – construct from known preset or probe data.
-            let (ip, user, svcs) = if server_name.starts_with("ThinkPad X1") || server_name.starts_with("Local") {
-                ("127.0.0.1".to_string(), "cecepazhar".to_string(), "http:80,ssh:22".to_string())
+            let (ip, user, svcs) = if server_name.eq_ignore_ascii_case("Local") || server_name.starts_with("ThinkPad") {
+                let default_user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
+                ("127.0.0.1".to_string(), default_user, "http:80,ssh:22".to_string())
             } else {
-                match server_name.as_str() {
-                    "YPC" => ("100.127.232.32".to_string(), "root".to_string(), "web:3000,ssh:22".to_string()),
-                    "Hostinger VPS" => ("100.76.150.46".to_string(), "root".to_string(), "http:80,ssh:22".to_string()),
-                    "Tencent Cloud VPS" => ("43.157.208.83".to_string(), "root".to_string(), "ssh:22,http:80".to_string()),
-                    "XPC" => ("100.125.125.28".to_string(), "root".to_string(), "ssh:22".to_string()),
-                    "pc-gerlink" => ("100.102.147.90".to_string(), "root".to_string(), "http:80,ssh:22".to_string()),
-                    _ => ("100.x.y.z".to_string(), "root".to_string(), "http:80,ssh:22".to_string()),
-                }
+                ("10.0.0.1".to_string(), "root".to_string(), "http:80,ssh:22".to_string())
             };
             // Pre-populate self.cfg.daemon.nodes so this node is properly tracked as an existing config node.
             let parsed_svcs = self.parse_services(&svcs);
@@ -14378,10 +14334,10 @@ mod tests {
         assert!(app.server_wizard_is_edit);
         assert_eq!(app.server_wizard_orig_name, "pc-gerlink");
         assert_eq!(app.server_name_buf, "pc-gerlink");
-        assert_eq!(app.server_ip_buf, "100.102.147.90");
+        assert_eq!(app.server_ip_buf, "10.0.0.1");
         // Verify pre-population of self.cfg.daemon.nodes
         assert!(app.cfg.daemon.nodes.contains_key("pc-gerlink"));
-        assert_eq!(app.cfg.daemon.nodes["pc-gerlink"].ip, "100.102.147.90");
+        assert_eq!(app.cfg.daemon.nodes["pc-gerlink"].ip, "10.0.0.1");
 
         // 2. Modify IP & name
         app.server_name_buf = "pc-gerlink-updated".to_string();

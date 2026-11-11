@@ -1461,12 +1461,8 @@ impl Database {
         };
 
         // Per-product / per-website breakdown
-        let mut canonical_products: Vec<crate::systat::AnalyticSiteItem> =
+        let canonical_products: Vec<crate::systat::AnalyticSiteItem> =
             self.get_analytic_sites().unwrap_or_default();
-        if canonical_products.is_empty() {
-            self.import_default_ca_websites()?;
-            canonical_products = self.get_analytic_sites().unwrap_or_default();
-        }
 
         let mut product_analytics: Vec<crate::systat::ProductAnalyticsSummary> = Vec::new();
         for site in &canonical_products {

@@ -8,12 +8,11 @@ use colored::Colorize;
 use std::io::{self, IsTerminal, Write};
 
 const LOGO: &str = r"
-       /\              /\
-      /  \            /  \
-     / /\ \          / /\ \
-    / /  \ \   CA   / /  \ \
-   / /    \ \      / /    \ \
-  /_/      \_\    /_/      \_\
+   ______ ___   _____ __  __ ______ __    __
+  / ____//   | / ___// / / // ____// /   / /
+ / /    / /| | \__ \/ /_/ // __/  / /   / /
+/ /___ / ___ |___/ / __  // /___ / /___/ /___
+\____//_/  |_/____//_/ /_//_____//_____/_____/
 ";
 
 /// Print the brandmark + description + version. No-op when stdout is not a TTY
@@ -28,16 +27,12 @@ pub fn print(quiet: bool) {
     let _ = writeln!(
         out,
         "{}",
-        "  Cecep Azhar · CA Ecosystem Universal Shell".bright_white()
-    );
-    let _ = writeln!(
-        out,
-        "{}",
         format!(
-            "  cashell v{} · Zero-knowledge, local-first sovereign CLI",
+            "  CASHELL v{} · Zero-Knowledge, Local-First Sovereign CLI",
             env!("CARGO_PKG_VERSION")
         )
-        .dimmed()
+        .bright_white()
+        .bold()
     );
     let _ = writeln!(out);
     let _ = out.flush();

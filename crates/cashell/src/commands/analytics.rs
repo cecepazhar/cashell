@@ -17,7 +17,6 @@ pub struct AnalyticsCommand {
 
 pub fn run(cmd: &AnalyticsCommand) -> Result<()> {
     let db = crate::db::Database::open()?;
-    let _ = db.import_default_ca_websites();
 
     let summary = db.get_analytics_summary(cmd.site.as_deref())?;
 

@@ -154,14 +154,15 @@ fn default_protocol() -> String {
 
 fn default_nodes() -> std::collections::HashMap<String, NodeConfig> {
     let mut m = std::collections::HashMap::new();
+    let user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
     m.insert(
         "local".to_string(),
         NodeConfig {
             ip: "127.0.0.1".to_string(),
-            user: "cecepazhar".to_string(),
+            user,
             services: vec![ServiceConfig {
-                name: "9router".to_string(),
-                port: 20128,
+                name: "api".to_string(),
+                port: 8080,
                 protocol: "http".to_string(),
             }],
             active: true,
@@ -566,11 +567,7 @@ fn default_doctor_ports() -> Vec<u16> {
 }
 
 fn default_storage_mounts() -> Vec<String> {
-    if std::path::Path::new("/run/media/cecepazhar/DATA").exists() {
-        vec!["/".to_string(), "/run/media/cecepazhar/DATA".to_string()]
-    } else {
-        vec!["/".to_string()]
-    }
+    vec!["/".to_string()]
 }
 
 fn default_toolchain() -> Vec<String> {
@@ -578,8 +575,7 @@ fn default_toolchain() -> Vec<String> {
         "cargo".to_string(),
         "rustc".to_string(),
         "go".to_string(),
-        "templ".to_string(),
-        "pnpm".to_string(),
+        "git".to_string(),
     ]
 }
 
@@ -602,11 +598,11 @@ impl Default for PersonaConfig {
 }
 
 fn default_user_name() -> String {
-    "Prof. Cecep".to_string()
+    std::env::var("USER").unwrap_or_else(|_| "Developer".to_string())
 }
 
 fn default_assistant_role() -> String {
-    "Kamu adalah Hana AI / Chief Operations Assistant Fathforce & CAShell. Terse, cekatan, dan patuh pada instruksi Prof. Cecep.".to_string()
+    "Kamu adalah AI Operations Assistant. Terse, cekatan, dan solutif.".to_string()
 }
 
 /// SQLite database persistence & retention policy.

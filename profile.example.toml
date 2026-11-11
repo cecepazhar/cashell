@@ -1,0 +1,275 @@
+# ==============================================================================
+# Fathforce & CAShell Personal Profile Template
+# Import via: cashell config import ~/.config/cashell/profile.toml
+# Or press [i] inside CAShell Cockpit Analytics tab
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Fleet Server Nodes (Tab [4] Server)
+# ------------------------------------------------------------------------------
+[nodes.local]
+ip = "127.0.0.1"
+user = "cecepazhar"
+active = true
+services = [
+    { name = "9router", port = 20128, protocol = "http" },
+    { name = "cashell-daemon", port = 8090, protocol = "http" }
+]
+
+[nodes."YPC"]
+ip = "100.127.232.32"
+user = "root"
+active = true
+services = [
+    { name = "dokploy", port = 3000, protocol = "http" },
+    { name = "ssh", port = 22, protocol = "tcp" }
+]
+
+[nodes."Hostinger VPS"]
+ip = "100.76.150.46"
+user = "root"
+active = true
+services = [
+    { name = "http", port = 80, protocol = "http" },
+    { name = "admin", port = 8443, protocol = "https" },
+    { name = "ssh", port = 22, protocol = "tcp" }
+]
+
+[nodes."Tencent Cloud VPS"]
+ip = "43.157.208.83"
+user = "root"
+active = true
+services = [
+    { name = "ssh", port = 22, protocol = "tcp" },
+    { name = "traefik", port = 80, protocol = "http" },
+    { name = "content-hub", port = 8096, protocol = "http" },
+    { name = "caorch", port = 8091, protocol = "http" }
+]
+
+[nodes."XPC"]
+ip = "100.125.125.28"
+user = "root"
+active = true
+services = [
+    { name = "ssh", port = 22, protocol = "tcp" }
+]
+
+[nodes."pc-gerlink"]
+ip = "100.102.147.90"
+user = "root"
+active = true
+services = [
+    { name = "http", port = 80, protocol = "http" },
+    { name = "ssh", port = 22, protocol = "tcp" }
+]
+
+# ------------------------------------------------------------------------------
+# 2. Uptime Monitors (Tab [3] Uptime)
+# ------------------------------------------------------------------------------
+[[monitors]]
+name = "Landing CATerm"
+target = "https://caterm.fathforce.com/"
+group = "CA Ecosystem"
+
+[[monitors]]
+name = "CAMark Studio"
+target = "https://camark.fathforce.com/"
+group = "CA Ecosystem"
+
+[[monitors]]
+name = "CAUI Design System"
+target = "https://caui.fathforce.com/"
+group = "CA Ecosystem"
+
+[[monitors]]
+name = "CAGames"
+target = "https://cagames.fathforce.com/"
+group = "CA Ecosystem"
+
+[[monitors]]
+name = "CATable"
+target = "https://catable.fathforce.com/"
+group = "CA Ecosystem"
+
+[[monitors]]
+name = "CABook"
+target = "https://cabook.fathforce.com/"
+group = "CA Ecosystem"
+
+[[monitors]]
+name = "CAPost"
+target = "https://capost.fathforce.com/"
+group = "CA Ecosystem"
+
+[[monitors]]
+name = "CACode"
+target = "https://cacode.fathforce.com/"
+group = "CA Ecosystem"
+
+[[monitors]]
+name = "Fathforce Blog"
+target = "https://blog.fathforce.com/"
+group = "CA Ecosystem"
+
+[[monitors]]
+name = "Fathforce Docs"
+target = "https://docs.fathforce.com/"
+group = "CA Ecosystem"
+
+[[monitors]]
+name = "Fathforce Master"
+target = "https://fathforce.com/"
+group = "CA Ecosystem"
+
+[[monitors]]
+name = "FathStore Engine"
+target = "https://fathstore.com/"
+group = "CA Ecosystem"
+
+[[monitors]]
+name = "Cecep Portal"
+target = "https://cecepazhar.com/"
+group = "CA Ecosystem"
+
+[[monitors]]
+name = "GCC Central Core"
+target = "https://gcc.fathforce.com/"
+group = "CA Ecosystem"
+
+[[monitors]]
+name = "YPC (Dokploy)"
+target = "http://100.127.232.32:3000"
+group = "Fleet Nodes"
+
+[[monitors]]
+name = "Hostinger Gateway"
+target = "https://100.76.150.46:8443"
+group = "Fleet Nodes"
+
+[[monitors]]
+name = "Tencent Traefik :80"
+target = "http://100.96.8.82/"
+group = "Fleet Nodes"
+
+[[monitors]]
+name = "Tencent Content Hub"
+target = "http://100.96.8.82:8096/"
+group = "Fleet Nodes"
+
+[[monitors]]
+name = "Tencent CAOrch :8091"
+target = "http://100.96.8.82:8091/"
+group = "Fleet Nodes"
+
+[[monitors]]
+name = "9router AI Gateway"
+target = "http://127.0.0.1:20128/health"
+group = "Localhost"
+
+[[monitors]]
+name = "CAShell Local Daemon"
+target = "http://127.0.0.1:8090/api/health"
+group = "Localhost"
+
+# ------------------------------------------------------------------------------
+# 3. Sovereign Analytics Websites (Tab [5] Analytics)
+# ------------------------------------------------------------------------------
+[[analytics_websites]]
+id = "caterm"
+name = "CAProduct Landing"
+domain = "caterm.fathforce.com"
+
+[[analytics_websites]]
+id = "fathstore"
+name = "FathStore Solo"
+domain = "fathstore.com"
+
+[[analytics_websites]]
+id = "caui"
+name = "CAUI Design System"
+domain = "caui.fathforce.com"
+
+[[analytics_websites]]
+id = "cagames"
+name = "CAGames"
+domain = "cagames.fathforce.com"
+
+[[analytics_websites]]
+id = "camark"
+name = "CAMark Studio"
+domain = "camark.fathforce.com"
+
+[[analytics_websites]]
+id = "catable"
+name = "CATAble Dashboard"
+domain = "catable.fathforce.com"
+
+[[analytics_websites]]
+id = "cabook"
+name = "CABook Library"
+domain = "cabook.fathforce.com"
+
+[[analytics_websites]]
+id = "capost"
+name = "CAPost CMS"
+domain = "capost.fathforce.com"
+
+[[analytics_websites]]
+id = "cacalm"
+name = "CACalm Meditation"
+domain = "cacalm.fathforce.com"
+
+[[analytics_websites]]
+id = "cacash"
+name = "CACash Finance"
+domain = "cacash.fathforce.com"
+
+[[analytics_websites]]
+id = "caentech"
+name = "CAEntech Medical"
+domain = "caentech.fathforce.com"
+
+[[analytics_websites]]
+id = "castudio"
+name = "CAStudio"
+domain = "castudio.fathforce.com"
+
+[[analytics_websites]]
+id = "caprompt"
+name = "CAPrompt Studio"
+domain = "caprompt.fathforce.com"
+
+[[analytics_websites]]
+id = "cecepazhar.com"
+name = "Prof. Cecep Blog"
+domain = "cecepazhar.com"
+
+[[analytics_websites]]
+id = "docs"
+name = "Fathforce Docs Hub"
+domain = "docs.fathforce.com"
+
+[[analytics_websites]]
+id = "changelogs"
+name = "Fathforce Changelogs Hub"
+domain = "changelog.fathforce.com"
+
+[[analytics_websites]]
+id = "blog"
+name = "Fathforce Blog"
+domain = "blog.fathforce.com"
+
+[[analytics_websites]]
+id = "member"
+name = "Fathforce Member Portal"
+domain = "member.fathforce.com"
+
+[[analytics_websites]]
+id = "fathforce"
+name = "Fathforce Master Studio"
+domain = "fathforce.com"
+
+[[analytics_websites]]
+id = "gcc"
+name = "GCC Central Dashboard"
+domain = "gcc.fathforce.com"

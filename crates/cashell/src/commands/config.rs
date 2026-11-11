@@ -15,6 +15,16 @@ pub enum ConfigAction {
     Set { key: String, value: String },
     /// Reset config to defaults
     Reset,
+    /// Import configuration, servers, uptime monitors, and analytics websites from a TOML file
+    Import {
+        /// Path to profile/config file to import
+        path: std::path::PathBuf,
+    },
+    /// Export current servers, uptime monitors, and analytics websites to a TOML profile
+    Export {
+        /// Destination path to export profile
+        path: std::path::PathBuf,
+    },
 }
 
 #[derive(Parser, Debug)]
@@ -28,6 +38,8 @@ pub fn run(cmd: &ConfigCommand) -> Result<()> {
         ConfigAction::Show => cmd_show(),
         ConfigAction::Set { key, value } => cmd_set(key, value),
         ConfigAction::Reset => cmd_reset(),
+        ConfigAction::Import { path } => cmd_import(path),
+        ConfigAction::Export { path } => cmd_export(path),
     }
 }
 
@@ -143,5 +155,117 @@ fn cmd_reset() -> Result<()> {
     } else {
         output::info("No config file to reset");
     }
+    Ok(())
+}
+
+fn cmd_import(path: &std::path::Path) -> Result<()> {
+    if !path.exists() {
+        anyhow::bail!("Import file does not exist: {}", path.display());
+    }
+
+    let content = std::fs::read_to_string(path)?;
+    let val: toml::Value = toml::from_str(&content)?;
+
+    // 1. If it's a full Config TOML, merge into Config
+    let mut cfg = config::Config::load(None).unwrap_or_default();
+
+    // Import [daemon.nodes]
+    let mut imported_nodes = 0;
+    if let Some(nodes) = val.get("daemon").and_then(|d| d.get("nodes")).and_then(|n| n.as_table()) {
+        for (name, node_val) in nodes {
+            if let Ok(node_cfg) = node_val.clone().try_into::<config::NodeConfig>() {
+                cfg.daemon.nodes.insert(name.clone(), node_cfg);
+                imported_nodes += 1;
+            }
+        }
+    } else if let Some(nodes) = val.get("nodes").and_then(|n| n.as_table()) {
+        for (name, node_val) in nodes {
+            if let Ok(node_cfg) = node_val.clone().try_into::<config::NodeConfig>() {
+                cfg.daemon.nodes.insert(name.clone(), node_cfg);
+                imported_nodes += 1;
+            }
+        }
+    }
+
+    // Import [uptime.custom_monitors]
+    let mut imported_monitors = 0;
+    if let Some(monitors) = val.get("uptime").and_then(|u| u.get("custom_monitors")).and_then(|m| m.as_array()) {
+        for m_val in monitors {
+            if let Ok(m_cfg) = m_val.clone().try_into::<config::UptimeMonitorConfig>() {
+                if !cfg.uptime.custom_monitors.iter().any(|existing| existing.name == m_cfg.name || existing.target == m_cfg.target) {
+                    cfg.uptime.custom_monitors.push(m_cfg);
+                    imported_monitors += 1;
+                }
+            }
+        }
+    } else if let Some(monitors) = val.get("monitors").and_then(|m| m.as_array()) {
+        for m_val in monitors {
+            if let Ok(m_cfg) = m_val.clone().try_into::<config::UptimeMonitorConfig>() {
+                if !cfg.uptime.custom_monitors.iter().any(|existing| existing.name == m_cfg.name || existing.target == m_cfg.target) {
+                    cfg.uptime.custom_monitors.push(m_cfg);
+                    imported_monitors += 1;
+                }
+            }
+        }
+    }
+
+    // Save updated Config
+    cfg.save(&config::Config::default_path())?;
+
+    // 2. Import analytics_websites into SQLite DB if present
+    let mut imported_sites = 0;
+    if let Some(sites) = val.get("analytics_websites").and_then(|s| s.as_array()) {
+        if let Ok(db) = crate::db::Database::open() {
+            for s in sites {
+                if let (Some(name), Some(domain)) = (s.get("name").and_then(|v| v.as_str()), s.get("domain").and_then(|v| v.as_str())) {
+                    let id = s.get("id").and_then(|v| v.as_str()).unwrap_or(name).to_lowercase().replace(' ', "-");
+                    if db.add_analytic_site(&id, name, domain).is_ok() {
+                        imported_sites += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    output::success(&format!(
+        "Imported from {}: {} nodes, {} uptime monitors, {} analytics sites",
+        path.display(),
+        imported_nodes,
+        imported_monitors,
+        imported_sites
+    ));
+
+    Ok(())
+}
+
+fn cmd_export(path: &std::path::Path) -> Result<()> {
+    let cfg = config::Config::load(None).unwrap_or_default();
+
+    #[derive(serde::Serialize)]
+    struct ExportProfile {
+        nodes: std::collections::HashMap<String, config::NodeConfig>,
+        monitors: Vec<config::UptimeMonitorConfig>,
+        analytics_websites: Vec<crate::systat::AnalyticSiteItem>,
+    }
+
+    let analytics_websites = if let Ok(db) = crate::db::Database::open() {
+        db.get_analytic_sites().unwrap_or_default()
+    } else {
+        vec![]
+    };
+
+    let profile = ExportProfile {
+        nodes: cfg.daemon.nodes,
+        monitors: cfg.uptime.custom_monitors,
+        analytics_websites,
+    };
+
+    let toml_str = toml::to_string_pretty(&profile)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, toml_str)?;
+
+    output::success(&format!("Exported current profile to {}", path.display()));
     Ok(())
 }
