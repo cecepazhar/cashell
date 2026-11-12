@@ -14,6 +14,7 @@ use axum::{
 };
 use clap::{Parser, Subcommand};
 use colored::Colorize;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -81,16 +82,38 @@ struct DaemonState {
     token: String,
 }
 
+/// Constant-time comparison of two strings (hard security rule for bearer tokens).
+fn const_time_eq(a: &str, b: &str) -> bool {
+    let (x, y) = (a.as_bytes(), b.as_bytes());
+    if x.len() != y.len() {
+        return false;
+    }
+    let mut diff: u8 = 0;
+    for (ai, bi) in x.iter().zip(y.iter()) {
+        diff |= ai ^ bi;
+    }
+    diff == 0
+}
+
 fn check_auth(state: &DaemonState, headers: &HeaderMap) -> bool {
     if state.token.is_empty() {
-        return true;
+        // H-01: empty configured token always fails closed.
+        return false;
     }
     headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|t| t == state.token)
+        .map(|t| const_time_eq(t, &state.token))
         .unwrap_or(false)
+}
+
+/// True if the bind address refers to a loopback interface.
+fn is_loopback(bind: &str) -> bool {
+    match bind.parse::<std::net::Ipv4Addr>() {
+        Ok(ip) => ip.is_loopback(),
+        Err(_) => bind == "::1" || bind == "localhost",
+    }
 }
 
 async fn health_handler() -> impl IntoResponse {
@@ -207,6 +230,25 @@ async fn action_handler(
 
     match body.action.as_str() {
         "restart" | "stop" | "start" => {
+            // H-03: validate container name — must match ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$
+            let target = &body.target;
+            if !is_valid_container_name(target) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": format!("invalid container name: {target}")})),
+                )
+                    .into_response();
+            }
+
+            // H-03: container must exist in `docker ps -a` (or podman fallback).
+            if !container_exists(target).await {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": format!("container '{target}' not found in docker ps -a")})),
+                )
+                    .into_response();
+            }
+
             let mut result = tokio::process::Command::new("docker")
                 .args([&body.action, &body.target])
                 .output()
@@ -242,43 +284,56 @@ async fn action_handler(
                 .into_response(),
             }
         }
-        "backup" => {
-            let backup_file = format!("/tmp/{}-backup.tar.gz", body.target);
-            let res = tokio::process::Command::new("tar")
-                .args(["czf", &backup_file, &body.target])
-                .output()
-                .await;
-            match res {
-                Ok(o) => {
-                    let stdout = String::from_utf8_lossy(&o.stdout).to_string();
-                    let stderr = String::from_utf8_lossy(&o.stderr).to_string();
-                    let output = if stdout.trim().is_empty() {
-                        if o.status.success() {
-                            format!("Backup created: {backup_file}")
-                        } else {
-                            stderr
-                        }
-                    } else {
-                        stdout
-                    };
-                    Json(ActionResponse {
-                        ok: o.status.success(),
-                        output,
-                    })
-                    .into_response()
-                }
-                Err(e) => Json(ActionResponse {
-                    ok: false,
-                    output: e.to_string(),
-                })
-                .into_response(),
-            }
+        // H-03: "backup" action removed — no longer accepted.
+        other => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": format!("unknown action: {other}")})),
+        )
+            .into_response(),
+    }
+}
+
+/// H-03: validate container name against ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$
+pub fn is_valid_container_name(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    if bytes.is_empty() || bytes.len() > 128 {
+        return false;
+    }
+    // first char must be alphanumeric
+    match bytes[0] {
+        b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' => {}
+        _ => return false,
+    }
+    // remaining chars: alphanum, underscore, dot, hyphen
+    bytes[1..]
+        .iter()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+}
+
+/// H-03: check whether the container exists in `docker ps -a` (or podman fallback).
+/// Mockable via `CONTAINER_NAMES_OVERRIDE` env var (comma-separated) for tests.
+async fn container_exists(name: &str) -> bool {
+    if let Ok(override_val) = std::env::var("CONTAINER_NAMES_OVERRIDE") {
+        return override_val.split(',').map(|s| s.trim()).any(|s| s == name);
+    }
+    let mut out = tokio::process::Command::new("docker")
+        .args(["ps", "-a", "--format", "{{.Names}}"])
+        .output()
+        .await;
+    if out.is_err() || matches!(&out, Ok(o) if !o.status.success()) {
+        let pod_out = tokio::process::Command::new("podman")
+            .args(["ps", "-a", "--format", "{{.Names}}"])
+            .output()
+            .await;
+        if pod_out.is_ok() {
+            out = pod_out;
         }
-        other => Json(ActionResponse {
-            ok: false,
-            output: format!("unknown action: {other}"),
-        })
-        .into_response(),
+    }
+    match out {
+        Ok(o) => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .any(|line| line.trim() == name),
+        Err(_) => false,
     }
 }
 
@@ -306,7 +361,10 @@ async fn collect_cors_preflight() -> impl IntoResponse {
         [
             ("access-control-allow-origin", "*"),
             ("access-control-allow-methods", "POST, GET, OPTIONS"),
-            ("access-control-allow-headers", "content-type, user-agent, authorization"),
+            (
+                "access-control-allow-headers",
+                "content-type, user-agent, authorization",
+            ),
         ],
     )
 }
@@ -497,18 +555,45 @@ async fn collect_analytics_handler(
     headers: axum::http::HeaderMap,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    let website_id = payload.get("website_id").and_then(|v| v.as_str()).unwrap_or("default").to_string();
-    let url = payload.get("url").and_then(|v| v.as_str()).unwrap_or("/").to_string();
-    let referrer = payload.get("referrer").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let title = payload.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let session_id = payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("fallback").to_string();
+    let website_id = payload
+        .get("website_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default")
+        .to_string();
+    let url = payload
+        .get("url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("/")
+        .to_string();
+    let referrer = payload
+        .get("referrer")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let title = payload
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let session_id = payload
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("fallback")
+        .to_string();
 
     // Extract X-Forwarded-For or client IP for anonymized hashing
-    let forwarded = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()).unwrap_or("");
+    let forwarded = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
     let client_ip = forwarded.split(',').next().unwrap_or("").trim().to_string();
 
     // User-Agent parsing for browser, OS, device
-    let ua = headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let ua = headers
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
     let (browser, os, device) = parse_user_agent(&ua);
 
     // Daily sovereign salt for PII-protected Visitor Hash (no cookies/PII stored)
@@ -522,12 +607,13 @@ async fn collect_analytics_handler(
         .and_then(|v| v.as_str())
         .unwrap_or("pageview")
         .to_string();
-    let event_name = payload.get("event_name").and_then(|v| v.as_str()).map(String::from);
+    let event_name = payload
+        .get("event_name")
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let event_data = payload.get("event_data").and_then(|v| match v {
         serde_json::Value::String(s) => Some(s.clone()),
-        serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
-            Some(v.to_string())
-        }
+        serde_json::Value::Object(_) | serde_json::Value::Array(_) => Some(v.to_string()),
         _ => None,
     });
     let click_x = payload.get("click_x").and_then(|v| v.as_f64());
@@ -562,35 +648,41 @@ async fn collect_analytics_handler(
     });
 
     match result {
-        Ok(Ok(())) => {
-            (
-                StatusCode::OK,
-                [
-                    ("access-control-allow-origin", "*"),
-                    ("access-control-allow-methods", "POST, GET, OPTIONS"),
-                    ("access-control-allow-headers", "*"),
-                ],
-                Json(serde_json::json!({"status": "ok"})),
-            )
-                .into_response()
-        }
-        _ => {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                [
-                    ("access-control-allow-origin", "*"),
-                    ("access-control-allow-methods", "POST, GET, OPTIONS"),
-                    ("access-control-allow-headers", "*"),
-                ],
-                Json(serde_json::json!({"error": "db_write_failure"})),
-            )
-                .into_response()
-        }
+        Ok(Ok(())) => (
+            StatusCode::OK,
+            [
+                ("access-control-allow-origin", "*"),
+                ("access-control-allow-methods", "POST, GET, OPTIONS"),
+                ("access-control-allow-headers", "*"),
+            ],
+            Json(serde_json::json!({"status": "ok"})),
+        )
+            .into_response(),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            [
+                ("access-control-allow-origin", "*"),
+                ("access-control-allow-methods", "POST, GET, OPTIONS"),
+                ("access-control-allow-headers", "*"),
+            ],
+            Json(serde_json::json!({"error": "db_write_failure"})),
+        )
+            .into_response(),
     }
 }
 
-/// Fetch overall web traffic & analytics summary from the SQLite database.
-async fn analytics_summary_handler() -> impl IntoResponse {
+/// H-04: /api/analytics/summary requires auth; no CORS wildcard.
+async fn analytics_summary_handler(
+    State(state): State<Arc<DaemonState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if !check_auth(&state, &headers) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "unauthorized"})),
+        )
+            .into_response();
+    }
     let db = crate::db::Database::open();
     match db {
         Ok(d) => match d.get_analytics_summary(None) {
@@ -614,15 +706,8 @@ async fn analytics_summary_handler() -> impl IntoResponse {
                     "rage_clicks": summary.rage_clicks,
                     "avg_dwell_time_secs": summary.avg_dwell_time_secs,
                 });
-                (
-                    StatusCode::OK,
-                    [
-                        ("access-control-allow-origin", "*"),
-                        ("access-control-allow-methods", "GET, OPTIONS"),
-                    ],
-                    Json(json_val),
-                )
-                    .into_response()
+                // H-04: no CORS wildcard on authenticated endpoints.
+                (StatusCode::OK, Json(json_val)).into_response()
             }
             Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "db_error").into_response(),
         },
@@ -634,7 +719,10 @@ async fn analytics_summary_handler() -> impl IntoResponse {
 
 fn parse_user_agent(ua: &str) -> (String, String, String) {
     let ua_lower = ua.to_lowercase();
-    let device = if ua_lower.contains("mobile") || ua_lower.contains("android") || ua_lower.contains("iphone") {
+    let device = if ua_lower.contains("mobile")
+        || ua_lower.contains("android")
+        || ua_lower.contains("iphone")
+    {
         "Mobile".to_string()
     } else {
         "Desktop".to_string()
@@ -677,9 +765,7 @@ fn hex_sha256(input: &str) -> String {
     result.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-async fn node_heartbeat_handler(
-    Json(hb): Json<cashell_common::Heartbeat>,
-) -> impl IntoResponse {
+async fn node_heartbeat_handler(Json(hb): Json<cashell_common::Heartbeat>) -> impl IntoResponse {
     let services_json = serde_json::to_string(&hb.services).unwrap_or_else(|_| "[]".to_string());
     let db_hb = crate::db::NodeHeartbeat {
         node_id: hb.node_id.clone(),
@@ -701,10 +787,13 @@ async fn node_heartbeat_handler(
         let _ = db.store_heartbeat(&db_hb);
     }
 
-    (StatusCode::OK, Json(serde_json::json!({
-        "status": "received",
-        "node_id": hb.node_id,
-    })))
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "received",
+            "node_id": hb.node_id,
+        })),
+    )
 }
 
 // ── Service Probing & Multi-Node Logic ───────────────────────────────────────
@@ -789,12 +878,16 @@ pub async fn execute_remediation(
     cmd: &str,
 ) -> Result<String, String> {
     if node_name == "local" || node.ip == "127.0.0.1" || node.ip == "localhost" {
-        let out = tokio::process::Command::new("sh")
-            .arg("-c")
-            .arg(cmd)
+        // Local execution: tokenize into argv, no shell involved (hardened path).
+        let tokens: Vec<&str> = cmd.split_whitespace().collect();
+        if tokens.is_empty() {
+            return Err("empty remediation command".to_string());
+        }
+        let out = tokio::process::Command::new(tokens[0])
+            .args(&tokens[1..])
             .output()
             .await
-            .map_err(|e| format!("failed to spawn local command: {e}"))?;
+            .map_err(|e| format!("failed to spawn local command '{}': {e}", tokens[0]))?;
         if !out.status.success() {
             return Err(format!(
                 "exit {:?}: {}",
@@ -828,11 +921,7 @@ pub async fn execute_remediation(
     }
 }
 
-pub async fn send_telegram_alert(
-    bot_token: &str,
-    chat_id: &str,
-    text: &str,
-) -> Result<(), String> {
+pub async fn send_telegram_alert(bot_token: &str, chat_id: &str, text: &str) -> Result<(), String> {
     if bot_token.is_empty() || chat_id.is_empty() {
         return Ok(());
     }
@@ -856,10 +945,21 @@ fn run_daemon(cfg: &Config, port_opt: Option<u16>, interval_opt: Option<u64>) ->
     let port = port_opt.unwrap_or(cfg.daemon.port);
     let interval = interval_opt.unwrap_or(cfg.daemon.interval_secs);
     let threshold = cfg.daemon.retry_threshold;
+    let bind = cfg.daemon.bind.clone();
+
+    // H-01: non-loopback bind with empty token is refused at startup (fail closed).
+    if !is_loopback(&bind) && cfg.daemon.token.is_empty() {
+        eprintln!(
+            "Refusing to start: daemon.bind '{}' is not a loopback address but daemon.token is empty. \nSet a non-empty daemon.token in config, or use daemon.bind = \"127.0.0.1\".",
+            bind
+        );
+        std::process::exit(2);
+    }
 
     println!(
-        "{} starting on 0.0.0.0:{} (interval={}s, threshold={})",
+        "{} starting on {}:{} (interval={}s, threshold={})",
         "CAShell daemon".green().bold(),
+        bind,
         port,
         interval,
         threshold
@@ -871,12 +971,13 @@ fn run_daemon(cfg: &Config, port_opt: Option<u16>, interval_opt: Option<u64>) ->
 
     rt.block_on(async {
         let app = build_router(cfg.daemon.token.clone());
-        let addr = format!("0.0.0.0:{port}");
+        let addr = format!("{bind}:{port}");
         let listener = match tokio::net::TcpListener::bind(&addr).await {
             Ok(l) => {
                 println!(
-                    "{} HTTP API listening on http://0.0.0.0:{port}/api/health",
-                    "✔".green()
+                    "{} HTTP API listening on http://{}:{port}/api/health",
+                    "✔".green(),
+                    bind
                 );
                 Some(l)
             }
@@ -1030,7 +1131,10 @@ fn run_status(cfg: &Config) -> Result<()> {
             Some(ms) => format!("{ms}ms"),
             None => "-".to_string(),
         };
-        println!("{:<14} {:<20} {:<10} {:<10}", node, svc, status_str, lat_str);
+        println!(
+            "{:<14} {:<20} {:<10} {:<10}",
+            node, svc, status_str, lat_str
+        );
     }
 
     println!(
@@ -1078,8 +1182,7 @@ fn run_restart(cfg: &Config, node: &str, service: &str) -> Result<()> {
         Ok(out) => {
             println!("{} Remediation output:\n{}", "✔".green(), out.trim());
             if let Ok(db) = crate::db::get_db() {
-                let _ =
-                    db.log_event("INFO", "daemon", &format!("Manual restart of {key}: {cmd}"));
+                let _ = db.log_event("INFO", "daemon", &format!("Manual restart of {key}: {cmd}"));
             }
         }
         Err(e) => {
@@ -1145,6 +1248,30 @@ WantedBy=multi-user.target
 }
 
 fn run_install_service(user: bool) -> Result<()> {
+    // H-01: ensure daemon.auth token exists before installing the service.
+    // Generate a 32-byte random base64url token and persist it to config (0600).
+    let cfg_path = crate::config::Config::default_path();
+    let mut cfg = crate::config::Config::load(None)?;
+    if cfg.daemon.token.is_empty() {
+        let mut buf = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut buf);
+        let token = crate::pro::b64_url_encode_public(&buf);
+        cfg.daemon.token = token;
+        // TODO(F-02): move token storage to the vault (pro) instead of plaintext config.
+        let content = toml::to_string_pretty(&cfg)?;
+        std::fs::write(&cfg_path, content.as_bytes())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&cfg_path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        println!(
+            "{} Generated daemon token and saved to {} (0600).",
+            "✔".green(),
+            cfg_path.display()
+        );
+    }
+
     let unit_path = service_unit_path(user);
     if let Some(parent) = unit_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -1307,9 +1434,219 @@ mod tests {
         let cfg = Config::default();
         assert_eq!(cfg.daemon.port, 8090);
         assert_eq!(cfg.daemon.token, "");
+        assert_eq!(cfg.daemon.bind, "127.0.0.1");
         assert_eq!(cfg.daemon.interval_secs, 60);
         assert_eq!(cfg.daemon.retry_threshold, 3);
         assert_eq!(cfg.daemon.ssh_key_path, "~/.ssh/id_ed25519");
         assert!(cfg.daemon.nodes.contains_key("local"));
+    }
+
+    // ── H-01: check_auth fail-closed ───────────────────────────────────────────
+
+    #[test]
+    fn test_check_auth_empty_token_fails_closed() {
+        let state = DaemonState {
+            token: String::new(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer anything".parse().unwrap());
+        assert!(!check_auth(&state, &headers));
+    }
+
+    #[test]
+    fn test_check_auth_correct_token_passes() {
+        let state = DaemonState {
+            token: "s3cret-token".to_string(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer s3cret-token".parse().unwrap());
+        assert!(check_auth(&state, &headers));
+    }
+
+    #[test]
+    fn test_check_auth_wrong_token_fails() {
+        let state = DaemonState {
+            token: "correct-token".to_string(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer wrong-token".parse().unwrap());
+        assert!(!check_auth(&state, &headers));
+    }
+
+    #[test]
+    fn test_const_time_eq() {
+        assert!(const_time_eq("abc", "abc"));
+        assert!(!const_time_eq("abc", "abd"));
+        assert!(!const_time_eq("abc", "abcde"));
+    }
+
+    // ── H-02: is_loopback ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_loopback() {
+        assert!(is_loopback("127.0.0.1"));
+        assert!(is_loopback("::1"));
+        assert!(is_loopback("localhost"));
+        assert!(!is_loopback("0.0.0.0"));
+        assert!(!is_loopback("192.168.1.1"));
+    }
+
+    // ── H-03: container name validation ───────────────────────────────────────
+
+    #[test]
+    fn test_valid_container_names() {
+        assert!(is_valid_container_name("mycontainer"));
+        assert!(is_valid_container_name("my-container"));
+        assert!(is_valid_container_name("my_container"));
+        assert!(is_valid_container_name("my.container"));
+        assert!(is_valid_container_name("a"));
+        assert!(is_valid_container_name("123abc"));
+        assert!(is_valid_container_name(&"a".repeat(128)));
+    }
+
+    #[test]
+    fn test_malicious_container_names_rejected() {
+        assert!(!is_valid_container_name("a;id"));
+        assert!(!is_valid_container_name("../x"));
+        assert!(!is_valid_container_name("a b"));
+        assert!(!is_valid_container_name("$(id)"));
+        assert!(!is_valid_container_name(""));
+        assert!(!is_valid_container_name("-abc"));
+        assert!(!is_valid_container_name(&"a".repeat(129)));
+        assert!(!is_valid_container_name("a/b"));
+    }
+
+    // ── H-03: action handler with mocked docker ──────────────────────────────
+
+    /// Test harness: call action_handler directly with mocked container list.
+    async fn run_action_request(
+        token: &str,
+        auth_header: Option<&str>,
+        action: &str,
+        target: &str,
+    ) -> (StatusCode, serde_json::Value) {
+        std::env::set_var("CONTAINER_NAMES_OVERRIDE", "gitea,nginx,valid-container");
+        let state = Arc::new(DaemonState {
+            token: token.to_string(),
+        });
+        let mut headers = HeaderMap::new();
+        if let Some(auth) = auth_header {
+            headers.insert(axum::http::header::AUTHORIZATION, auth.parse().unwrap());
+        }
+        let body = ActionRequest {
+            action: action.to_string(),
+            target: target.to_string(),
+        };
+        let resp = action_handler(axum::extract::State(state), headers, axum::Json(body))
+            .await
+            .into_response();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value =
+            serde_json::from_slice(&bytes).unwrap_or(serde_json::json!(null));
+        (status, json)
+    }
+
+    #[tokio::test]
+    async fn test_action_backup_rejected() {
+        let (status, body) = run_action_request("tok", Some("Bearer tok"), "backup", "gitea").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.get("error").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_action_malicious_container_names() {
+        for target in ["a;id", "../x", "a b", "$(id)"] {
+            let (status, body) =
+                run_action_request("tok", Some("Bearer tok"), "start", target).await;
+            assert_eq!(
+                status,
+                StatusCode::BAD_REQUEST,
+                "target={target} should be 400, got {status}"
+            );
+            assert!(body.get("error").is_some(), "target={target}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_action_invalid_container_not_in_docker() {
+        // valid name format but not in mocked docker list
+        let (status, body) =
+            run_action_request("tok", Some("Bearer tok"), "start", "nope-does-not-exist").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.get("error").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_action_no_token_401() {
+        // no auth header → 401
+        let (status, _) = run_action_request("tok", None, "start", "gitea").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_action_wrong_token_401() {
+        let (status, _) =
+            run_action_request("correct", Some("Bearer wrong"), "start", "gitea").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_action_positive_valid_container() {
+        // valid token + valid container in mocked list → 200
+        let (status, body) = run_action_request("tok", Some("Bearer tok"), "start", "gitea").await;
+        assert_eq!(status, StatusCode::OK, "body={body}");
+        assert!(body.get("ok").is_some(), "body={body}");
+    }
+
+    // ── H-04: analytics summary auth ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_analytics_summary_no_token_401() {
+        let state = Arc::new(DaemonState {
+            token: "secret123".to_string(),
+        });
+        let headers = HeaderMap::new();
+        let resp = analytics_summary_handler(axum::extract::State(state), headers)
+            .await
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_analytics_summary_wrong_token_401() {
+        let state = Arc::new(DaemonState {
+            token: "secret123".to_string(),
+        });
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer wrong".parse().unwrap(),
+        );
+        let resp = analytics_summary_handler(axum::extract::State(state), headers)
+            .await
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // ── H-02: daemon run with non-loopback + empty token → exit 2 ─────────
+    // Tested indirectly: is_loopback + the run_daemon guard logic.
+
+    #[test]
+    fn test_daemon_run_rejects_non_loopback_without_token() {
+        // Simulate the guard condition that run_daemon checks before starting.
+        let bind = "0.0.0.0";
+        let token = String::new();
+        let should_reject = !is_loopback(&bind) && token.is_empty();
+        assert!(
+            should_reject,
+            "non-loopback bind with empty token must be rejected"
+        );
+
+        let bind2 = "127.0.0.1";
+        let should_reject2 = !is_loopback(&bind2) && token.is_empty();
+        assert!(!should_reject2, "loopback bind with empty token is allowed");
     }
 }

@@ -70,6 +70,10 @@ pub struct DaemonConfig {
     pub port: u16,
     #[serde(default = "default_daemon_token")]
     pub token: String,
+    /// Address to bind the HTTP API listener to (default: 127.0.0.1).
+    /// A non-loopback bind requires a non-empty token.
+    #[serde(default = "default_daemon_bind")]
+    pub bind: String,
     #[serde(default = "default_daemon_interval")]
     pub interval_secs: u64,
     #[serde(default = "default_daemon_retry_threshold")]
@@ -91,6 +95,7 @@ impl Default for DaemonConfig {
         Self {
             port: default_daemon_port(),
             token: default_daemon_token(),
+            bind: default_daemon_bind(),
             interval_secs: default_daemon_interval(),
             retry_threshold: default_daemon_retry_threshold(),
             ssh_key_path: default_ssh_key_path(),
@@ -100,6 +105,10 @@ impl Default for DaemonConfig {
             remediation: default_remediation(),
         }
     }
+}
+
+fn default_daemon_bind() -> String {
+    "127.0.0.1".to_string()
 }
 
 /// Remote node configuration.
@@ -250,14 +259,30 @@ impl Default for MascotConfig {
     }
 }
 
-pub fn default_mascot_speed() -> String { "Normal".to_string() }
-pub fn default_mascot_sensitivity() -> String { "Balanced".to_string() }
-pub fn default_mascot_tracking() -> bool { true }
-pub fn default_mascot_color() -> String { "Dynamic Reactive".to_string() }
-pub fn default_mascot_animation() -> String { "Hover Bobbing".to_string() }
-pub fn default_mascot_scale() -> String { "Auto-Fit".to_string() }
-pub fn default_matrix_speed() -> String { "Normal".to_string() }
-pub fn default_mascot_chat() -> bool { true }
+pub fn default_mascot_speed() -> String {
+    "Normal".to_string()
+}
+pub fn default_mascot_sensitivity() -> String {
+    "Balanced".to_string()
+}
+pub fn default_mascot_tracking() -> bool {
+    true
+}
+pub fn default_mascot_color() -> String {
+    "Dynamic Reactive".to_string()
+}
+pub fn default_mascot_animation() -> String {
+    "Hover Bobbing".to_string()
+}
+pub fn default_mascot_scale() -> String {
+    "Auto-Fit".to_string()
+}
+pub fn default_matrix_speed() -> String {
+    "Normal".to_string()
+}
+pub fn default_mascot_chat() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProductsConfig {
