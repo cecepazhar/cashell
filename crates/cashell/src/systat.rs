@@ -819,7 +819,7 @@ pub fn probe_services_health(docker_running: usize, docker_total: usize) -> Vec<
         detail: cf_detail,
     });
 
-    // H-09: 9router / omniroute hardcoded check removed — no private hosts
+    // H-09: hardcoded personal gateway check removed — no private hosts
     // or personal gateway endpoints may appear in defaults.
 
     // 4. docker / podman
@@ -1163,7 +1163,7 @@ pub fn build_project_workspace(
     }
 
     // 5. Configured ecosystem services & well-known ports
-    // H-09: no personal gateway entry (9router) — public/generic services only.
+    // H-09: no personal gateway entry — public/generic services only.
     let well_known_services: &[(&str, u16, &str)] = &[
         ("cashell", 8090, "http"),
         ("caterm", 8081, "http"),

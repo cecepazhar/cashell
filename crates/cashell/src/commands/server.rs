@@ -385,14 +385,13 @@ fn db_backup(name: &str) -> Result<()> {
 
     // Feed dump stdout into gzip stdin; the join handle's receiver is dropped
     // so gzip receives EOF once the copy finishes.
-    use std::io::{Read, Write};
     let feeder = std::thread::spawn(move || {
         let _ = std::io::copy(&mut std::io::BufReader::new(dump_stdout), &mut gzip_stdin);
     });
 
-    let mut dump_status = dump.wait()?;
+    let dump_status = dump.wait()?;
     let _ = feeder.join();
-    let mut gzip_status = gzip.wait()?;
+    let gzip_status = gzip.wait()?;
 
     if !dump_status.success() || !gzip_status.success() {
         std::fs::remove_file(&file).ok();
@@ -450,14 +449,13 @@ fn db_restore(name: &str, file: &str) -> Result<()> {
         .take()
         .ok_or_else(|| anyhow::anyhow!("failed to capture {db_bin} stdin pipe"))?;
 
-    use std::io::Read;
     let feeder = std::thread::spawn(move || {
         let _ = std::io::copy(&mut std::io::BufReader::new(gunzip_stdout), &mut db_stdin);
     });
 
-    let mut gunzip_status = gunzip.wait()?;
+    let gunzip_status = gunzip.wait()?;
     let _ = feeder.join();
-    let mut db_status = db.wait()?;
+    let db_status = db.wait()?;
 
     if !gunzip_status.success() || !db_status.success() {
         bail!(

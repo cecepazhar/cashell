@@ -344,13 +344,8 @@ async fn container_exists(name: &str) -> bool {
 }
 
 pub fn build_router(cfg: &Config) -> Router {
-    // H-05: per-node heartbeat secrets keyed by node name from user config.
-    let node_secrets: std::collections::HashMap<String, String> = cfg
-        .daemon
-        .nodes
-        .iter()
-        .filter_map(|(name, n)| n.secret.clone().map(|s| (name.clone(), s)))
-        .collect();
+    // H-05: per-node heartbeat secrets from user config (node_secrets map).
+    let node_secrets = cfg.daemon.node_secrets.clone();
     let state = Arc::new(DaemonState {
         token: cfg.daemon.token.clone(),
         trusted_proxies: cfg.daemon.trusted_proxies.clone(),
@@ -833,6 +828,7 @@ async fn node_heartbeat_handler(
             "node_id": hb.node_id,
         })),
     )
+        .into_response()
 }
 
 /// H-05: verify a signed heartbeat against the per-node secret.
@@ -869,7 +865,7 @@ fn verify_heartbeat(
     let expected = match Hmac::<Sha256>::new_from_slice(secret.as_bytes()) {
         Ok(mut mac) => {
             mac.update(cashell_common::heartbeat_canonical_json(hb).as_bytes());
-            hex_sha256(&mac.finalize().into_bytes())
+            hex_encode(&mac.finalize().into_bytes())
         }
         Err(e) => {
             return Err(format!("hmac init failed: {e}"));
@@ -910,7 +906,7 @@ fn resolve_client_ip(
     let peer_ip_str = peer.ip().to_string();
     let is_trusted = trusted_proxies
         .iter()
-        .any(|t| t == &peer_ip_str || t == peer.to_string());
+        .any(|t| t == &peer_ip_str || t == &peer.to_string());
     if !is_trusted {
         return peer_ip_str;
     }
@@ -1119,7 +1115,7 @@ fn run_daemon(cfg: &Config, port_opt: Option<u16>, interval_opt: Option<u64>) ->
     rt.block_on(async {
         // H-10: ConnectInfo so handlers can see the TCP peer address and decide
         // whether X-Forwarded-For / CF-Connecting-IP headers are trustworthy.
-        let app = build_router(cfg).into_make_service_with_connect_info::<std::net::IpAddr>();
+        let app = build_router(cfg).into_make_service_with_connect_info::<std::net::SocketAddr>();
         let addr = format!("{bind}:{port}");
         let listener = match tokio::net::TcpListener::bind(&addr).await {
             Ok(l) => {
@@ -1968,7 +1964,7 @@ mod tests {
 
     #[test]
     fn test_resolve_client_ip_trusted_peer_honors_cf_connecting_ip() {
-        let peer: SocketAddr = "::1:54321".parse().unwrap();
+        let peer: SocketAddr = "[::1]:54321".parse().unwrap();
         let mut headers = HeaderMap::new();
         headers.insert("cf-connecting-ip", "198.51.100.9".parse().unwrap());
         let trusted: Vec<String> = vec!["127.0.0.1".into(), "::1".into()];

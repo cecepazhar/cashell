@@ -91,6 +91,14 @@ pub struct DaemonConfig {
     /// H-10: peer addresses trusted to supply `X-Forwarded-For` /
     /// `CF-Connecting-IP` client-IP headers. Only honored when the TCP peer
     /// matches this list; otherwise the peer address is used.
+    /// H-05: per-node heartbeat secrets keyed by node name (matches `daemon.nodes`
+    /// keys). Stored in the user's config file; keep the config file itself at 0600.
+    /// TODO(F-02): dedicated per-node secret storage/rotation.
+    #[serde(default)]
+    pub node_secrets: std::collections::HashMap<String, String>,
+    /// H-10: peer addresses trusted to supply `X-Forwarded-For` /
+    /// `CF-Connecting-IP` client-IP headers. Only honored when the TCP peer
+    /// matches this list; otherwise the peer address is used.
     #[serde(default = "default_trusted_proxies")]
     pub trusted_proxies: Vec<String>,
 }
@@ -108,6 +116,7 @@ impl Default for DaemonConfig {
             telegram_chat_id: String::new(),
             nodes: default_nodes(),
             remediation: default_remediation(),
+            node_secrets: std::collections::HashMap::new(),
             trusted_proxies: default_trusted_proxies(),
         }
     }
@@ -132,11 +141,6 @@ pub struct NodeConfig {
     /// during probes, latencies, and fleet management.
     #[serde(default = "default_node_active")]
     pub active: bool,
-    /// H-05: per-node secret for verifying signed heartbeats. Stored in the
-    /// user's config file; the config file itself should be kept 0600.
-    /// TODO(F-02): dedicated per-node secret storage/rotation.
-    #[serde(default)]
-    pub secret: Option<String>,
 }
 
 fn default_node_active() -> bool {
@@ -190,7 +194,6 @@ fn default_nodes() -> std::collections::HashMap<String, NodeConfig> {
                 protocol: "http".to_string(),
             }],
             active: true,
-            secret: None,
         },
     );
     m
