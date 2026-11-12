@@ -139,7 +139,7 @@ fn run_app() -> Result<i32> {
             Ok(0)
         }
         Some(Commands::License(cmd)) => {
-            let code = commands::license::run(&cmd)?;
+            let code = commands::license::run(&cmd, &cfg)?;
             Ok(code)
         }
         Some(Commands::Pro(cmd)) => {

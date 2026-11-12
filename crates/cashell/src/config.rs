@@ -61,6 +61,8 @@ pub struct Config {
     pub pro: ProConfig,
     #[serde(default)]
     pub mascot: MascotConfig,
+    #[serde(default)]
+    pub license: LicenseConfig,
 }
 
 /// Daemon & multi-node orchestration configuration.
@@ -741,6 +743,28 @@ impl Default for ProConfig {
 
 fn default_pro_api_base() -> String {
     "https://api.fathforce.com".to_string()
+}
+
+/// License / GCC activation endpoint configuration.
+///
+/// Single source of truth for the GCC base URL used by the license client
+/// (L-01). The GCC license API lives under `{gcc_base_url}/api/v1/licenses/*`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LicenseConfig {
+    #[serde(default = "default_license_gcc_base_url")]
+    pub gcc_base_url: String,
+}
+
+impl Default for LicenseConfig {
+    fn default() -> Self {
+        Self {
+            gcc_base_url: default_license_gcc_base_url(),
+        }
+    }
+}
+
+fn default_license_gcc_base_url() -> String {
+    "https://gcc.fathforce.com".to_string()
 }
 
 fn default_pro_auto_sync() -> bool {
