@@ -1158,7 +1158,7 @@ fn run_install_service(user: bool) -> Result<()> {
     );
 
     if user {
-        let username = std::env::var("USER").unwrap_or_else(|_| "cecepazhar".to_string());
+        let username = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
         println!("Enabling lingering for user '{}'...", username);
         let _ = std::process::Command::new("loginctl")
             .args(["enable-linger", &username])

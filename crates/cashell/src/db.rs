@@ -1080,33 +1080,11 @@ impl Database {
         Ok(n)
     }
 
-    /// Seed the `analytics_websites` table with the default CA product list.
+    /// Import an optional user-provided CA website list into analytics.
+    ///
+    /// Public builds must remain clean by default; personal site lists should be
+    /// imported from `profile.toml` via `cashell config import` instead.
     pub fn import_default_ca_websites(&self) -> Result<()> {
-        let defaults: &[(&str, &str, &str)] = &[
-            ("caterm", "CAProduct Landing", "caterm.fathforce.com"),
-            ("fathstore", "FathStore Solo", "fathstore.com"),
-            ("caui", "CAUI Design System", "caui.fathforce.com"),
-            ("cagames", "CAGames", "cagames.fathforce.com"),
-            ("camark", "CAMark Studio", "camark.fathforce.com"),
-            ("catable", "CATAble Dashboard", "catable.fathforce.com"),
-            ("cabook", "CABook Library", "cabook.fathforce.com"),
-            ("capost", "CAPost CMS", "capost.fathforce.com"),
-            ("cacalm", "CACalm Meditation", "cacalm.fathforce.com"),
-            ("cacash", "CACash Finance", "cacash.fathforce.com"),
-            ("caentech", "CAEntech Medical", "caentech.fathforce.com"),
-            ("castudio", "CAStudio", "castudio.fathforce.com"),
-            ("caprompt", "CAPrompt Studio", "caprompt.fathforce.com"),
-            ("cecepazhar.com", "Prof. Cecep Blog", "cecepazhar.com"),
-            ("docs", "Fathforce Docs Hub", "docs.fathforce.com"),
-            ("changelogs", "Fathforce Changelogs Hub", "changelog.fathforce.com"),
-            ("blog", "Fathforce Blog", "blog.fathforce.com"),
-            ("member", "Fathforce Member Portal", "member.fathforce.com"),
-            ("fathforce", "Fathforce Master Studio", "fathforce.com"),
-            ("gcc", "GCC Central Dashboard", "gcc.fathforce.com"),
-        ];
-        for (id, name, domain) in defaults {
-            self.add_analytic_site(id, name, domain)?;
-        }
         Ok(())
     }
 
@@ -1726,12 +1704,12 @@ mod tests {
     fn test_db_init_and_chat_roundtrip() -> Result<()> {
         let db = Database::open_in_memory()?;
         db.save_chat("User", "Hello Hana")?;
-        db.save_chat("AI", "Greetings Prof. Cecep")?;
+        db.save_chat("AI", "Greetings user")?;
 
         let recent = db.load_recent_chat(10)?;
         assert_eq!(recent.len(), 2);
         assert_eq!(recent[0], ("User".to_string(), "Hello Hana".to_string()));
-        assert_eq!(recent[1], ("AI".to_string(), "Greetings Prof. Cecep".to_string()));
+        assert_eq!(recent[1], ("AI".to_string(), "Greetings user".to_string()));
         Ok(())
     }
 
@@ -2017,7 +1995,7 @@ mod tests {
 
         let rec = AuditReportRecord {
             id: 0,
-            repo_path: "/home/cecepazhar/Product/catable".to_string(),
+            repo_path: "/tmp/cashell-test/Product/catable".to_string(),
             project_name: "catable".to_string(),
             score: 95,
             critical_count: 0,
@@ -2025,7 +2003,7 @@ mod tests {
             medium_count: 1,
             low_count: 2,
             info_count: 3,
-            report_path: "/home/cecepazhar/Product/catable/audit/Audit_2026-10-24.md".to_string(),
+            report_path: "/tmp/cashell-test/Product/catable/audit/Audit_2026-10-24.md".to_string(),
             user_prompt: "cek security auth dan performa query database".to_string(),
             tuned_prompt: "# AUDIT DIRECTIVE: Targeted Inspection".to_string(),
             report_markdown: "# Audit Report for catable\n\nNo critical findings.".to_string(),
@@ -2035,7 +2013,7 @@ mod tests {
         let row_id = db.save_audit_report(&rec)?;
         assert!(row_id > 0);
 
-        let reports = db.get_audit_reports_for_repo("/home/cecepazhar/Product/catable", 10)?;
+        let reports = db.get_audit_reports_for_repo("/tmp/cashell-test/Product/catable", 10)?;
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].score, 95);
         assert_eq!(reports[0].project_name, "catable");
@@ -2044,13 +2022,13 @@ mod tests {
 
         let summaries = db.get_audit_project_summaries()?;
         assert_eq!(summaries.len(), 1);
-        assert_eq!(summaries[0].0, "/home/cecepazhar/Product/catable");
+        assert_eq!(summaries[0].0, "/tmp/cashell-test/Product/catable");
         assert_eq!(summaries[0].1, "catable");
         assert_eq!(summaries[0].2, 95); // score
         assert_eq!(summaries[0].3, 1);  // count
 
         db.delete_audit_report(reports[0].id)?;
-        let reports_after = db.get_audit_reports_for_repo("/home/cecepazhar/Product/catable", 10)?;
+        let reports_after = db.get_audit_reports_for_repo("/tmp/cashell-test/Product/catable", 10)?;
         assert_eq!(reports_after.len(), 0);
 
         Ok(())

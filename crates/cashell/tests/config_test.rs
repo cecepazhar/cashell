@@ -42,10 +42,11 @@ mod tests {
             .workspace
             .ignore_patterns
             .contains(&"node_modules".to_string()));
-        assert_eq!(cfg.persona.user_name, "Prof. Cecep");
+        let user = std::env::var("USER").unwrap_or_else(|_| "Developer".to_string());
+        assert_eq!(cfg.persona.user_name, user);
         assert_eq!(
             cfg.persona.assistant_role,
-            "Kamu adalah Hana AI / Chief Operations Assistant Fathforce & CAShell. Terse, cekatan, dan patuh pada instruksi Prof. Cecep."
+            "You are a concise operations assistant. Provide practical, direct answers."
         );
         assert_eq!(cfg.database.retention_days, 7);
         assert!(cfg.database.auto_prune);

@@ -602,7 +602,7 @@ fn default_user_name() -> String {
 }
 
 fn default_assistant_role() -> String {
-    "Kamu adalah AI Operations Assistant. Terse, cekatan, dan solutif.".to_string()
+    "You are a concise operations assistant. Provide practical, direct answers.".to_string()
 }
 
 /// SQLite database persistence & retention policy.

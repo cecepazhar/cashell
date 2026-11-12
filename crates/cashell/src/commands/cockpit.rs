@@ -2321,9 +2321,11 @@ impl CockpitApp {
 
     pub fn export_analytics_data_json(&mut self) {
         if let Some(ref d) = self.db {
-            let path = dirs::config_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("/home/cecepazhar/.config"))
-                .join("cashell/analytics_export.json");
+            let config_dir = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".config"));
+            let path = config_dir.join("cashell/analytics_export.json");
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
             match d.export_analytics_json(&path.to_string_lossy()) {
                 Ok(count) => {
                     self.set_notification(format!("✓ Exported {count} events to {}", path.display()));
@@ -2337,9 +2339,11 @@ impl CockpitApp {
 
     pub fn export_analytics_data_csv(&mut self) {
         if let Some(ref d) = self.db {
-            let path = dirs::config_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("/home/cecepazhar/.config"))
-                .join("cashell/analytics_export.csv");
+            let config_dir = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".config"));
+            let path = config_dir.join("cashell/analytics_export.csv");
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
             match d.export_analytics_csv(&path.to_string_lossy()) {
                 Ok(count) => {
                     self.set_notification(format!("✓ Exported {count} events to {}", path.display()));
@@ -2393,7 +2397,7 @@ impl CockpitApp {
 
     pub fn simulate_analytics_pageview(&mut self) {
         if let Some(ref d) = self.db {
-            let sites = ["caterm", "fathstore", "caui", "cecepazhar.com", "camark"];
+            let sites = ["example", "docs", "blog", "site", "demo"];
             let site = self.analytics_site_filter.clone().unwrap_or_else(|| {
                 let now_s = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
                 sites[(now_s % sites.len() as u64) as usize].to_string()
@@ -11443,7 +11447,7 @@ fn draw_analytics_script_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) 
         )),
         Line::from(""),
         Line::from(Span::styled("📌 Note: Auto-tracks Scroll Depth (25/50/75/90/100%), Clicks (% coords), Rage Clicks (>3/sec), and Dwell Time.", Style::default().fg(palette.text_muted))),
-        Line::from(Span::styled("📌 Replace 'http://127.0.0.1:8090' with your public domain or CF Tunnel (e.g. 'https://cashell.cecepazhar.com').", Style::default().fg(palette.text_muted))),
+        Line::from(Span::styled("📌 Replace 'http://127.0.0.1:8090' with your public domain or CF Tunnel (e.g. 'https://analytics.example.com').", Style::default().fg(palette.text_muted))),
         Line::from(""),
         Line::from(Span::styled(" [ Press Esc to Close ] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))),
     ];
