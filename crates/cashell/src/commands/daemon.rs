@@ -1084,7 +1084,48 @@ pub async fn send_telegram_alert(bot_token: &str, chat_id: &str, text: &str) -> 
 
 // ── Subcommand Implementations ───────────────────────────────────────────────
 
+fn is_remote_node(cfg: &Config) -> bool {
+    cfg.daemon.nodes.values().any(|n| {
+        n.active && !n.ip.is_empty() && n.ip != "127.0.0.1" && n.ip != "localhost" && n.ip != "::1"
+    })
+}
+
+/// L-08: verify the local license against GCC when it is stale (> 7 days).
+///
+/// Runs at daemon start. Network errors are handled inside
+/// `verify_license` (offline grace window), so a missing GCC never blocks
+/// the daemon. Pro entitlement: a Free license only allows ≤ 0 remote
+/// fleet nodes (L-10 gate).
+pub fn periodic_license_verify(cfg: &Config) {
+    let Ok(Some(lic)) = crate::license_local::load_license() else {
+        // No license installed → Free tier: gate remote fleet nodes.
+        if is_remote_node(cfg) {
+            eprintln!("⚠ Free tier: 1 remote fleet node(s) configured, but no active license.\nRemote fleet nodes are a Pro feature — run 'cashell license activate <KEY>'.");
+        }
+        return;
+    };
+
+    if !crate::license_local::should_verify_periodically(&lic) {
+        return;
+    }
+
+    match crate::license_local::verify_license(&lic, &cfg.license.gcc_base_url) {
+        Ok(()) => {
+            eprintln!("ℹ License verified against GCC.");
+            // Re-check Pro entitlement after verify: revoked/expired → Pro off.
+            let ent = crate::entitlements::current();
+            if !ent.is_pro {
+                eprintln!("⚠ License no longer Pro (revoked/expired) — Pro features off.");
+            }
+        }
+        Err(e) => eprintln!("⚠ License verify failed: {e} (offline grace in effect)"),
+    }
+}
+
 fn run_daemon(cfg: &Config, port_opt: Option<u16>, interval_opt: Option<u64>) -> Result<()> {
+    // L-08: periodic verification at daemon start.
+    periodic_license_verify(cfg);
+
     let port = port_opt.unwrap_or(cfg.daemon.port);
     let interval = interval_opt.unwrap_or(cfg.daemon.interval_secs);
     let threshold = cfg.daemon.retry_threshold;
@@ -1168,6 +1209,9 @@ fn run_daemon(cfg: &Config, port_opt: Option<u16>, interval_opt: Option<u64>) ->
                             if *count == threshold {
                                 let msg = format!("❌ {key} DOWN after {count} consecutive failures");
 
+                                // TODO(T-07): gate multi-user Telegram alerts behind Pro entitlements
+                                // (crate::entitlements::current().is_pro).
+
                                 // 1. Telegram alert
                                 if let Err(e) = send_telegram_alert(
                                     &cfg.daemon.telegram_bot_token,
@@ -1220,6 +1264,9 @@ fn run_daemon(cfg: &Config, port_opt: Option<u16>, interval_opt: Option<u64>) ->
 }
 
 fn run_status(cfg: &Config) -> Result<()> {
+    // L-08: periodic verification on status refresh too.
+    periodic_license_verify(cfg);
+
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()?;

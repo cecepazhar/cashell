@@ -45,6 +45,8 @@ fn run_app() -> Result<i32> {
     match args.command {
         None => {
             if cashell::output::is_tty() {
+                // L-08: periodic license verification when cockpit opens.
+                commands::daemon::periodic_license_verify(&cfg);
                 commands::cockpit::run(&commands::cockpit::CockpitCommand, &cfg)?;
             } else {
                 banner::print(args.quiet);
@@ -54,6 +56,8 @@ fn run_app() -> Result<i32> {
             Ok(0)
         }
         Some(Commands::Cockpit(cmd)) => {
+            // L-08: periodic license verification when cockpit opens.
+            commands::daemon::periodic_license_verify(&cfg);
             commands::cockpit::run(&cmd, &cfg)?;
             Ok(0)
         }

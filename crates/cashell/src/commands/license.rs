@@ -38,7 +38,12 @@ pub enum LicenseAction {
         json: bool,
     },
     /// Deactivate and remove the stored local license key
-    Deactivate,
+    Deactivate {
+        /// Only remove the local license file without contacting GCC
+        /// (device slot is NOT freed on the server).
+        #[arg(long)]
+        local_only: bool,
+    },
 }
 
 /// Calculate the standard CA mod-10 checksum.
@@ -229,7 +234,7 @@ pub fn run(cmd: &LicenseCommand, cfg: &Config) -> Result<i32> {
     match &cmd.action {
         LicenseAction::Activate { key } => cmd_activate(key, cmd, cfg),
         LicenseAction::Status { json } => cmd_status(*json, cfg),
-        LicenseAction::Deactivate => cmd_deactivate(cmd, cfg),
+        LicenseAction::Deactivate { local_only } => cmd_deactivate(cmd, cfg, *local_only),
     }
 }
 
@@ -276,13 +281,16 @@ fn cmd_activate(key_arg: &Option<String>, cmd: &LicenseCommand, cfg: &Config) ->
         schema: 2,
         key: activation.key,
         product: activation.product,
-        tier: activation.tier,
+        tier: activation.tier.clone(),
         expires_at,
         activated_at: now_iso.clone(),
         last_verified_at: now_iso,
         activation_token: activation.activation_token,
         devices_used: activation.devices_used,
         devices_max: activation.devices_max,
+        offline_grace_until: None,
+        revoked: false,
+        expired: false,
     };
 
     let p = license_local::save_license(&lic)?;
@@ -349,7 +357,7 @@ fn cmd_status(json: bool, _cfg: &Config) -> Result<i32> {
 
     match license_local::load_license()? {
         Some(lic) => {
-            let valid = license_local::is_license_valid(&lic);
+            let valid = crate::entitlements::current().is_pro;
             let status_str = if valid { "active" } else { "expired" };
 
             if wants_json {
@@ -450,9 +458,9 @@ fn parse_display_ts(s: &str) -> String {
     s.to_string()
 }
 
-// ── deactivate ──────────────────────────────────────────────────────────────
+// ── deactivate (L-09) ───────────────────────────────────────────────────────
 
-fn cmd_deactivate(cmd: &LicenseCommand, cfg: &Config) -> Result<i32> {
+fn cmd_deactivate(cmd: &LicenseCommand, cfg: &Config, local_only: bool) -> Result<i32> {
     let lic = match license_local::load_license()? {
         Some(l) => l,
         None => {
@@ -468,21 +476,76 @@ fn cmd_deactivate(cmd: &LicenseCommand, cfg: &Config) -> Result<i32> {
         .unwrap_or_else(|| cfg.license.gcc_base_url.clone());
     let dev_id = license_gcc::device_id();
 
-    // Try to notify GCC; live GCC may still return 401 (V-04).
-    match license_gcc::deactivate(&base_url, &lic.key, &dev_id) {
-        Ok(()) => {
-            eprintln!("  Notified GCC: device unbound from {key_masked}");
+    if !local_only {
+        // Contact GCC to free the device slot.
+        match license_gcc::deactivate(&base_url, &lic.key, &dev_id) {
+            Ok(()) => {
+                eprintln!("  Notified GCC: device unbound from {key_masked}");
+            }
+            Err(e) => {
+                // Offline: decide whether to fall back to local-only removal.
+                let prompt =
+                    format!("  ⚠ GCC deactivation failed ({e}). Device slot is NOT freed.\n");
+                let prompt_full = format!("{prompt}Remove local license file only? [y/N] ");
+
+                let local = if output::is_tty() {
+                    eprint!("{prompt_full}");
+                    std::io::stderr().flush()?;
+                    let mut line = String::new();
+                    std::io::stdin().read_line(&mut line)?;
+                    matches!(line.trim(), "y" | "Y" | "yes" | "Yes")
+                } else {
+                    // Non-TTY: fail closed unless --local-only was given.
+                    eprintln!("{prompt}Cannot confirm interactively (non-TTY).\nUse 'cashell license deactivate --local-only' to remove the local file anyway.");
+                    return Ok(1);
+                };
+
+                if !local {
+                    output::info(
+                        "Deactivate cancelled. Local license kept — device slot unchanged.",
+                    );
+                    return Ok(0);
+                }
+
+                eprintln!(
+                    "  ⚠ Warning: removing local license only — device slot stays occupied on GCC."
+                );
+            }
         }
-        Err(e) => {
-            eprintln!("  ⚠ GCC deactivation failed ({e}) — continuing with local removal.");
-        }
+    } else {
+        eprintln!("  Skipping GCC call (--local-only) — device slot stays occupied on server.");
     }
 
-    license_local::remove_license()?;
+    // Delete the local license file; report the error, never `.ok()`.
+    let p = license_local::license_path()?;
+    if p.exists() {
+        std::fs::remove_file(&p)
+            .map_err(|e| anyhow::anyhow!("failed to remove {}: {e}", p.display()))?;
+    }
+
     output::success(&format!(
         "License {key_masked} removed from local storage. CAShell reverted to Free tier."
     ));
     Ok(0)
+}
+
+/// Test seam: the same branch logic as [`cmd_deactivate`] without the
+/// network call, so offline behavior is unit-testable (L-09).
+#[cfg(test)]
+fn deactivate_offline_decision(
+    tty: bool,
+    prompt_answer: &str,
+) -> std::result::Result<(), &'static str> {
+    if tty {
+        if matches!(prompt_answer.trim(), "y" | "Y" | "yes" | "Yes") {
+            Ok(()) // proceed to local removal with warning
+        } else {
+            Err("cancelled")
+        }
+    } else {
+        // Non-TTY without --local-only → caller must exit 1.
+        Err("non-tty-offline")
+    }
 }
 
 // ── tests ──────────────────────────────────────────────────────────────────
@@ -592,6 +655,36 @@ mod tests {
         assert!(
             matches!(p, "linux" | "macos" | "windows" | "unknown"),
             "unexpected platform: {p}"
+        );
+    }
+
+    #[test]
+    fn test_deactivate_offline_non_tty_exits_1() {
+        // Non-TTY offline: no --local-only → Err("non-tty-offline") → exit 1.
+        let r = deactivate_offline_decision(false, "");
+        assert!(
+            matches!(r, Err("non-tty-offline")),
+            "non-TTY offline must be a hard fail"
+        );
+        let code = match r {
+            Ok(()) => 0,
+            Err(_) => 1,
+        };
+        assert_eq!(code, 1, "non-TTY offline without --local-only → exit 1");
+    }
+
+    #[test]
+    fn test_deactivate_offline_tty_yes_proceeds() {
+        let r = deactivate_offline_decision(true, "y");
+        assert!(r.is_ok(), "TTY + y must proceed with local removal");
+    }
+
+    #[test]
+    fn test_deactivate_offline_tty_no_cancels() {
+        let r = deactivate_offline_decision(true, "n");
+        assert!(
+            matches!(r, Err("cancelled")),
+            "TTY + n must cancel, local file kept"
         );
     }
 }

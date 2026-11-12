@@ -8,6 +8,7 @@ pub mod commands;
 pub mod config;
 pub mod cron;
 pub mod db;
+pub mod entitlements;
 pub mod license_gcc;
 pub mod license_local;
 pub mod output;
