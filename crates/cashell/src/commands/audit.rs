@@ -27,8 +27,8 @@ use std::sync::{Arc, Condvar, Mutex};
 
 // ── Concurrency & rate limiting ──────────────────────────────────────────────
 
-// ponytail: in-process counting semaphore caps in-flight AI requests to 9router
-// at min(jobs, 8) by default to avoid stampeding the local gateway. Upgrade:
+// ponytail: in-process counting semaphore caps in-flight AI requests at
+// min(jobs, 8) by default to avoid stampeding the local gateway. Upgrade:
 // async client with token bucket rate-limiter and 429 adaptive backoff.
 #[derive(Clone)]
 pub struct Throttle {
@@ -631,7 +631,7 @@ pub fn run(cmd: &AuditCommand, cfg: &Config, quiet: bool) -> Result<i32> {
 
     let (items, files_skipped_count) = if turbo {
         // ponytail: default ceiling of 8 in-flight AI calls against the single
-        // local 9router gateway; --jobs raises/lowers it. Upgrade: adaptive
+        // local AI gateway; --jobs raises/lowers it. Upgrade: adaptive
         // concurrency driven by 429s once the gateway exposes capacity.
         let throttle = Throttle::new(jobs);
         let done = AtomicUsize::new(0);

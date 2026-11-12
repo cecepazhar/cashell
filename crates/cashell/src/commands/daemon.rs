@@ -6,7 +6,7 @@
 use crate::config::{Config, NodeConfig};
 use anyhow::Result;
 use axum::{
-    extract::State,
+    extract::{connect_info::ConnectInfo, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
@@ -16,6 +16,7 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 #[derive(Parser, Debug, Clone)]
@@ -80,6 +81,11 @@ pub fn run(cmd: &DaemonCommand, cfg: &Config) -> Result<()> {
 
 struct DaemonState {
     token: String,
+    /// H-10: peer addresses trusted to supply `X-Forwarded-For` /
+    /// `CF-Connecting-IP` headers. Defaults: ["127.0.0.1", "::1"].
+    trusted_proxies: Vec<String>,
+    /// H-05: per-node secrets for verifying signed heartbeats, keyed by node_id.
+    node_secrets: std::collections::HashMap<String, String>,
 }
 
 /// Constant-time comparison of two strings (hard security rule for bearer tokens).
@@ -337,8 +343,19 @@ async fn container_exists(name: &str) -> bool {
     }
 }
 
-pub fn build_router(token: String) -> Router {
-    let state = Arc::new(DaemonState { token });
+pub fn build_router(cfg: &Config) -> Router {
+    // H-05: per-node heartbeat secrets keyed by node name from user config.
+    let node_secrets: std::collections::HashMap<String, String> = cfg
+        .daemon
+        .nodes
+        .iter()
+        .filter_map(|(name, n)| n.secret.clone().map(|s| (name.clone(), s)))
+        .collect();
+    let state = Arc::new(DaemonState {
+        token: cfg.daemon.token.clone(),
+        trusted_proxies: cfg.daemon.trusted_proxies.clone(),
+        node_secrets,
+    });
     Router::new()
         .route("/api/health", get(health_handler))
         .route("/api/stats", get(stats_handler))
@@ -552,6 +569,8 @@ async fn tracker_js_handler() -> impl axum::response::IntoResponse {
 
 /// Receive and persist a web analytics event to the sovereign SQLite analytics database.
 async fn collect_analytics_handler(
+    State(state): State<Arc<DaemonState>>,
+    connect: ConnectInfo<SocketAddr>,
     headers: axum::http::HeaderMap,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
@@ -581,12 +600,9 @@ async fn collect_analytics_handler(
         .unwrap_or("fallback")
         .to_string();
 
-    // Extract X-Forwarded-For or client IP for anonymized hashing
-    let forwarded = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let client_ip = forwarded.split(',').next().unwrap_or("").trim().to_string();
+    // H-10: honor X-Forwarded-For / CF-Connecting-IP only when the TCP peer
+    // address is in `daemon.trusted_proxies`; otherwise use the peer IP directly.
+    let client_ip = resolve_client_ip(&connect, &headers, &state.trusted_proxies);
 
     // User-Agent parsing for browser, OS, device
     let ua = headers
@@ -765,7 +781,30 @@ fn hex_sha256(input: &str) -> String {
     result.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-async fn node_heartbeat_handler(Json(hb): Json<cashell_common::Heartbeat>) -> impl IntoResponse {
+/// H-05: hex-encode arbitrary bytes (used for HMAC digest → hex signature).
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+async fn node_heartbeat_handler(
+    State(state): State<Arc<DaemonState>>,
+    _connect: ConnectInfo<SocketAddr>,
+    Json(hb): Json<cashell_common::Heartbeat>,
+) -> impl IntoResponse {
+    // H-05: verify heartbeat signature + timestamp freshness (≤ 120 s).
+    // Invalid signatures are rejected with a logged warning — never a panic.
+    if let Err(reason) = verify_heartbeat(&state, &hb) {
+        eprintln!(
+            "⚠ [H-05] rejecting heartbeat from node '{}': {}",
+            hb.node_id, reason
+        );
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"error": "heartbeat_rejected", "reason": reason})),
+        )
+            .into_response();
+    }
+
     let services_json = serde_json::to_string(&hb.services).unwrap_or_else(|_| "[]".to_string());
     let db_hb = crate::db::NodeHeartbeat {
         node_id: hb.node_id.clone(),
@@ -780,7 +819,7 @@ async fn node_heartbeat_handler(Json(hb): Json<cashell_common::Heartbeat>) -> im
         received_at: chrono::Local::now().to_rfc3339(),
         display_name: None,
         ip: None,
-        signature: None,
+        signature: hb.signature.clone(),
     };
 
     if let Ok(db) = crate::db::get_db() {
@@ -794,6 +833,102 @@ async fn node_heartbeat_handler(Json(hb): Json<cashell_common::Heartbeat>) -> im
             "node_id": hb.node_id,
         })),
     )
+}
+
+/// H-05: verify a signed heartbeat against the per-node secret.
+///
+/// - Signature present + secret known  → HMAC must match, timestamp within 120 s.
+/// - Signature present + no secret     → reject (cannot verify).
+/// - No signature                      → accept with warning (legacy agents).
+fn verify_heartbeat(
+    state: &DaemonState,
+    hb: &cashell_common::Heartbeat,
+) -> std::result::Result<(), String> {
+    let secret = state.node_secrets.get(&hb.node_id);
+
+    let Some(provided) = hb.signature.as_ref() else {
+        // Legacy / unsigned heartbeat. Accepted, but logged as a warning.
+        if secret.is_some() {
+            eprintln!(
+                "⚠ [H-05] heartbeat from node '{}' has no signature although a secret is configured; accepting (legacy agent).",
+                hb.node_id
+            );
+        }
+        return Ok(());
+    };
+
+    let Some(secret) = secret else {
+        return Err(format!(
+            "signature provided but no secret configured for node '{}'",
+            hb.node_id
+        ));
+    };
+
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let expected = match Hmac::<Sha256>::new_from_slice(secret.as_bytes()) {
+        Ok(mut mac) => {
+            mac.update(cashell_common::heartbeat_canonical_json(hb).as_bytes());
+            hex_sha256(&mac.finalize().into_bytes())
+        }
+        Err(e) => {
+            return Err(format!("hmac init failed: {e}"));
+        }
+    };
+    if !const_time_eq(provided, &expected) {
+        return Err("signature mismatch".to_string());
+    }
+
+    // Timestamp freshness: reject if older than 120 s (or more than 120 s in the future).
+    let ts = chrono::DateTime::parse_from_rfc3339(&hb.timestamp)
+        .map_err(|e| format!("invalid timestamp '{}': {}", hb.timestamp, e))?
+        .to_utc();
+    let now = chrono::Utc::now();
+    let delta = now.signed_duration_since(ts);
+    if delta.abs() > chrono::Duration::seconds(120) {
+        return Err(format!(
+            "timestamp '{}' is {}s outside the 120 s freshness window",
+            hb.timestamp,
+            delta.num_seconds()
+        ));
+    }
+
+    Ok(())
+}
+
+/// H-10: resolve the effective client IP for an analytics event.
+///
+/// `X-Forwarded-For` (first entry) or `CF-Connecting-IP` is honored **only**
+/// when the TCP peer address (`ConnectInfo`) matches one of the configured
+/// `trusted_proxies`. Otherwise the peer address itself is used — this prevents
+/// untrusted callers from spoofing the visitor IP.
+fn resolve_client_ip(
+    peer: &std::net::SocketAddr,
+    headers: &HeaderMap,
+    trusted_proxies: &[String],
+) -> String {
+    let peer_ip_str = peer.ip().to_string();
+    let is_trusted = trusted_proxies
+        .iter()
+        .any(|t| t == &peer_ip_str || t == peer.to_string());
+    if !is_trusted {
+        return peer_ip_str;
+    }
+    if let Some(v) = headers
+        .get("cf-connecting-ip")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return v.to_string();
+    }
+    if let Some(v) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        let first = v.split(',').next().unwrap_or("").trim();
+        if !first.is_empty() {
+            return first.to_string();
+        }
+    }
+    peer_ip_str
 }
 
 // ── Service Probing & Multi-Node Logic ───────────────────────────────────────
@@ -898,11 +1033,23 @@ pub async fn execute_remediation(
         Ok(String::from_utf8_lossy(&out.stdout).to_string())
     } else {
         let key = expand_tilde(ssh_key_path);
+        // H-07: CAShell-specific known_hosts file so we never silently accept
+        // arbitrary host keys (StrictHostKeyChecking=accept-new + UserKnownHostsFile).
+        let known_hosts = dirs::config_dir()
+            .map(|d| {
+                d.join("cashell")
+                    .join("ssh_known_hosts")
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .unwrap_or_else(|| "~/.config/cashell/ssh_known_hosts".to_string());
         let out = tokio::process::Command::new("ssh")
             .arg("-i")
             .arg(&key)
             .arg("-o")
-            .arg("StrictHostKeyChecking=no")
+            .arg("StrictHostKeyChecking=accept-new")
+            .arg("-o")
+            .arg(format!("UserKnownHostsFile={known_hosts}"))
             .arg("-o")
             .arg("BatchMode=yes")
             .arg(format!("{}@{}", node.user, node.ip))
@@ -970,7 +1117,9 @@ fn run_daemon(cfg: &Config, port_opt: Option<u16>, interval_opt: Option<u64>) ->
         .build()?;
 
     rt.block_on(async {
-        let app = build_router(cfg.daemon.token.clone());
+        // H-10: ConnectInfo so handlers can see the TCP peer address and decide
+        // whether X-Forwarded-For / CF-Connecting-IP headers are trustworthy.
+        let app = build_router(cfg).into_make_service_with_connect_info::<std::net::IpAddr>();
         let addr = format!("{bind}:{port}");
         let listener = match tokio::net::TcpListener::bind(&addr).await {
             Ok(l) => {
@@ -1447,6 +1596,8 @@ mod tests {
     fn test_check_auth_empty_token_fails_closed() {
         let state = DaemonState {
             token: String::new(),
+            trusted_proxies: vec!["127.0.0.1".to_string(), "::1".to_string()],
+            node_secrets: std::collections::HashMap::new(),
         };
         let mut headers = HeaderMap::new();
         headers.insert("authorization", "Bearer anything".parse().unwrap());
@@ -1457,6 +1608,8 @@ mod tests {
     fn test_check_auth_correct_token_passes() {
         let state = DaemonState {
             token: "s3cret-token".to_string(),
+            trusted_proxies: vec!["127.0.0.1".to_string(), "::1".to_string()],
+            node_secrets: std::collections::HashMap::new(),
         };
         let mut headers = HeaderMap::new();
         headers.insert("authorization", "Bearer s3cret-token".parse().unwrap());
@@ -1467,6 +1620,8 @@ mod tests {
     fn test_check_auth_wrong_token_fails() {
         let state = DaemonState {
             token: "correct-token".to_string(),
+            trusted_proxies: vec!["127.0.0.1".to_string(), "::1".to_string()],
+            node_secrets: std::collections::HashMap::new(),
         };
         let mut headers = HeaderMap::new();
         headers.insert("authorization", "Bearer wrong-token".parse().unwrap());
@@ -1528,6 +1683,8 @@ mod tests {
         std::env::set_var("CONTAINER_NAMES_OVERRIDE", "gitea,nginx,valid-container");
         let state = Arc::new(DaemonState {
             token: token.to_string(),
+            trusted_proxies: vec!["127.0.0.1".to_string(), "::1".to_string()],
+            node_secrets: std::collections::HashMap::new(),
         });
         let mut headers = HeaderMap::new();
         if let Some(auth) = auth_header {
@@ -1607,6 +1764,8 @@ mod tests {
     async fn test_analytics_summary_no_token_401() {
         let state = Arc::new(DaemonState {
             token: "secret123".to_string(),
+            trusted_proxies: vec!["127.0.0.1".to_string(), "::1".to_string()],
+            node_secrets: std::collections::HashMap::new(),
         });
         let headers = HeaderMap::new();
         let resp = analytics_summary_handler(axum::extract::State(state), headers)
@@ -1619,6 +1778,8 @@ mod tests {
     async fn test_analytics_summary_wrong_token_401() {
         let state = Arc::new(DaemonState {
             token: "secret123".to_string(),
+            trusted_proxies: vec!["127.0.0.1".to_string(), "::1".to_string()],
+            node_secrets: std::collections::HashMap::new(),
         });
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1647,6 +1808,180 @@ mod tests {
 
         let bind2 = "127.0.0.1";
         let should_reject2 = !is_loopback(&bind2) && token.is_empty();
-        assert!(!should_reject2, "loopback bind with empty token is allowed");
+        assert!(
+            !should_reject2,
+            "loopback bind with an empty token is allowed"
+        );
+    }
+
+    // ── H-05: heartbeat signature verification ──────────────────────────────
+
+    fn signed_heartbeat(node_id: &str, secret: &str) -> cashell_common::Heartbeat {
+        let mut hb = cashell_common::Heartbeat {
+            node_id: node_id.to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            uptime_secs: 42,
+            cpu_pct: 1.0,
+            ram_used_mb: 10,
+            ram_total_mb: 100,
+            disk_used_gb: 1,
+            disk_total_gb: 10,
+            services: vec![],
+            version: "test".to_string(),
+            signature: None,
+        };
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(cashell_common::heartbeat_canonical_json(&hb).as_bytes());
+        hb.signature = Some(
+            mac.finalize()
+                .into_bytes()
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect(),
+        );
+        hb
+    }
+
+    #[test]
+    fn test_verify_heartbeat_valid_signature() {
+        let mut secrets = std::collections::HashMap::new();
+        secrets.insert("linux-node".to_string(), "topsecret".to_string());
+        let state = DaemonState {
+            token: String::new(),
+            trusted_proxies: Vec::new(),
+            node_secrets: secrets,
+        };
+        let hb = signed_heartbeat("linux-node", "topsecret");
+        assert!(verify_heartbeat(&state, &hb).is_ok());
+    }
+
+    #[test]
+    fn test_verify_heartbeat_bad_signature_rejected() {
+        let mut secrets = std::collections::HashMap::new();
+        secrets.insert("linux-node".to_string(), "topsecret".to_string());
+        let state = DaemonState {
+            token: String::new(),
+            trusted_proxies: Vec::new(),
+            node_secrets: secrets,
+        };
+        // Sign with the wrong key → must be rejected.
+        let hb = signed_heartbeat("linux-node", "wrongsecret");
+        assert!(verify_heartbeat(&state, &hb).is_err());
+    }
+
+    #[test]
+    fn test_verify_heartbeat_stale_timestamp_rejected() {
+        let mut secrets = std::collections::HashMap::new();
+        secrets.insert("linux-node".to_string(), "topsecret".to_string());
+        let state = DaemonState {
+            token: String::new(),
+            trusted_proxies: Vec::new(),
+            node_secrets: secrets,
+        };
+        // Fresh signature but old timestamp → must fail the 120 s freshness check.
+        let mut hb = cashell_common::Heartbeat {
+            node_id: "linux-node".to_string(),
+            timestamp: (chrono::Utc::now() - chrono::Duration::minutes(5)).to_rfc3339(),
+            uptime_secs: 42,
+            cpu_pct: 1.0,
+            ram_used_mb: 10,
+            ram_total_mb: 100,
+            disk_used_gb: 1,
+            disk_total_gb: 10,
+            services: vec![],
+            version: "test".to_string(),
+            signature: None,
+        };
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+        let mut mac = Hmac::<Sha256>::new_from_slice(b"topsecret").unwrap();
+        mac.update(cashell_common::heartbeat_canonical_json(&hb).as_bytes());
+        hb.signature = Some(
+            mac.finalize()
+                .into_bytes()
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect(),
+        );
+        assert!(verify_heartbeat(&state, &hb).is_err());
+    }
+
+    #[test]
+    fn test_verify_heartbeat_unsigned_no_secret_accepted() {
+        let state = DaemonState {
+            token: String::new(),
+            trusted_proxies: Vec::new(),
+            node_secrets: std::collections::HashMap::new(),
+        };
+        let hb = cashell_common::Heartbeat {
+            node_id: "linux-node".to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            uptime_secs: 42,
+            cpu_pct: 1.0,
+            ram_used_mb: 10,
+            ram_total_mb: 100,
+            disk_used_gb: 1,
+            disk_total_gb: 10,
+            services: vec![],
+            version: "test".to_string(),
+            signature: None,
+        };
+        // Legacy unsigned heartbeat with no secret configured → accepted.
+        assert!(verify_heartbeat(&state, &hb).is_ok());
+    }
+
+    #[test]
+    fn test_verify_heartbeat_signed_but_no_secret_rejected() {
+        let state = DaemonState {
+            token: String::new(),
+            trusted_proxies: Vec::new(),
+            node_secrets: std::collections::HashMap::new(),
+        };
+        let hb = signed_heartbeat("linux-node", "topsecret");
+        // Signature present but daemon has no secret for this node → reject.
+        assert!(verify_heartbeat(&state, &hb).is_err());
+    }
+
+    // ── H-10: trusted-proxy client IP resolution ─────────────────────────────
+
+    #[test]
+    fn test_resolve_client_ip_untrusted_peer_ignores_xff() {
+        let peer: SocketAddr = "10.0.0.5:54321".parse().unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "1.2.3.4".parse().unwrap());
+        let trusted: Vec<String> = vec!["127.0.0.1".into(), "::1".into()];
+        // Peer is NOT in trusted_proxies → X-Forwarded-For must be ignored.
+        assert_eq!(resolve_client_ip(&peer, &headers, &trusted), "10.0.0.5");
+    }
+
+    #[test]
+    fn test_resolve_client_ip_trusted_peer_honors_xff() {
+        let peer: SocketAddr = "127.0.0.1:54321".parse().unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "203.0.113.7".parse().unwrap());
+        let trusted: Vec<String> = vec!["127.0.0.1".into(), "::1".into()];
+        // Peer IS trusted → the first X-Forwarded-For value is honored.
+        assert_eq!(resolve_client_ip(&peer, &headers, &trusted), "203.0.113.7");
+    }
+
+    #[test]
+    fn test_resolve_client_ip_trusted_peer_honors_cf_connecting_ip() {
+        let peer: SocketAddr = "::1:54321".parse().unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert("cf-connecting-ip", "198.51.100.9".parse().unwrap());
+        let trusted: Vec<String> = vec!["127.0.0.1".into(), "::1".into()];
+        assert_eq!(resolve_client_ip(&peer, &headers, &trusted), "198.51.100.9");
+    }
+
+    #[test]
+    fn test_default_trusted_proxies() {
+        let cfg = crate::config::Config::default();
+        assert!(cfg
+            .daemon
+            .trusted_proxies
+            .contains(&"127.0.0.1".to_string()));
+        assert!(cfg.daemon.trusted_proxies.contains(&"::1".to_string()));
     }
 }

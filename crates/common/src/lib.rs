@@ -17,6 +17,57 @@ pub struct Heartbeat {
     pub disk_total_gb: u64,
     pub services: Vec<ServiceStatus>,
     pub version: String,
+    /// H-05: HMAC-SHA256 signature of the canonical JSON of every other field
+    /// (sorted keys, `signature` excluded). Computed with the per-node secret.
+    /// `None` for legacy agents that predate signed heartbeats.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+}
+
+/// Canonical JSON serialization of a heartbeat used as the HMAC-SHA256 signing
+/// input (H-05). Keys are emitted in sorted order and the `signature` field is
+/// excluded, so both signer (caorch) and verifier (cashell daemon) produce the
+/// identical byte string from the same field values.
+pub fn heartbeat_canonical_json(hb: &Heartbeat) -> String {
+    let mut map = serde_json::Map::new();
+    map.insert("cpu_pct".into(), serde_json::Value::from(hb.cpu_pct));
+    map.insert(
+        "disk_total_gb".into(),
+        serde_json::Value::from(hb.disk_total_gb),
+    );
+    map.insert(
+        "disk_used_gb".into(),
+        serde_json::Value::from(hb.disk_used_gb),
+    );
+    map.insert(
+        "node_id".into(),
+        serde_json::Value::from(hb.node_id.as_str()),
+    );
+    map.insert(
+        "ram_total_mb".into(),
+        serde_json::Value::from(hb.ram_total_mb),
+    );
+    map.insert(
+        "ram_used_mb".into(),
+        serde_json::Value::from(hb.ram_used_mb),
+    );
+    map.insert(
+        "services".into(),
+        serde_json::to_value(&hb.services).unwrap_or_else(|_| serde_json::Value::Array(Vec::new())),
+    );
+    map.insert(
+        "timestamp".into(),
+        serde_json::Value::from(hb.timestamp.as_str()),
+    );
+    map.insert(
+        "uptime_secs".into(),
+        serde_json::Value::from(hb.uptime_secs),
+    );
+    map.insert(
+        "version".into(),
+        serde_json::Value::from(hb.version.as_str()),
+    );
+    serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_else(|_| String::new())
 }
 
 /// Status of a single monitored service.

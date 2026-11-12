@@ -131,7 +131,6 @@ matrix_rain = true
 scan_dirs = ["~/Product", "~/Project"]
 
 [ai]
-default_provider = "9router"
 
 [database]
 retention_days = 7

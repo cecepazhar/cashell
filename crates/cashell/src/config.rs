@@ -14,7 +14,7 @@
 //! default_catalog = "fathstore"
 //!
 //! [deploy.coolify]
-//! base_url = "https://vps-hostinger.tail2a1bee.ts.net/api/v1"
+//! base_url = "https://coolify.example.com/api/v1"
 //! api_token = "env:COOLIFY_API_TOKEN"
 //! timeout_seconds = 60
 //!
@@ -88,6 +88,11 @@ pub struct DaemonConfig {
     pub nodes: std::collections::HashMap<String, NodeConfig>,
     #[serde(default = "default_remediation")]
     pub remediation: std::collections::HashMap<String, String>,
+    /// H-10: peer addresses trusted to supply `X-Forwarded-For` /
+    /// `CF-Connecting-IP` client-IP headers. Only honored when the TCP peer
+    /// matches this list; otherwise the peer address is used.
+    #[serde(default = "default_trusted_proxies")]
+    pub trusted_proxies: Vec<String>,
 }
 
 impl Default for DaemonConfig {
@@ -103,12 +108,17 @@ impl Default for DaemonConfig {
             telegram_chat_id: String::new(),
             nodes: default_nodes(),
             remediation: default_remediation(),
+            trusted_proxies: default_trusted_proxies(),
         }
     }
 }
 
 fn default_daemon_bind() -> String {
     "127.0.0.1".to_string()
+}
+
+fn default_trusted_proxies() -> Vec<String> {
+    vec!["127.0.0.1".to_string(), "::1".to_string()]
 }
 
 /// Remote node configuration.
@@ -122,6 +132,11 @@ pub struct NodeConfig {
     /// during probes, latencies, and fleet management.
     #[serde(default = "default_node_active")]
     pub active: bool,
+    /// H-05: per-node secret for verifying signed heartbeats. Stored in the
+    /// user's config file; the config file itself should be kept 0600.
+    /// TODO(F-02): dedicated per-node secret storage/rotation.
+    #[serde(default)]
+    pub secret: Option<String>,
 }
 
 fn default_node_active() -> bool {
@@ -175,6 +190,7 @@ fn default_nodes() -> std::collections::HashMap<String, NodeConfig> {
                 protocol: "http".to_string(),
             }],
             active: true,
+            secret: None,
         },
     );
     m
@@ -483,7 +499,8 @@ pub struct AiProviderConfig {
 }
 
 fn default_ai_provider() -> String {
-    "9router".to_string()
+    // H-09: no default provider — users must configure [ai] explicitly.
+    String::new()
 }
 fn default_ai_timeout() -> u64 {
     30
@@ -492,7 +509,8 @@ fn default_ai_max_retries() -> u32 {
     1
 }
 fn default_fallback_chain() -> Vec<String> {
-    vec!["9router".to_string()]
+    // H-09: empty — no hardcoded fallback providers.
+    Vec::new()
 }
 pub fn default_audit_max_context_kb() -> usize {
     32
@@ -501,41 +519,9 @@ pub fn default_audit_context_limit_tokens() -> usize {
     8000
 }
 fn default_providers() -> std::collections::HashMap<String, AiProviderConfig> {
-    let mut m = std::collections::HashMap::new();
-    let mk = |base: &str, key: &str, model: &str| AiProviderConfig {
-        base_url: base.to_string(),
-        api_key: key.to_string(),
-        default_model: model.to_string(),
-    };
-    m.insert(
-        "9router".to_string(),
-        mk("http://localhost:20128/v1", "", ""),
-    );
-    m.insert(
-        "omniroute".to_string(),
-        mk(
-            "http://100.76.150.46:3007/v1",
-            "env:OMNIROUTE_API_KEY",
-            "auto",
-        ),
-    );
-    m.insert(
-        "openai".to_string(),
-        mk("https://api.openai.com/v1", "env:OPENAI_API_KEY", "gpt-4o"),
-    );
-    m.insert(
-        "anthropic".to_string(),
-        mk(
-            "https://api.anthropic.com/v1",
-            "env:ANTHROPIC_API_KEY",
-            "claude-3-5-sonnet-20241022",
-        ),
-    );
-    m.insert(
-        "local".to_string(),
-        mk("http://127.0.0.1:11434/api", "", "qwen2.5-coder:7b"),
-    );
-    m
+    // H-09: no default providers or URLs. All [ai] provider entries must come
+    // from user config; no private hosts are ever baked in.
+    std::collections::HashMap::new()
 }
 
 impl Default for AiConfig {
@@ -580,7 +566,8 @@ impl Default for DoctorConfig {
 }
 
 fn default_doctor_target() -> String {
-    "100.76.150.46".to_string()
+    // H-09: no hardcoded doctor target — must come from user config.
+    String::new()
 }
 
 fn default_doctor_target_port() -> u16 {

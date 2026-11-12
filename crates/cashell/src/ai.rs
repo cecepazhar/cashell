@@ -53,14 +53,8 @@ fn attempt_provider(
     let timeout = Duration::from_secs(cfg.timeout_seconds.clamp(5, 300));
     let key = resolve_secret(&p.api_key);
 
-    // 9router ships with an empty model + key on purpose: the user must set both
-    // by hand so no credential is ever baked into the defaults.
-    if name == "9router" && p.default_model.is_empty() {
-        bail!(
-            "9router model not set — run: cashell config set ai.model <model-id> \
-             (e.g. cashell config set ai.model ZA126_PRO)"
-        );
-    }
+    // H-09: no provider-specific special cases — every provider (including
+    // self-hosted gateways) must have a model configured by the user.
     let model = if p.default_model.is_empty() {
         "auto"
     } else {
@@ -387,16 +381,15 @@ mod tests {
     }
 
     #[test]
-    fn empty_9router_model_raises_actionable_error() {
-        // No network: the empty-model guard fires before any HTTP request.
+    fn unknown_provider_raises_actionable_error() {
         let cfg = AiConfig::default();
         let client = Client::builder().build().unwrap();
-        let err = attempt_provider(&client, "9router", &cfg, None, "hi", false)
-            .expect_err("empty 9router model must error");
+        let err = attempt_provider(&client, "unconfigured", &cfg, None, "hi", false)
+            .expect_err("unconfigured provider must error");
         let msg = err.to_string();
         assert!(
-            msg.contains("cashell config set ai.model"),
-            "error must name the fix command, got: {msg}"
+            msg.contains("not configured"),
+            "error must name the missing provider, got: {msg}"
         );
     }
 }

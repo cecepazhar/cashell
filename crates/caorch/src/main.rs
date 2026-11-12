@@ -18,7 +18,9 @@ use std::sync::Arc;
 use sysinfo::{CpuRefreshKind, Disks, MemoryRefreshKind, RefreshKind, System};
 use tokio::sync::RwLock;
 
-use cashell_common::{CommandResponse, Heartbeat, NodeAction, ServiceStatus};
+use cashell_common::{
+    heartbeat_canonical_json, CommandResponse, Heartbeat, NodeAction, ServiceStatus,
+};
 
 /// 30 second timeout for any executed node action.
 const COMMAND_TIMEOUT_SECS: u64 = 30;
@@ -117,6 +119,12 @@ pub enum Commands {
         #[arg(long, default_value = "")]
         token: String,
 
+        /// H-05: per-node secret for HMAC-SHA256 heartbeat signatures.
+        /// Overridable via env `CAORCH_NODE_SECRET`; stored in config with 0600.
+        /// TODO(F-02): proper per-node secret distribution/rotation.
+        #[arg(long, default_value = "")]
+        secret: String,
+
         /// Address to bind the listener to (default: 127.0.0.1).
         /// A non-loopback bind requires a non-empty `--token`.
         #[arg(long, default_value = "127.0.0.1")]
@@ -146,6 +154,9 @@ pub struct AgentConfig {
     pub remediation_enabled: bool,
     pub token: String,
     pub bind: String,
+    /// H-05: per-node secret for HMAC-SHA256 heartbeat signatures. Empty = unsigned
+    /// (legacy behavior). TODO(F-02): per-node secret stored in config with 0600.
+    pub secret: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,6 +179,7 @@ impl Default for AgentConfig {
             remediation_enabled: true,
             token: String::new(),
             bind: "127.0.0.1".to_string(),
+            secret: String::new(),
         }
     }
 }
@@ -186,13 +198,19 @@ async fn main() -> Result<()> {
         central: None,
         token: String::new(),
         bind: "127.0.0.1".to_string(),
+        secret: String::new(),
     }) {
         Commands::Run {
             port,
             central,
             token,
             bind,
-        } => run_daemon(port, central, token, bind).await,
+            secret: secret_cli,
+        } => {
+            // H-05: env var takes precedence over CLI flag.
+            let secret = std::env::var("CAORCH_NODE_SECRET").unwrap_or(secret_cli);
+            run_daemon(port, central, token, bind, secret).await
+        }
         Commands::Status { port } => check_status(port).await,
         Commands::Enroll { central } => enroll_node(central),
         Commands::Version => {
@@ -209,7 +227,13 @@ fn is_loopback(bind: &str) -> bool {
     }
 }
 
-async fn run_daemon(port: u16, central: Option<String>, token: String, bind: String) -> Result<()> {
+async fn run_daemon(
+    port: u16,
+    central: Option<String>,
+    token: String,
+    bind: String,
+    secret: String,
+) -> Result<()> {
     if !is_loopback(&bind) && token.is_empty() {
         eprintln!(
             "✖ Refusing to start: bind address '{}' is not loopback but --token is empty. \
@@ -224,6 +248,7 @@ async fn run_daemon(port: u16, central: Option<String>, token: String, bind: Str
         port,
         token,
         bind: bind.clone(),
+        secret,
         ..AgentConfig::default()
     };
     if let Some(c) = central {
@@ -502,7 +527,27 @@ async fn collect_heartbeat(state: &AppState) -> Heartbeat {
         disk_total_gb,
         services,
         version: env!("CARGO_PKG_VERSION").to_string(),
+        signature: None,
     }
+}
+
+/// H-05: sign a heartbeat with HMAC-SHA256 using the per-node secret.
+/// Returns `None` when no secret is configured (unsigned legacy heartbeat).
+fn sign_heartbeat(hb: &mut Heartbeat, secret: &str) {
+    if secret.is_empty() {
+        return;
+    }
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let mut mac = match Hmac::<Sha256>::new_from_slice(secret.as_bytes()) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("⚠ Failed to initialize HMAC with secret: {e}");
+            return;
+        }
+    };
+    mac.update(heartbeat_canonical_json(hb).as_bytes());
+    hb.signature = Some(hex::encode(mac.finalize().into_bytes()));
 }
 
 async fn heartbeat_loop(state: Arc<AppState>) {
@@ -510,7 +555,8 @@ async fn heartbeat_loop(state: Arc<AppState>) {
     let client = reqwest::Client::new();
     loop {
         tokio::time::sleep(interval).await;
-        let hb = collect_heartbeat(&state).await;
+        let mut hb = collect_heartbeat(&state).await;
+        sign_heartbeat(&mut hb, &state.config.secret);
         let url = format!(
             "{}/api/node/heartbeat",
             state.config.central_url.trim_end_matches('/')
