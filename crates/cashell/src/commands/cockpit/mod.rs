@@ -19,6 +19,8 @@ use crate::systat::{
 use anyhow::Result;
 use catui::layout::centered_rect;
 use clap::Parser;
+
+pub mod settings;
 use crossterm::event::{self, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -29,6 +31,7 @@ use ratatui::{
     },
     Frame, Terminal,
 };
+pub use settings::*;
 use std::collections::VecDeque;
 use std::fs;
 use std::net::{SocketAddr, TcpStream};
@@ -86,6 +89,14 @@ pub enum HitboxAction {
     SelectField(usize),
     SaveSettings,
     ReloadSettings,
+    SettingsSelectSubView(usize),
+    LicenseFocusKeyInput,
+    LicenseActivate,
+    LicenseVerify,
+    LicenseDeactivate,
+    OpenFactoryResetModal,
+    CloseFactoryResetModal,
+    ConfirmFactoryReset,
     ClearChat,
     VacuumDb,
     ToggleHelp,
@@ -572,63 +583,8 @@ pub struct AuditReportItem {
     pub preview: Vec<String>,
 }
 
-// ── Settings GUI Form ───────────────────────────────────────────────────────
-
-pub const SETTINGS_FIELDS: &[&str] = &[
-    "AI Provider",
-    "Default Model",
-    "API Key (Masked)",
-    "Output Theme",
-    "User Call Name",
-    "Assistant Persona",
-    "DB Retention Days",
-    "DB Size (Read-only)",
-    "Tailscale Target Host",
-    "Doctor Target Port",
-    "Port Matrix",
-    "Master Password Protection",
-    "Set/Change Master Password",
-    "Password Hint",
-    "Telegram Bot Token",
-    "Telegram Chat ID",
-    "Daemon Port",
-    "Daemon Interval (s)",
-    "Daemon Retry Threshold",
-    "Coolify Base URL",
-    "Coolify API Token",
-    "DB Auto Prune",
-    // ── Mascot & Emoticon Customization ──
-    "Matrix Rain Effect",
-    "Matrix Rain Speed",
-    "Mascot Change Speed",
-    "Mascot Sensitivity",
-    "Mascot Hardware Tracking",
-    "Mascot Color Scheme",
-    "Mascot Animation Style",
-    "Mascot Render Scale",
-    "Mascot In AI Chat",
-    "Audit Context Limit",
-];
-
-pub const PROVIDER_OPTIONS: &[&str] = &["", "openai", "anthropic", "local"];
-pub const MASCOT_SPEED_OPTIONS: &[&str] = &["Fast", "Normal", "Slow", "Zen"];
-pub const MASCOT_SENSITIVITY_OPTIONS: &[&str] = &["High", "Balanced", "Calm"];
-pub const MASCOT_COLOR_OPTIONS: &[&str] = &[
-    "Dynamic Reactive",
-    "Phosphor Green",
-    "Cyan Cyber",
-    "Amber Retro",
-    "Crimson Red",
-    "Neon Violet",
-];
-pub const MASCOT_ANIMATION_OPTIONS: &[&str] = &[
-    "Hover Bobbing",
-    "Continuous 3D Spin",
-    "Pulse Breathing",
-    "Stationary",
-];
-pub const MASCOT_SCALE_OPTIONS: &[&str] = &["Auto-Fit", "Large", "Standard", "Compact"];
-pub const MATRIX_SPEED_OPTIONS: &[&str] = &["Fast", "Normal", "Slow"];
+// Note: Settings GUI constants (SETTINGS_FIELDS, PROVIDER_OPTIONS, MASCOT_*_OPTIONS)
+// are now defined in `settings.rs` and re-exported above (F-07).
 
 // ── Cockpit App State ───────────────────────────────────────────────────────
 
@@ -678,12 +634,24 @@ pub struct CockpitApp {
     pub audit_preview_score: i32,
     pub audit_preview_findings_count: usize,
 
-    // Settings (Tab 4)
+    // Settings (Tab 4 / Tab 10) (F-07, L-11, R-06)
     pub cfg: Config,
     pub selected_field: usize,
     pub editing_field: Option<usize>,
     pub edit_buffer: String,
     pub settings_status_msg: Option<String>,
+    pub settings_subview: settings::SettingsSubView,
+    pub license_key_input: String,
+    pub license_input_editing: bool,
+    pub license_action_focus: usize,
+    pub license_spinner_msg: Option<String>,
+    pub license_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    pub show_factory_reset_modal: bool,
+    pub factory_reset_input: String,
+    pub factory_reset_btn_focus: usize,
+    pub factory_reset_items: Vec<(std::path::PathBuf, &'static str, String)>,
+    pub factory_reset_warning: Option<String>,
+    pub factory_reset_requested: bool,
 
     // AI Chat (Tab 5)
     pub chat_lines: Vec<String>,
@@ -962,6 +930,18 @@ impl CockpitApp {
             editing_field: None,
             edit_buffer: String::new(),
             settings_status_msg: None,
+            settings_subview: settings::SettingsSubView::Config,
+            license_key_input: String::new(),
+            license_input_editing: false,
+            license_action_focus: 0,
+            license_spinner_msg: None,
+            license_rx: None,
+            show_factory_reset_modal: false,
+            factory_reset_input: String::new(),
+            factory_reset_btn_focus: 0,
+            factory_reset_items: Vec::new(),
+            factory_reset_warning: None,
+            factory_reset_requested: false,
             chat_lines,
             chat_input: String::new(),
             chat_state,
@@ -4254,6 +4234,19 @@ pub fn run(_cmd: &CockpitCommand, cfg: &Config) -> Result<()> {
     let _ = slow_thread.join();
     let _ = sync_thread.join();
 
+    // Drop session to restore terminal before potential factory reset wipe
+    drop(session);
+
+    if app.factory_reset_requested {
+        println!("\n  Factory Reset dipicu dari Cockpit Danger Zone...");
+        let cmd = crate::commands::reset::ResetCommand {
+            yes: true,
+            backup: None,
+        };
+        let code = crate::commands::reset::run(&cmd)?;
+        std::process::exit(code);
+    }
+
     res
 }
 
@@ -4288,6 +4281,9 @@ fn event_loop<B: ratatui::backend::Backend>(
                 }
             }
         }
+
+        // Poll non-blocking background license operations (L-11)
+        settings::poll_license_async(app);
 
         // Check terminal size & update compact state
         if let Ok((w, h)) = crossterm::terminal::size() {
@@ -5064,6 +5060,12 @@ fn handle_key_event<B: ratatui::backend::Backend>(
 
     if app.show_site_import_modal {
         handle_site_import_modal_key(key, app);
+        return Ok(false);
+    }
+
+    // Factory reset modal key interception (R-06)
+    if app.show_factory_reset_modal {
+        settings::handle_factory_reset_key(key, app);
         return Ok(false);
     }
 
@@ -6479,6 +6481,35 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                     HitboxAction::ReloadSettings => {
                         app.reload_config();
                     }
+                    HitboxAction::SettingsSelectSubView(idx) => {
+                        app.settings_subview = match idx {
+                            0 => settings::SettingsSubView::Config,
+                            1 => settings::SettingsSubView::License,
+                            _ => settings::SettingsSubView::DangerZone,
+                        };
+                    }
+                    HitboxAction::LicenseFocusKeyInput => {
+                        app.license_action_focus = 0;
+                        app.license_input_editing = true;
+                    }
+                    HitboxAction::LicenseActivate => {
+                        settings::trigger_license_activate(app);
+                    }
+                    HitboxAction::LicenseVerify => {
+                        settings::trigger_license_verify(app);
+                    }
+                    HitboxAction::LicenseDeactivate => {
+                        settings::trigger_license_deactivate(app);
+                    }
+                    HitboxAction::OpenFactoryResetModal => {
+                        settings::open_factory_reset_modal(app);
+                    }
+                    HitboxAction::CloseFactoryResetModal => {
+                        settings::close_factory_reset_modal(app);
+                    }
+                    HitboxAction::ConfirmFactoryReset => {
+                        settings::confirm_factory_reset(app);
+                    }
                     HitboxAction::ClearChat => {
                         app.clear_chat_history();
                     }
@@ -6938,278 +6969,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
     Ok(())
 }
 
-// ── Settings GUI Helpers ─────────────────────────────────────────────────────
-
-fn start_field_edit(app: &mut CockpitApp) {
-    match app.selected_field {
-        0 => app.cycle_field_value(true),
-        1 => {
-            // Default model
-            let model = app
-                .cfg
-                .ai
-                .providers
-                .get(&app.cfg.ai.default_provider)
-                .map(|p| p.default_model.clone())
-                .unwrap_or_else(|| "ZA126_PRO".to_string());
-            app.editing_field = Some(1);
-            app.edit_buffer = model;
-        }
-        2 => {
-            // API key
-            let key = app
-                .cfg
-                .ai
-                .providers
-                .get(&app.cfg.ai.default_provider)
-                .map(|p| p.api_key.clone())
-                .unwrap_or_default();
-            app.editing_field = Some(2);
-            app.edit_buffer = key;
-        }
-        3 => app.cycle_field_value(true),
-        4 => {
-            // User call name
-            app.editing_field = Some(4);
-            app.edit_buffer = app.cfg.persona.user_name.clone();
-        }
-        5 => {
-            // Assistant persona
-            app.editing_field = Some(5);
-            app.edit_buffer = app.cfg.persona.assistant_role.clone();
-        }
-        6 => {
-            // DB retention days
-            app.editing_field = Some(6);
-            app.edit_buffer = app.cfg.database.retention_days.to_string();
-        }
-        7 => {
-            let size = format_bytes(app.get_db_size());
-            app.set_notification(format!("DB Size: {size} (read-only SQLite metric)"));
-        }
-        8 => {
-            // Tailscale target host
-            app.editing_field = Some(8);
-            app.edit_buffer = app.cfg.doctor.target_addr.clone();
-        }
-        9 => {
-            // Doctor target port
-            app.editing_field = Some(9);
-            app.edit_buffer = app.cfg.doctor.target_port.to_string();
-        }
-        10 => {
-            // Port matrix
-            let ports = app
-                .cfg
-                .doctor
-                .ports
-                .iter()
-                .map(u16::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
-            app.editing_field = Some(10);
-            app.edit_buffer = ports;
-        }
-        11 => app.cycle_field_value(true),
-        12 => {
-            app.show_set_password_modal = true;
-            app.set_password_field = 0;
-            app.set_password_error = None;
-        }
-        13 => {
-            // Password Hint
-            app.editing_field = Some(13);
-            app.edit_buffer = app.cfg.security.hint.clone();
-        }
-        14 => {
-            // Telegram Bot Token
-            app.editing_field = Some(14);
-            let token = if !app.cfg.uptime.telegram_bot_token.is_empty() {
-                app.cfg.uptime.telegram_bot_token.clone()
-            } else {
-                app.cfg.daemon.telegram_bot_token.clone()
-            };
-            app.edit_buffer = token;
-        }
-        15 => {
-            // Telegram Chat ID
-            app.editing_field = Some(15);
-            let chat_id = if !app.cfg.uptime.telegram_chat_id.is_empty() {
-                app.cfg.uptime.telegram_chat_id.clone()
-            } else {
-                app.cfg.daemon.telegram_chat_id.clone()
-            };
-            app.edit_buffer = chat_id;
-        }
-        16 => {
-            // Daemon Port
-            app.editing_field = Some(16);
-            app.edit_buffer = app.cfg.daemon.port.to_string();
-        }
-        17 => {
-            // Daemon Interval
-            app.editing_field = Some(17);
-            app.edit_buffer = app.cfg.daemon.interval_secs.to_string();
-        }
-        18 => {
-            // Daemon Retry Threshold
-            app.editing_field = Some(18);
-            app.edit_buffer = app.cfg.daemon.retry_threshold.to_string();
-        }
-        19 => {
-            // Coolify Base URL
-            app.editing_field = Some(19);
-            app.edit_buffer = app
-                .cfg
-                .deploy
-                .coolify
-                .as_ref()
-                .map(|c| c.base_url.clone())
-                .unwrap_or_default();
-        }
-        20 => {
-            // Coolify API Token
-            app.editing_field = Some(20);
-            app.edit_buffer = app
-                .cfg
-                .deploy
-                .coolify
-                .as_ref()
-                .map(|c| c.api_token.clone())
-                .unwrap_or_default();
-        }
-        21 | 22 | 23 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31 => app.cycle_field_value(true),
-        _ => {}
-    }
-}
-
-fn commit_field_edit(app: &mut CockpitApp, field_idx: usize) {
-    let val = app.edit_buffer.trim().to_string();
-    match field_idx {
-        1 => {
-            let provider = app.cfg.ai.default_provider.clone();
-            if let Some(p) = app.cfg.ai.providers.get_mut(&provider) {
-                p.default_model = val.clone();
-            }
-            app.set_notification(format!("Model set to: {val}"));
-        }
-        2 => {
-            let provider = app.cfg.ai.default_provider.clone();
-            if let Some(p) = app.cfg.ai.providers.get_mut(&provider) {
-                p.api_key = val.clone();
-            }
-            app.set_notification("API Key updated");
-        }
-        4 => {
-            app.cfg.persona.user_name = val.clone();
-            app.set_notification(format!("User call name set to: {val}"));
-        }
-        5 => {
-            app.cfg.persona.assistant_role = val.clone();
-            app.set_notification("Assistant persona updated");
-        }
-        6 => {
-            if let Ok(days) = val.parse::<u32>() {
-                app.cfg.database.retention_days = days.max(1);
-                app.set_notification(format!(
-                    "DB retention set to: {} days",
-                    app.cfg.database.retention_days
-                ));
-            } else {
-                app.set_notification("Invalid retention days (must be positive number)");
-            }
-        }
-        8 => {
-            app.cfg.doctor.target_addr = val.clone();
-            app.set_notification(format!("Doctor target set to: {val}"));
-        }
-        9 => {
-            if let Ok(port) = val.parse::<u16>() {
-                app.cfg.doctor.target_port = port;
-                app.set_notification(format!("Doctor port set to: {port}"));
-            } else {
-                app.set_notification("Invalid port number");
-            }
-        }
-        10 => {
-            let parsed_ports: Vec<u16> = val
-                .split(',')
-                .filter_map(|s| s.trim().parse::<u16>().ok())
-                .collect();
-            if !parsed_ports.is_empty() {
-                app.cfg.doctor.ports = parsed_ports;
-                app.apps = CockpitApp::init_apps(&app.cfg);
-                app.probe_all_ports();
-                app.set_notification("Port Matrix updated");
-            } else {
-                app.set_notification("Invalid port matrix list");
-            }
-        }
-        13 => {
-            app.cfg.security.hint = val.clone();
-            app.set_notification(format!("Password hint set to: {val}"));
-        }
-        14 => {
-            app.cfg.daemon.telegram_bot_token = val.clone();
-            app.cfg.uptime.telegram_bot_token = val;
-            app.set_notification("Telegram bot token updated");
-        }
-        15 => {
-            app.cfg.daemon.telegram_chat_id = val.clone();
-            app.cfg.uptime.telegram_chat_id = val.clone();
-            app.set_notification(format!("Telegram chat ID set to: {val}"));
-        }
-        16 => {
-            if let Ok(p) = val.parse::<u16>() {
-                app.cfg.daemon.port = p;
-                app.set_notification(format!("Daemon port set to: {p}"));
-            } else {
-                app.set_notification("Invalid port number");
-            }
-        }
-        17 => {
-            if let Ok(s) = val.parse::<u64>() {
-                app.cfg.daemon.interval_secs = s.max(5);
-                app.set_notification(format!("Daemon probe interval set to: {s}s"));
-            } else {
-                app.set_notification("Invalid interval number");
-            }
-        }
-        18 => {
-            if let Ok(r) = val.parse::<u32>() {
-                app.cfg.daemon.retry_threshold = r.max(1);
-                app.set_notification(format!("Daemon retry threshold set to: {r}"));
-            } else {
-                app.set_notification("Invalid threshold number");
-            }
-        }
-        19 => {
-            if app.cfg.deploy.coolify.is_none() {
-                app.cfg.deploy.coolify = Some(crate::config::CoolifyConfig {
-                    base_url: val.clone(),
-                    api_token: String::new(),
-                    timeout_seconds: 60,
-                });
-            } else if let Some(ref mut c) = app.cfg.deploy.coolify {
-                c.base_url = val.clone();
-            }
-            app.set_notification(format!("Coolify base URL set to: {val}"));
-        }
-        20 => {
-            if app.cfg.deploy.coolify.is_none() {
-                app.cfg.deploy.coolify = Some(crate::config::CoolifyConfig {
-                    base_url: String::new(),
-                    api_token: val,
-                    timeout_seconds: 60,
-                });
-            } else if let Some(ref mut c) = app.cfg.deploy.coolify {
-                c.api_token = val;
-            }
-            app.set_notification("Coolify API token updated");
-        }
-        _ => {}
-    }
-}
+// (Settings GUI helpers extracted to settings.rs - F-07)
 
 // ── Actions: Turbo Audit & Fix ───────────────────────────────────────────────
 
@@ -7439,26 +7199,88 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if app.show_disk_health_modal {
         draw_disk_health_modal(f, app, area);
     }
+
+    if app.show_factory_reset_modal {
+        settings::draw_factory_reset_modal(f, app, area);
+    }
 }
 
 // ── Header (Calm Sovereign Cockpit Branding) ────────────────────────────────
+
+pub fn get_header_license_badge(palette: &catui::Theme, app: &CockpitApp) -> Span<'static> {
+    if app.is_syncing_gcc {
+        let blink = (app.pet_tick / 5) % 2 == 0;
+        return if blink {
+            Span::styled(
+                " [◌ SYNCING] ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::styled(" [  SYNCING] ", Style::default().fg(Color::Cyan))
+        };
+    }
+
+    match crate::license_local::load_license().ok().flatten() {
+        Some(lic) => {
+            let is_pro = crate::entitlements::current().is_pro;
+            if !is_pro || lic.revoked || lic.expired {
+                Span::styled(
+                    " [ PRO · Kedaluwarsa ] ",
+                    Style::default()
+                        .fg(Color::LightRed)
+                        .bg(Color::Rgb(60, 0, 0))
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else if lic.tier == "99" || lic.expires_at.is_none() {
+                Span::styled(
+                    " [ PRO · Lifetime ] ",
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(palette.success)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                let days = crate::commands::license::compute_days_left(&lic).unwrap_or(0);
+                if days <= 0 {
+                    Span::styled(
+                        " [ PRO · Kedaluwarsa ] ",
+                        Style::default()
+                            .fg(Color::LightRed)
+                            .bg(Color::Rgb(60, 0, 0))
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else if days <= 14 {
+                    Span::styled(
+                        format!(" [ PRO · {days} hari ] "),
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    Span::styled(
+                        format!(" [ PRO · {days} hari ] "),
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(palette.success)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                }
+            }
+        }
+        None => Span::styled(" [ FREE ] ", Style::default().fg(palette.text_muted)),
+    }
+}
 
 fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let palette = cockpit_theme(&app.cfg.output.theme);
     let title = format!("CAShell v{} · Isometric Cockpit", env!("CARGO_PKG_VERSION"));
     let time_str = chrono::Local::now().format("%H:%M:%S").to_string();
 
-    // Dynamic Pro / Free / Syncing edition badge (CATUI `Edition`)
-    let edition = if app.is_syncing_gcc {
-        // Blink ~0.5s using pet_tick (10 ticks/sec)
-        catui::widgets::Edition::Syncing {
-            blink_on: (app.pet_tick / 5) % 2 == 0,
-        }
-    } else if app.is_pro() {
-        catui::widgets::Edition::Pro
-    } else {
-        catui::widgets::Edition::Free
-    };
+    // Dynamic L-11 Header badge: FREE / PRO · Lifetime / PRO · N hari (yellow <= 14d, red if expired)
+    let edition_badge = get_header_license_badge(&palette, app);
 
     // Active Virtual Pet Badge
     let pet_badge = if let Some(ref d) = app.db {
@@ -7508,7 +7330,7 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     f.render_widget(
         catui::widgets::HeaderBar::new(&palette, title)
-            .item(edition.span(&palette))
+            .item(edition_badge)
             .item(pet_badge)
             .item(host_badge)
             .item(router_badge)
@@ -12470,7 +12292,7 @@ fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 // ── Tab 10: Setting (Visual Settings GUI for config.toml) ─────────────────────
 
 fn draw_setting_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    draw_settings_tab(f, app, area);
+    settings::draw_settings_tab(f, app, area);
 }
 
 fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
@@ -14436,377 +14258,7 @@ fn draw_audit_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     }
 }
 
-// ── Tab 4: Settings GUI (Interactive visual configuration form) ─────────────
-
-fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = cockpit_theme(&app.cfg.output.theme);
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(8)])
-        .split(area);
-
-    // Save / Reload / DB Action bar
-    let action_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(palette.border));
-    let action_inner = action_block.inner(chunks[0]);
-    f.render_widget(action_block, chunks[0]);
-
-    let btn_save_rect = Rect {
-        x: action_inner.x + 1,
-        y: action_inner.y,
-        width: 17,
-        height: 1,
-    };
-    let btn_reload_rect = Rect {
-        x: action_inner.x + 19,
-        y: action_inner.y,
-        width: 12,
-        height: 1,
-    };
-    let btn_clear_rect = Rect {
-        x: action_inner.x + 32,
-        y: action_inner.y,
-        width: 16,
-        height: 1,
-    };
-    let btn_vacuum_rect = Rect {
-        x: action_inner.x + 49,
-        y: action_inner.y,
-        width: 15,
-        height: 1,
-    };
-    let btn_sync_gcc_rect = Rect {
-        x: action_inner.x + 65,
-        y: action_inner.y,
-        width: 14,
-        height: 1,
-    };
-    let btn_pro_rect = Rect {
-        x: action_inner.x + 80,
-        y: action_inner.y,
-        width: 18,
-        height: 1,
-    };
-
-    app.register_hitbox(btn_save_rect, HitboxAction::SaveSettings);
-    app.register_hitbox(btn_reload_rect, HitboxAction::ReloadSettings);
-    app.register_hitbox(btn_clear_rect, HitboxAction::ClearChat);
-    app.register_hitbox(btn_vacuum_rect, HitboxAction::VacuumDb);
-    app.register_hitbox(btn_sync_gcc_rect, HitboxAction::SyncGcc);
-    app.register_hitbox(btn_pro_rect, HitboxAction::OpenProWizard);
-
-    let btn_save = Span::styled(
-        " [💾 Save] ",
-        Style::default()
-            .fg(Color::Rgb(0, 0, 0))
-            .bg(palette.success)
-            .add_modifier(Modifier::BOLD),
-    );
-    let btn_reload = Span::styled(
-        " [↺ Reload] ",
-        Style::default()
-            .fg(Color::Rgb(0, 0, 0))
-            .bg(palette.warning)
-            .add_modifier(Modifier::BOLD),
-    );
-    let btn_clear = Span::styled(
-        " [🗑 Clear Chat] ",
-        Style::default()
-            .fg(Color::Rgb(0, 0, 0))
-            .bg(palette.danger)
-            .add_modifier(Modifier::BOLD),
-    );
-    let btn_vacuum = Span::styled(
-        " [🧹 Vacuum DB] ",
-        Style::default()
-            .fg(Color::Rgb(0, 0, 0))
-            .bg(palette.accent)
-            .add_modifier(Modifier::BOLD),
-    );
-    let btn_sync_gcc = Span::styled(
-        " [☁ Sync GCC] ",
-        Style::default()
-            .fg(Color::Rgb(0, 0, 0))
-            .bg(Color::Rgb(0, 200, 255))
-            .add_modifier(Modifier::BOLD),
-    );
-    let is_pro = app.is_pro();
-    let btn_pro = Span::styled(
-        " [★ Pro Account] ",
-        Style::default()
-            .fg(Color::Rgb(0, 0, 0))
-            .bg(if is_pro {
-                Color::Rgb(0, 255, 120)
-            } else {
-                Color::Rgb(255, 200, 0)
-            })
-            .add_modifier(Modifier::BOLD),
-    );
-
-    let status = app
-        .settings_status_msg
-        .as_deref()
-        .unwrap_or("s: save | r: reload | c: clear chat | v: vacuum | y: sync | P: pro");
-
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            btn_save,
-            Span::raw(" "),
-            btn_reload,
-            Span::raw(" "),
-            btn_clear,
-            Span::raw(" "),
-            btn_vacuum,
-            Span::raw(" "),
-            btn_sync_gcc,
-            Span::raw(" "),
-            btn_pro,
-            Span::styled(format!("  {status}"), Style::default().fg(palette.accent)),
-        ])),
-        action_inner,
-    );
-
-    // Form fields card
-    let form_block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Interactive Configuration Editor (~/.config/cashell/config.toml) ")
-        .border_style(Style::default().fg(palette.border));
-    let form_inner = form_block.inner(chunks[1]);
-    f.render_widget(form_block, chunks[1]);
-
-    let provider = &app.cfg.ai.default_provider;
-    let model = app
-        .cfg
-        .ai
-        .providers
-        .get(provider)
-        .map(|p| p.default_model.as_str())
-        .unwrap_or("ZA126_PRO");
-
-    let api_key = app
-        .cfg
-        .ai
-        .providers
-        .get(provider)
-        .map(|p| p.api_key.as_str())
-        .unwrap_or("");
-    let masked_key = if api_key.is_empty() {
-        "[Not Configured / None]"
-    } else {
-        "••••••••••••••••"
-    };
-
-    let theme = &app.cfg.output.theme;
-    let db_size_str = format_bytes(app.get_db_size());
-    let retention_str = format!(
-        "{} days (auto_prune: {})",
-        app.cfg.database.retention_days,
-        if app.cfg.database.auto_prune {
-            "on"
-        } else {
-            "off"
-        }
-    );
-    let target_host = &app.cfg.doctor.target_addr;
-    let target_port = app.cfg.doctor.target_port.to_string();
-    let port_matrix = app
-        .cfg
-        .doctor
-        .ports
-        .iter()
-        .map(u16::to_string)
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    let pw_status = if app.cfg.security.require_password {
-        "● ENABLED (Protected on startup)"
-    } else {
-        "○ Disabled (Open access)"
-    };
-    let pw_change_label = if app.cfg.security.master_password_hash.is_empty() {
-        "[Click/Enter to Set Master Password]"
-    } else {
-        "•••••••• [Click/Enter to Change]"
-    };
-    let pw_hint = if app.cfg.security.hint.is_empty() {
-        "[None]"
-    } else {
-        app.cfg.security.hint.as_str()
-    };
-    let tg_token_masked = if app.cfg.daemon.telegram_bot_token.is_empty() {
-        "[Not Configured]"
-    } else {
-        "••••••••••••••••"
-    };
-    let tg_chat_id = if app.cfg.daemon.telegram_chat_id.is_empty() {
-        "[Not Configured]"
-    } else {
-        app.cfg.daemon.telegram_chat_id.as_str()
-    };
-    let daemon_port_str = app.cfg.daemon.port.to_string();
-    let daemon_interval_str = format!("{} seconds", app.cfg.daemon.interval_secs);
-    let daemon_retry_str = format!("{} failures", app.cfg.daemon.retry_threshold);
-    let coolify_url = if let Some(ref c) = app.cfg.deploy.coolify {
-        c.base_url.as_str()
-    } else {
-        "[Not Configured]"
-    };
-    let coolify_token = if let Some(ref c) = app.cfg.deploy.coolify {
-        if c.api_token.is_empty() {
-            "[None]"
-        } else {
-            "••••••••"
-        }
-    } else {
-        "[Not Configured]"
-    };
-    let auto_prune_str = if app.cfg.database.auto_prune {
-        "Enabled"
-    } else {
-        "Disabled"
-    };
-    let matrix_rain_str = if app.cfg.output.matrix_rain {
-        "Enabled (Matrix Rain Background)"
-    } else {
-        "Disabled (Clean Background)"
-    };
-    let matrix_speed_str = app.cfg.mascot.matrix_speed.as_str();
-    let mascot_speed_str = match app.cfg.mascot.speed.as_str() {
-        "Fast" => "Fast (2s interval)",
-        "Slow" => "Slow (10s interval)",
-        "Zen" => "Zen (20s interval)",
-        _ => "Normal (5s interval)",
-    };
-    let mascot_sens_str = match app.cfg.mascot.sensitivity.as_str() {
-        "High" => "High Reactive (>70°C / >70% Load)",
-        "Calm" => "Calm (>90°C / >92% Load)",
-        _ => "Balanced (>80°C / >85% Load)",
-    };
-    let mascot_track_str = if app.cfg.mascot.condition_tracking {
-        "Enabled (Reflects CPU/RAM/Outage)"
-    } else {
-        "Disabled (Neutral)"
-    };
-    let mascot_color_str = app.cfg.mascot.color_scheme.as_str();
-    let mascot_anim_str = app.cfg.mascot.animation_style.as_str();
-    let mascot_scale_str = app.cfg.mascot.render_scale.as_str();
-    let mascot_chat_str = if app.cfg.mascot.chat_avatar_enabled {
-        "Enabled (Live Reactor & Avatars)"
-    } else {
-        "Disabled"
-    };
-    let audit_limit_str = format!(
-        "{} KB ({} tokens)",
-        app.cfg.ai.audit_max_context_kb, app.cfg.ai.audit_context_limit_tokens
-    );
-
-    let values: [&str; 32] = [
-        provider.as_str(),
-        model,
-        masked_key,
-        theme.as_str(),
-        app.cfg.persona.user_name.as_str(),
-        app.cfg.persona.assistant_role.as_str(),
-        retention_str.as_str(),
-        db_size_str.as_str(),
-        target_host.as_str(),
-        target_port.as_str(),
-        port_matrix.as_str(),
-        pw_status,
-        pw_change_label,
-        pw_hint,
-        tg_token_masked,
-        tg_chat_id,
-        daemon_port_str.as_str(),
-        daemon_interval_str.as_str(),
-        daemon_retry_str.as_str(),
-        coolify_url,
-        coolify_token,
-        auto_prune_str,
-        matrix_rain_str,
-        matrix_speed_str,
-        mascot_speed_str,
-        mascot_sens_str,
-        mascot_track_str,
-        mascot_color_str,
-        mascot_anim_str,
-        mascot_scale_str,
-        mascot_chat_str,
-        audit_limit_str.as_str(),
-    ];
-
-    let items: Vec<ListItem> = SETTINGS_FIELDS
-        .iter()
-        .enumerate()
-        .map(|(i, &label)| {
-            let is_selected = i == app.selected_field;
-            let is_editing = app.editing_field == Some(i);
-
-            let bg = if is_selected {
-                palette.row_selected_bg
-            } else {
-                Color::Reset
-            };
-
-            let val_span = if is_editing {
-                Span::styled(
-                    format!(" [ {}█ ]", app.edit_buffer),
-                    Style::default()
-                        .fg(Color::Rgb(0, 0, 0))
-                        .bg(palette.accent)
-                        .add_modifier(Modifier::BOLD),
-                )
-            } else {
-                Span::styled(
-                    format!(" {}", values[i]),
-                    Style::default()
-                        .fg(if is_selected {
-                            palette.text
-                        } else {
-                            palette.text_muted
-                        })
-                        .add_modifier(Modifier::BOLD),
-                )
-            };
-
-            let prefix = if is_selected { "▶ " } else { "  " };
-
-            let line = Line::from(vec![
-                Span::styled(prefix, Style::default().fg(palette.accent)),
-                Span::styled(
-                    format!("{:<24}:", label),
-                    Style::default().fg(if is_selected {
-                        palette.accent
-                    } else {
-                        palette.text
-                    }),
-                ),
-                val_span,
-            ]);
-
-            ListItem::new(line).style(Style::default().bg(bg))
-        })
-        .collect();
-
-    let mut state = ListState::default();
-    state.select(Some(app.selected_field));
-    let form_list = List::new(items);
-    f.render_stateful_widget(form_list, form_inner, &mut state);
-
-    // Register hitboxes for form rows
-    for (i, _) in SETTINGS_FIELDS.iter().enumerate() {
-        if (i as u16) < form_inner.height {
-            let row_rect = Rect {
-                x: form_inner.x,
-                y: form_inner.y + (i as u16),
-                width: form_inner.width,
-                height: 1,
-            };
-            app.register_hitbox(row_rect, HitboxAction::SelectField(i));
-        }
-    }
-}
+// (draw_settings_tab extracted to settings.rs - F-07)
 
 // ── Tab 12: Turbo & Performance Overclock Engine ─────────────────────────────
 

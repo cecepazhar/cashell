@@ -530,6 +530,15 @@ impl FastBootCache {
         serde_json::from_str(&raw).ok()
     }
 
+    /// Remove the cache from disk.
+    pub fn clear() -> Result<()> {
+        let p = Self::path();
+        if p.exists() {
+            std::fs::remove_file(&p)?;
+        }
+        Ok(())
+    }
+
     /// Persist this cache entry to disk.
     pub fn save(&self) -> Result<()> {
         let p = Self::path();

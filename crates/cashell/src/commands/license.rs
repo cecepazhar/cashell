@@ -180,7 +180,7 @@ struct StatusJson {
 }
 
 /// Compute `days_left` from `expires_at`; `None` for lifetime.
-fn compute_days_left(lic: &LicenseFile) -> Option<i64> {
+pub fn compute_days_left(lic: &LicenseFile) -> Option<i64> {
     if lic.tier == "99" || lic.expires_at.is_none() {
         return None;
     }
@@ -197,7 +197,7 @@ fn compute_days_left(lic: &LicenseFile) -> Option<i64> {
 
 /// Compute `offline_grace_until`: `last_verified_at + 30 days`,
 /// capped at `expires_at` if one exists.
-fn compute_offline_grace_until(lic: &LicenseFile) -> Option<String> {
+pub fn compute_offline_grace_until(lic: &LicenseFile) -> Option<String> {
     let last_verified_ts = parse_expires_ts(&lic.last_verified_at)?;
     let grace_ts = last_verified_ts + 30 * 86_400;
     // Cap at expires_at if present.
@@ -240,17 +240,12 @@ pub fn run(cmd: &LicenseCommand, cfg: &Config) -> Result<i32> {
 
 // ── activate ────────────────────────────────────────────────────────────────
 
-fn cmd_activate(key_arg: &Option<String>, cmd: &LicenseCommand, cfg: &Config) -> Result<i32> {
-    let key = prompt_key_if_needed(key_arg)?;
+/// Activate a license key against GCC and store it locally.
+pub fn activate_license_key(key: &str, base_url: &str) -> Result<LicenseFile> {
+    let key = key.trim().to_string();
     let key_masked = license_gcc::mask_key(&key);
-    let (_prod, tier) = validate_license_format(&key)?;
+    let (_prod, _tier) = validate_license_format(&key)?;
 
-    let base_url = cmd
-        .gcc_base_url
-        .clone()
-        .unwrap_or_else(|| cfg.license.gcc_base_url.clone());
-
-    // R-05: no host baked into default config — refuse to call with empty base.
     if base_url.trim().is_empty() {
         bail!("license base URL is empty — set [license] gcc_base_url or pass --gcc-base-url");
     }
@@ -259,16 +254,8 @@ fn cmd_activate(key_arg: &Option<String>, cmd: &LicenseCommand, cfg: &Config) ->
     let dev_name = device_display_name();
     let platform = platform_name();
 
-    eprintln!("  Activating {key_masked} on {dev_name} ({platform}) → {base_url}");
-
-    let activation = match license_gcc::activate(&base_url, &key, &dev_id, &dev_name, platform) {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("  ✗ Activation failed: {e}");
-            eprintln!("  Key {key_masked} was not saved locally.");
-            return Ok(2);
-        }
-    };
+    let activation = license_gcc::activate(base_url, &key, &dev_id, &dev_name, platform)
+        .map_err(|e| anyhow::anyhow!("Activation failed: {e}"))?;
 
     let now_iso = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
 
@@ -298,7 +285,7 @@ fn cmd_activate(key_arg: &Option<String>, cmd: &LicenseCommand, cfg: &Config) ->
         expired: false,
     };
 
-    let p = license_local::save_license(&lic)?;
+    license_local::save_license(&lic)?;
 
     // Update FastBootCache for instant Cockpit TUI recognition.
     let hwid = crate::pro::HwidGenerator::new()
@@ -309,7 +296,7 @@ fn cmd_activate(key_arg: &Option<String>, cmd: &LicenseCommand, cfg: &Config) ->
         hwid,
         status: 1,
         session_expires_unix: expires_unix.unwrap_or(now_unix + 3650 * 86_400),
-        api_base: base_url.clone(),
+        api_base: base_url.to_string(),
         last_sync: now_unix,
     };
     let _ = cache.save();
@@ -320,7 +307,33 @@ fn cmd_activate(key_arg: &Option<String>, cmd: &LicenseCommand, cfg: &Config) ->
         let _ = db.upsert_pro_device(&dev_id, &label, "active", None, None);
     }
 
-    let tier_name = match tier.as_str() {
+    crate::entitlements::invalidate_cache();
+    Ok(lic)
+}
+
+fn cmd_activate(key_arg: &Option<String>, cmd: &LicenseCommand, cfg: &Config) -> Result<i32> {
+    let key = prompt_key_if_needed(key_arg)?;
+    let key_masked = license_gcc::mask_key(&key);
+    let base_url = cmd
+        .gcc_base_url
+        .clone()
+        .unwrap_or_else(|| cfg.license.gcc_base_url.clone());
+
+    let dev_name = device_display_name();
+    let platform = platform_name();
+    eprintln!("  Activating {key_masked} on {dev_name} ({platform}) → {base_url}");
+
+    let lic = match activate_license_key(&key, &base_url) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("  ✗ {e}");
+            eprintln!("  Key {key_masked} was not saved locally.");
+            return Ok(2);
+        }
+    };
+
+    let p = license_local::license_path().unwrap_or_default();
+    let tier_name = match lic.tier.as_str() {
         "99" => "Lifetime (Perpetual)",
         "24" => "2-Year Subscription",
         "12" => "Annual Subscription",
@@ -333,7 +346,7 @@ fn cmd_activate(key_arg: &Option<String>, cmd: &LicenseCommand, cfg: &Config) ->
     ));
     println!("  Product:      CAShell (SH)");
     println!("  Tier:         {tier_name}");
-    match &activation.expires_at {
+    match &lic.expires_at {
         Some(ts) => {
             let dt = chrono::DateTime::parse_from_rfc3339(ts)
                 .ok()
@@ -441,7 +454,7 @@ fn cmd_status(json: bool, _cfg: &Config) -> Result<i32> {
     }
 }
 
-fn tier_display(tier: &str) -> &str {
+pub fn tier_display(tier: &str) -> &str {
     match tier {
         "99" => "Lifetime",
         "24" => "2-Year",
@@ -451,7 +464,7 @@ fn tier_display(tier: &str) -> &str {
     }
 }
 
-fn parse_display_ts(s: &str) -> String {
+pub fn parse_display_ts(s: &str) -> String {
     if let Ok(ts) = s.parse::<i64>() {
         return chrono::DateTime::from_timestamp(ts, 0)
             .map(|d| d.format("%Y-%m-%d").to_string())
@@ -464,6 +477,32 @@ fn parse_display_ts(s: &str) -> String {
 }
 
 // ── deactivate (L-09) ───────────────────────────────────────────────────────
+
+/// Deactivate local license and notify GCC (unless `local_only`).
+pub fn deactivate_license_device(base_url: &str, local_only: bool) -> Result<String> {
+    let lic = match license_local::load_license()? {
+        Some(l) => l,
+        None => bail!("No local license installed — nothing to deactivate."),
+    };
+
+    let key_masked = license_gcc::mask_key(&lic.key);
+    let dev_id = license_gcc::device_id();
+
+    if !local_only && !base_url.trim().is_empty() {
+        license_gcc::deactivate(base_url, &lic.key, &dev_id)
+            .map_err(|e| anyhow::anyhow!("GCC deactivation failed: {e}"))?;
+    }
+
+    let p = license_local::license_path()?;
+    if p.exists() {
+        std::fs::remove_file(&p)
+            .map_err(|e| anyhow::anyhow!("failed to remove {}: {e}", p.display()))?;
+    }
+
+    let _ = crate::pro::FastBootCache::clear();
+    crate::entitlements::invalidate_cache();
+    Ok(key_masked)
+}
 
 fn cmd_deactivate(cmd: &LicenseCommand, cfg: &Config, local_only: bool) -> Result<i32> {
     let lic = match license_local::load_license()? {
