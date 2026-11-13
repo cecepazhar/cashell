@@ -270,41 +270,36 @@ impl SessionManager {
         }
     }
 
-    /// Create a new session with freshly minted 15m JWT access and 60h refresh tokens.
-    pub fn create_session(
-        sub: &str,
-        hwid: &str,
-        api_base: &str,
-        signing_secret: &[u8],
-    ) -> Result<Self> {
+    /// Create a session directly from an active license file and GCC API base URL (L-12).
+    /// Uses `activation_token` when present, or falls back to license key (per V-04).
+    pub fn from_license(lic: &crate::license_local::LicenseFile, api_base: &str) -> Result<Self> {
+        let token = lic
+            .activation_token
+            .as_deref()
+            .unwrap_or(&lic.key)
+            .to_string();
+        let hwid = HwidGenerator::new().get_or_create()?;
         let now = now_unix();
-        let access_claims = JwtClaims {
-            sub: sub.to_string(),
-            hwid: hwid.to_string(),
-            tier: "pro".to_string(),
-            token_type: "access".to_string(),
-            iat: now,
-            exp: now + JWT_ACCESS_EXPIRY_SECS, // 15m
-        };
-        let refresh_claims = JwtClaims {
-            sub: sub.to_string(),
-            hwid: hwid.to_string(),
-            tier: "pro".to_string(),
-            token_type: "refresh".to_string(),
-            iat: now,
-            exp: now + REFRESH_TOKEN_EXPIRY_SECS, // 60h
-        };
-
-        let access_token = sign_jwt(&access_claims, signing_secret)?;
-        let refresh_token = sign_jwt(&refresh_claims, signing_secret)?;
+        let exp = lic
+            .expires_at
+            .as_deref()
+            .and_then(|exp_str| {
+                if let Ok(ts) = exp_str.parse::<i64>() {
+                    return Some(ts);
+                }
+                chrono::DateTime::parse_from_rfc3339(exp_str)
+                    .ok()
+                    .map(|dt| dt.timestamp())
+            })
+            .unwrap_or(now + 365 * 24 * 3600); // 1-year default if lifetime/unspecified
 
         Ok(Self {
-            access_token,
-            refresh_token,
-            access_expires_unix: access_claims.exp,
-            refresh_expires_unix: refresh_claims.exp,
-            hwid: hwid.to_string(),
-            api_base: api_base.to_string(),
+            access_token: token.clone(),
+            refresh_token: token,
+            access_expires_unix: exp,
+            refresh_expires_unix: exp,
+            hwid,
+            api_base: api_base.trim_end_matches("/").to_string(),
         })
     }
 
@@ -421,6 +416,14 @@ impl SessionManager {
 
     /// Load the session from the default file path.
     pub fn load_default() -> Option<Self> {
+        if let Ok(Some(lic)) = crate::license_local::load_license() {
+            if crate::license_local::is_license_valid(&lic) {
+                let api_base = "https://gcc.fathforce.com";
+                if let Ok(sm) = Self::from_license(&lic, api_base) {
+                    return Some(sm);
+                }
+            }
+        }
         Self::load(&Self::default_path()).ok()
     }
 
@@ -615,36 +618,38 @@ mod tests {
     }
 
     #[test]
-    fn test_session_manager_jwt_durations() {
-        let hwid = "test-hwid-abc";
-        let secret = b"super-secret-key-for-testing-123";
-        let sm = SessionManager::create_session(
-            "cecep@fathforce.com",
-            hwid,
-            "https://api.fathforce.com",
-            secret,
-        )
-        .expect("create session");
+    fn test_session_manager_from_license() {
+        let lic = crate::license_local::LicenseFile {
+            schema: 2,
+            key: "CASH99-FOUNDR-3".to_string(),
+            product: "SH".to_string(),
+            tier: "99".to_string(),
+            expires_at: None,
+            activated_at: "2026-11-13T00:00:00Z".to_string(),
+            last_verified_at: "2026-11-13T00:00:00Z".to_string(),
+            activation_token: Some("sample-activation-token-123".to_string()),
+            devices_used: 1,
+            devices_max: 3,
+            offline_grace_until: None,
+            revoked: false,
+            expired: false,
+        };
 
+        let sm =
+            SessionManager::from_license(&lic, "https://gcc.fathforce.com").expect("from_license");
+        assert_eq!(sm.access_token(), "sample-activation-token-123");
+        assert_eq!(sm.refresh_token(), "sample-activation-token-123");
+        assert_eq!(sm.api_base, "https://gcc.fathforce.com");
         assert!(!sm.is_access_expired());
         assert!(!sm.is_refresh_expired());
-        assert!(sm.can_refresh());
 
-        // Access token is 15 minutes = 900 seconds (+/- 2 seconds tolerance)
-        let now = now_unix();
-        let access_rem = sm.access_expires_unix() - now;
-        assert!((898..=902).contains(&access_rem));
-        // Refresh token is 60 hours = 216,000 seconds
-        let refresh_rem = sm.refresh_expires_unix() - now;
-        assert!((215998..=216002).contains(&refresh_rem));
-
-        // Verify tokens cryptographically
-        let access_claims = verify_jwt(sm.access_token(), secret).expect("verify access token");
-        assert_eq!(access_claims.sub, "cecep@fathforce.com");
-        assert_eq!(access_claims.token_type, "access");
-
-        let refresh_claims = verify_jwt(sm.refresh_token(), secret).expect("verify refresh token");
-        assert_eq!(refresh_claims.token_type, "refresh");
+        // Test fallback when activation_token is None (per V-04)
+        let mut lic_no_token = lic.clone();
+        lic_no_token.activation_token = None;
+        let sm2 = SessionManager::from_license(&lic_no_token, "https://gcc.fathforce.com/")
+            .expect("from_license no token");
+        assert_eq!(sm2.access_token(), "CASH99-FOUNDR-3");
+        assert_eq!(sm2.api_base, "https://gcc.fathforce.com");
     }
 
     #[test]
