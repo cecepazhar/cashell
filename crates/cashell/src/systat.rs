@@ -106,7 +106,7 @@ pub struct DockerContainerInfo {
 /// Core ecosystem daemon health state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DaemonState {
-    Active,   // ● ACTIVE (green)
+    Active, // ● ACTIVE (green)
     #[default]
     Inactive, // ✖ INACTIVE (red)
     Degraded, // ◌ DEGRADED (yellow)
@@ -351,8 +351,8 @@ pub fn snapshot_telemetry() -> SysSnapshot {
     sys.refresh_memory();
 
     let cpu_count = sys.cpus().len();
-    let cpu_pct: f32 = sys.cpus().iter().map(|c| c.cpu_usage()).sum::<f32>()
-        / cpu_count.max(1) as f32;
+    let cpu_pct: f32 =
+        sys.cpus().iter().map(|c| c.cpu_usage()).sum::<f32>() / cpu_count.max(1) as f32;
 
     let load = System::load_average();
     let load_avg = [load.one, load.five, load.fifteen];
@@ -388,13 +388,8 @@ pub fn snapshot_telemetry() -> SysSnapshot {
 
     let fan_speed = probe_fan();
 
-    let (
-        net_rx_rate_kbps,
-        net_tx_rate_kbps,
-        net_total_rx_gb,
-        net_total_tx_gb,
-        active_net_iface,
-    ) = probe_networks();
+    let (net_rx_rate_kbps, net_tx_rate_kbps, net_total_rx_gb, net_total_tx_gb, active_net_iface) =
+        probe_networks();
 
     let top_processes = probe_top_processes(&sys);
 
@@ -523,11 +518,21 @@ pub fn probe_docker_containers() -> Vec<DockerContainerInfo> {
 
     // 1. Local containers
     let out = Command::new("docker")
-        .args(["ps", "-a", "--format", "{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}|{{.Ports}}"])
+        .args([
+            "ps",
+            "-a",
+            "--format",
+            "{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}|{{.Ports}}",
+        ])
         .output()
         .or_else(|_| {
             Command::new("podman")
-                .args(["ps", "-a", "--format", "{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}|{{.Ports}}"])
+                .args([
+                    "ps",
+                    "-a",
+                    "--format",
+                    "{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}|{{.Ports}}",
+                ])
                 .output()
         });
 
@@ -537,7 +542,10 @@ pub fn probe_docker_containers() -> Vec<DockerContainerInfo> {
             for line in text.lines() {
                 let parts: Vec<&str> = line.split('|').collect();
                 if parts.len() >= 4 {
-                    let ports = parts.get(4).map(|p| p.trim().to_string()).unwrap_or_default();
+                    let ports = parts
+                        .get(4)
+                        .map(|p| p.trim().to_string())
+                        .unwrap_or_default();
                     list.push(DockerContainerInfo {
                         name: parts[0].trim().to_string(),
                         image: parts[1].trim().to_string(),
@@ -553,8 +561,10 @@ pub fn probe_docker_containers() -> Vec<DockerContainerInfo> {
     // 2. Tencent Cloud container node (SSH docker ps)
     let tencent_out = Command::new("ssh")
         .args([
-            "-o", "ConnectTimeout=3",
-            "-o", "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=3",
+            "-o",
+            "BatchMode=yes",
             "root@100.96.8.82",
             "docker ps -a --format '{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}|{{.Ports}}'",
         ])
@@ -566,7 +576,10 @@ pub fn probe_docker_containers() -> Vec<DockerContainerInfo> {
             for line in text.lines() {
                 let parts: Vec<&str> = line.split('|').collect();
                 if parts.len() >= 4 {
-                    let ports = parts.get(4).map(|p| p.trim().to_string()).unwrap_or_default();
+                    let ports = parts
+                        .get(4)
+                        .map(|p| p.trim().to_string())
+                        .unwrap_or_default();
                     let state = parts[2].trim().to_lowercase();
                     let mut short_name = parts[0].trim().to_string();
                     if let Some(stripped) = short_name.strip_prefix("cagroup-") {
@@ -592,11 +605,18 @@ pub fn probe_docker_containers() -> Vec<DockerContainerInfo> {
 
 // ── Server Fleet Nodes Probe ────────────────────────────────────────────────
 
-pub fn probe_fleet_nodes(local_cpu: f32, local_ram_pct: u8, local_disk_pct: u8) -> Vec<FleetNodeResume> {
+pub fn probe_fleet_nodes(
+    local_cpu: f32,
+    local_ram_pct: u8,
+    local_disk_pct: u8,
+) -> Vec<FleetNodeResume> {
     use rayon::prelude::*;
 
     let local = FleetNodeResume {
-        name: format!("Local ({})", sysinfo::System::host_name().unwrap_or_else(|| "Host".to_string())),
+        name: format!(
+            "Local ({})",
+            sysinfo::System::host_name().unwrap_or_else(|| "Host".to_string())
+        ),
         ip: "127.0.0.1".to_string(),
         status: "ONLINE".to_string(),
         latency_ms: Some(0),
@@ -613,7 +633,8 @@ pub fn probe_fleet_nodes(local_cpu: f32, local_ram_pct: u8, local_disk_pct: u8) 
             .unwrap_or_default()
     };
 
-    let mut remotes_map: std::collections::HashMap<String, (String, u16)> = std::collections::HashMap::new();
+    let mut remotes_map: std::collections::HashMap<String, (String, u16)> =
+        std::collections::HashMap::new();
 
     for (name, node) in nodes_cfg {
         if name != "local" {
@@ -622,15 +643,28 @@ pub fn probe_fleet_nodes(local_cpu: f32, local_ram_pct: u8, local_disk_pct: u8) 
         }
     }
 
-    if let Ok(out) = Command::new("tailscale").args(["status", "--json"]).output() {
+    if let Ok(out) = Command::new("tailscale")
+        .args(["status", "--json"])
+        .output()
+    {
         if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
             if let Some(peers) = json.get("Peer").and_then(|p| p.as_object()) {
                 for (_, peer) in peers {
-                    let hostname = peer.get("HostName").and_then(|h| h.as_str()).unwrap_or("").to_string();
+                    let hostname = peer
+                        .get("HostName")
+                        .and_then(|h| h.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let ips = peer.get("TailscaleIPs").and_then(|i| i.as_array());
-                    let ip = ips.and_then(|arr| arr.first()).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let ip = ips
+                        .and_then(|arr| arr.first())
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     if !hostname.is_empty() && !ip.is_empty() {
-                        let exists = remotes_map.iter().any(|(k, (val_ip, _))| k == &hostname || val_ip == &ip);
+                        let exists = remotes_map
+                            .iter()
+                            .any(|(k, (val_ip, _))| k == &hostname || val_ip == &ip);
                         if !exists {
                             remotes_map.insert(hostname, (ip, 22));
                         }
@@ -734,12 +768,21 @@ pub fn probe_services_health(docker_running: usize, docker_total: usize) -> Vec<
             .map(|o| o.status.success())
             .unwrap_or(false);
         if ts_ok {
-            (DaemonState::Active, "Active (Mesh VPN Connected)".to_string())
+            (
+                DaemonState::Active,
+                "Active (Mesh VPN Connected)".to_string(),
+            )
         } else {
-            (DaemonState::Degraded, "Degraded (Mesh socket present)".to_string())
+            (
+                DaemonState::Degraded,
+                "Degraded (Mesh socket present)".to_string(),
+            )
         }
     } else {
-        (DaemonState::Inactive, "Inactive (tailscaled socket missing)".to_string())
+        (
+            DaemonState::Inactive,
+            "Inactive (tailscaled socket missing)".to_string(),
+        )
     };
     list.push(DaemonHealthInfo {
         name: "tailscaled".to_string(),
@@ -757,9 +800,15 @@ pub fn probe_services_health(docker_running: usize, docker_total: usize) -> Vec<
         .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "active")
         .unwrap_or(false);
     let (cf_state, cf_detail) = if cf_running {
-        (DaemonState::Active, "Active (Zero Trust tunnel online)".to_string())
+        (
+            DaemonState::Active,
+            "Active (Zero Trust tunnel online)".to_string(),
+        )
     } else {
-        (DaemonState::Inactive, "Inactive (cloudflared stopped)".to_string())
+        (
+            DaemonState::Inactive,
+            "Inactive (cloudflared stopped)".to_string(),
+        )
     };
     list.push(DaemonHealthInfo {
         name: "cloudflared".to_string(),
@@ -770,45 +819,34 @@ pub fn probe_services_health(docker_running: usize, docker_total: usize) -> Vec<
         detail: cf_detail,
     });
 
-    // 3. 9router / omniroute (:20128/:3007)
-    let port_20128 = "127.0.0.1:20128".parse::<SocketAddr>().ok()
-        .map(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(40)).is_ok())
-        .unwrap_or(false);
-    let port_3007 = "100.76.150.46:3007".parse::<SocketAddr>().ok()
-        .map(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok())
-        .unwrap_or(false);
-
-    let (ai_state, ai_detail) = if port_20128 && port_3007 {
-        (DaemonState::Active, "Active (:20128 local & :3007 remote online)".to_string())
-    } else if port_20128 {
-        (DaemonState::Active, "Active (9router :20128 online)".to_string())
-    } else if port_3007 {
-        (DaemonState::Degraded, "Degraded (OmniRoute :3007 only)".to_string())
-    } else {
-        (DaemonState::Inactive, "Inactive (AI proxy ports unreachable)".to_string())
-    };
-    list.push(DaemonHealthInfo {
-        name: "9router / omniroute".to_string(),
-        display_name: "9router / OmniRoute (:20128/:3007)".to_string(),
-        category: "AI Gateway".to_string(),
-        state: ai_state,
-        endpoint: "127.0.0.1:20128 / :3007".to_string(),
-        detail: ai_detail,
-    });
+    // H-09: hardcoded personal gateway check removed — no private hosts
+    // or personal gateway endpoints may appear in defaults.
 
     // 4. docker / podman
     let docker_sock = std::path::Path::new("/var/run/docker.sock").exists()
         || std::path::Path::new("/run/podman/podman.sock").exists();
     let (dk_state, dk_detail) = if docker_sock || docker_total > 0 {
         if docker_running > 0 {
-            (DaemonState::Active, format!("Active ({docker_running}/{docker_total} containers running)"))
+            (
+                DaemonState::Active,
+                format!("Active ({docker_running}/{docker_total} containers running)"),
+            )
         } else if docker_total > 0 {
-            (DaemonState::Degraded, format!("Degraded (0/{docker_total} containers running)"))
+            (
+                DaemonState::Degraded,
+                format!("Degraded (0/{docker_total} containers running)"),
+            )
         } else {
-            (DaemonState::Active, "Active (Engine socket online)".to_string())
+            (
+                DaemonState::Active,
+                "Active (Engine socket online)".to_string(),
+            )
         }
     } else {
-        (DaemonState::Inactive, "Inactive (Container engine stopped)".to_string())
+        (
+            DaemonState::Inactive,
+            "Inactive (Container engine stopped)".to_string(),
+        )
     };
     list.push(DaemonHealthInfo {
         name: "docker / podman".to_string(),
@@ -820,18 +858,27 @@ pub fn probe_services_health(docker_running: usize, docker_total: usize) -> Vec<
     });
 
     // 5. hermes agent gateway
-    let port_8090 = "127.0.0.1:8090".parse::<SocketAddr>().ok()
+    let port_8090 = "127.0.0.1:8090"
+        .parse::<SocketAddr>()
+        .ok()
         .map(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(40)).is_ok())
         .unwrap_or(false);
-    let hermes_active = port_8090 || Command::new("systemctl")
-        .args(["is-active", "hermes-agent"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "active")
-        .unwrap_or(false);
+    let hermes_active = port_8090
+        || Command::new("systemctl")
+            .args(["is-active", "hermes-agent"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "active")
+            .unwrap_or(false);
     let (hm_state, hm_detail) = if hermes_active || port_8090 {
-        (DaemonState::Active, "Active (Autonomous runtime / :8090)".to_string())
+        (
+            DaemonState::Active,
+            "Active (Autonomous runtime / :8090)".to_string(),
+        )
     } else {
-        (DaemonState::Degraded, "Standby (CLI session active)".to_string())
+        (
+            DaemonState::Degraded,
+            "Standby (CLI session active)".to_string(),
+        )
     };
     list.push(DaemonHealthInfo {
         name: "hermes agent gateway".to_string(),
@@ -852,23 +899,36 @@ pub fn probe_tracked_projects() -> Vec<TrackedProject> {
 
 /// Same as [`probe_tracked_projects`], but reuses an already-collected
 /// container list so callers don't pay for `docker ps` / SSH twice.
-pub fn probe_tracked_projects_with(known_containers: &[DockerContainerInfo]) -> Vec<TrackedProject> {
+pub fn probe_tracked_projects_with(
+    known_containers: &[DockerContainerInfo],
+) -> Vec<TrackedProject> {
     let mut list = Vec::new();
 
-    if let Some(home) = dirs::home_dir() {
-        for (dir_name, cat) in [("Product", "Product"), ("Project", "Project")] {
-            let path = home.join(dir_name);
-            if let Ok(entries) = std::fs::read_dir(path) {
-                for entry in entries.flatten() {
-                    let p = entry.path();
-                    if p.is_dir() {
-                        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-                        if !name.starts_with('.') && !name.starts_with('_') && name != "target" && name != "node_modules" {
-                            let is_git = p.join(".git").exists();
-                            if is_git || p.join("Cargo.toml").exists() || p.join("package.json").exists() || p.join("go.mod").exists() {
-                                let proj = build_project_workspace(&name, &p, cat, known_containers);
-                                list.push(proj);
-                            }
+    let home = crate::paths::home_dir();
+    for (dir_name, cat) in [("Product", "Product"), ("Project", "Project")] {
+        let path = home.join(dir_name);
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    let name = p
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if !name.starts_with('.')
+                        && !name.starts_with('_')
+                        && name != "target"
+                        && name != "node_modules"
+                    {
+                        let is_git = p.join(".git").exists();
+                        if is_git
+                            || p.join("Cargo.toml").exists()
+                            || p.join("package.json").exists()
+                            || p.join("go.mod").exists()
+                        {
+                            let proj = build_project_workspace(&name, &p, cat, known_containers);
+                            list.push(proj);
                         }
                     }
                 }
@@ -880,17 +940,20 @@ pub fn probe_tracked_projects_with(known_containers: &[DockerContainerInfo]) -> 
     if let Ok(cfg) = crate::config::Config::load(None) {
         for cp in cfg.workspace.custom_projects {
             let expanded = if let Some(stripped) = cp.strip_prefix("~/") {
-                if let Some(h) = dirs::home_dir() {
-                    h.join(stripped).to_string_lossy().to_string()
-                } else {
-                    cp.clone()
-                }
+                crate::paths::home_dir()
+                    .join(stripped)
+                    .to_string_lossy()
+                    .to_string()
             } else {
                 cp.clone()
             };
             let p = std::path::PathBuf::from(expanded.clone());
             if p.is_dir() {
-                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+                let name = p
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string();
                 if !name.is_empty() && !list.iter().any(|item| item.name == name) {
                     let proj = build_project_workspace(&name, &p, "Custom", known_containers);
                     list.push(proj);
@@ -906,7 +969,12 @@ pub fn probe_tracked_projects_with(known_containers: &[DockerContainerInfo]) -> 
                 if !list.iter().any(|item| item.name == proj.name) {
                     let p = std::path::PathBuf::from(&proj.path);
                     if p.is_dir() {
-                        let ws = build_project_workspace(&proj.name, &p, &proj.category, known_containers);
+                        let ws = build_project_workspace(
+                            &proj.name,
+                            &p,
+                            &proj.category,
+                            known_containers,
+                        );
                         list.push(ws);
                     } else {
                         list.push(TrackedProject {
@@ -980,8 +1048,15 @@ pub fn build_project_workspace(
                 for entry in entries.flatten() {
                     let sp = entry.path();
                     if sp.is_dir() {
-                        let sub_name = sp.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-                        if !sub_name.starts_with('.') && sub_name != "target" && sub_name != "node_modules" {
+                        let sub_name = sp
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if !sub_name.starts_with('.')
+                            && sub_name != "target"
+                            && sub_name != "node_modules"
+                        {
                             let has_code = sp.join("Cargo.toml").exists()
                                 || sp.join("package.json").exists()
                                 || sp.join("go.mod").exists()
@@ -1036,10 +1111,15 @@ pub fn build_project_workspace(
             || c_lower.contains(&name_lower)
             || repos.iter().any(|r| {
                 let sub_only = r.name.rsplit('/').next().unwrap_or(&r.name).to_lowercase();
-                !sub_only.is_empty() && (c_lower.contains(&sub_only) || c_lower.ends_with(&sub_only))
+                !sub_only.is_empty()
+                    && (c_lower.contains(&sub_only) || c_lower.ends_with(&sub_only))
             });
 
-        if matched && !containers.iter().any(|x: &ProjectContainer| x.name == c.name) {
+        if matched
+            && !containers
+                .iter()
+                .any(|x: &ProjectContainer| x.name == c.name)
+        {
             containers.push(ProjectContainer {
                 name: c.name.clone(),
                 image: c.image.clone(),
@@ -1069,23 +1149,33 @@ pub fn build_project_workspace(
 
     for cf in &compose_files {
         if let Ok(content) = std::fs::read_to_string(cf) {
-            parse_compose_resources(&content, name, &mut containers, &mut services, &mut databases);
+            parse_compose_resources(
+                &content,
+                name,
+                &mut containers,
+                &mut services,
+                &mut databases,
+            );
         }
     }
 
     // 5. Configured ecosystem services & well-known ports
+    // H-09: no personal gateway entry — public/generic services only.
     let well_known_services: &[(&str, u16, &str)] = &[
         ("cashell", 8090, "http"),
         ("caterm", 8081, "http"),
         ("fathstore", 8082, "http"),
         ("gcc", 8083, "http"),
-        ("9router", 20128, "http"),
     ];
     for &(svc_proj, port, proto) in well_known_services {
         if (name_lower == svc_proj || name_lower.contains(svc_proj))
             && !services.iter().any(|s| s.port == port)
         {
-            let state = if is_port_listening(port) { "up".to_string() } else { "down".to_string() };
+            let state = if is_port_listening(port) {
+                "up".to_string()
+            } else {
+                "down".to_string()
+            };
             services.push(ProjectService {
                 name: format!("{svc_proj}-svc"),
                 host: "127.0.0.1".to_string(),
@@ -1100,13 +1190,24 @@ pub fn build_project_workspace(
     if let Ok(env_str) = std::fs::read_to_string(path.join(".env")) {
         for line in env_str.lines() {
             let line = line.trim();
-            if (line.starts_with("PORT=") || line.starts_with("APP_PORT=") || line.starts_with("HTTP_PORT="))
+            if (line.starts_with("PORT=")
+                || line.starts_with("APP_PORT=")
+                || line.starts_with("HTTP_PORT="))
                 && !line.starts_with('#')
             {
                 if let Some((_, val)) = line.split_once('=') {
-                    if let Ok(p) = val.trim().trim_matches('"').trim_matches('\'').parse::<u16>() {
+                    if let Ok(p) = val
+                        .trim()
+                        .trim_matches('"')
+                        .trim_matches('\'')
+                        .parse::<u16>()
+                    {
                         if !services.iter().any(|s| s.port == p) {
-                            let state = if is_port_listening(p) { "up".to_string() } else { "down".to_string() };
+                            let state = if is_port_listening(p) {
+                                "up".to_string()
+                            } else {
+                                "down".to_string()
+                            };
                             services.push(ProjectService {
                                 name: format!("{name}-app"),
                                 host: "127.0.0.1".to_string(),
@@ -1144,7 +1245,11 @@ pub fn build_project_workspace(
 
         if let Some(engine) = db_engine {
             if !databases.iter().any(|d| d.name == c.name) {
-                let db_state = if c.state == "running" { "up".to_string() } else { "down".to_string() };
+                let db_state = if c.state == "running" {
+                    "up".to_string()
+                } else {
+                    "down".to_string()
+                };
                 databases.push(ProjectDatabase {
                     name: c.name.clone(),
                     engine: engine.to_string(),
@@ -1161,7 +1266,10 @@ pub fn build_project_workspace(
     if let Ok(env_str) = std::fs::read_to_string(path.join(".env")) {
         for line in env_str.lines() {
             let line = line.trim();
-            if line.starts_with("DATABASE_URL=") || line.starts_with("POSTGRES_DB=") || line.starts_with("DB_DATABASE=") {
+            if line.starts_with("DATABASE_URL=")
+                || line.starts_with("POSTGRES_DB=")
+                || line.starts_with("DB_DATABASE=")
+            {
                 if let Some((_, val)) = line.split_once('=') {
                     let clean_val = val.trim().trim_matches('"').trim_matches('\'');
                     let engine = if clean_val.contains("postgres") || clean_val.contains("pgsql") {
@@ -1178,7 +1286,13 @@ pub fn build_project_workspace(
                             name: format!("{name}-{engine}"),
                             engine: engine.to_string(),
                             host: "localhost".to_string(),
-                            port: if engine == "postgres" { 5432 } else if engine == "mysql" { 3306 } else { 0 },
+                            port: if engine == "postgres" {
+                                5432
+                            } else if engine == "mysql" {
+                                3306
+                            } else {
+                                0
+                            },
                             database: clean_val.split('/').next_back().unwrap_or(name).to_string(),
                             state: "defined".to_string(),
                         });
@@ -1193,7 +1307,11 @@ pub fn build_project_workspace(
                     host: "127.0.0.1".to_string(),
                     port: 6379,
                     database: "0".to_string(),
-                    state: if is_port_listening(6379) { "up".to_string() } else { "down".to_string() },
+                    state: if is_port_listening(6379) {
+                        "up".to_string()
+                    } else {
+                        "down".to_string()
+                    },
                 });
             }
         }
@@ -1205,7 +1323,9 @@ pub fn build_project_workspace(
             let ep = entry.path();
             if ep.is_file() {
                 if let Some(fname) = ep.file_name().and_then(|n| n.to_str()) {
-                    if (fname.ends_with(".db") || fname.ends_with(".sqlite") || fname.ends_with(".sqlite3"))
+                    if (fname.ends_with(".db")
+                        || fname.ends_with(".sqlite")
+                        || fname.ends_with(".sqlite3"))
                         && !databases.iter().any(|d| d.name == fname)
                     {
                         databases.push(ProjectDatabase {
@@ -1282,9 +1402,18 @@ fn parse_compose_resources(
         }
 
         let leading_spaces = line.chars().take_while(|c| *c == ' ').count();
-        if (leading_spaces == 2 || leading_spaces == 4) && trimmed.ends_with(':') && !trimmed.starts_with('#') {
+        if (leading_spaces == 2 || leading_spaces == 4)
+            && trimmed.ends_with(':')
+            && !trimmed.starts_with('#')
+        {
             let key = trimmed.trim().trim_end_matches(':');
-            if key != "build" && key != "environment" && key != "labels" && key != "networks" && key != "ports" && key != "volumes" {
+            if key != "build"
+                && key != "environment"
+                && key != "labels"
+                && key != "networks"
+                && key != "ports"
+                && key != "volumes"
+            {
                 if let Some(sname) = current_service.take() {
                     commit_compose_service(
                         &sname,
@@ -1303,7 +1432,12 @@ fn parse_compose_resources(
         } else if leading_spaces >= 4 && current_service.is_some() {
             let t = trimmed.trim();
             if t.starts_with("image:") {
-                current_image = t.trim_start_matches("image:").trim().trim_matches('"').trim_matches('\'').to_string();
+                current_image = t
+                    .trim_start_matches("image:")
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_string();
             } else if t.starts_with("- PORT=") || t.starts_with("PORT=") {
                 if let Some((_, p)) = t.split_once('=') {
                     if let Ok(port) = p.trim().trim_matches('"').trim_matches('\'').parse::<u16>() {
@@ -1311,7 +1445,11 @@ fn parse_compose_resources(
                     }
                 }
             } else if t.starts_with("- ") && t.contains(':') && !t.contains("context:") {
-                let p_part = t.trim_start_matches("- ").trim().trim_matches('"').trim_matches('\'');
+                let p_part = t
+                    .trim_start_matches("- ")
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'');
                 if let Some((host_p, _)) = p_part.split_once(':') {
                     if let Ok(port) = host_p.trim().parse::<u16>() {
                         current_ports.push(port);
@@ -1346,7 +1484,10 @@ fn commit_compose_service(
     let img_lower = image.to_lowercase();
     let sname_lower = sname.to_lowercase();
 
-    if img_lower.contains("postgres") || sname_lower.contains("postgres") || sname_lower.contains("pgsql") {
+    if img_lower.contains("postgres")
+        || sname_lower.contains("postgres")
+        || sname_lower.contains("pgsql")
+    {
         let port = ports.first().copied().unwrap_or(5432);
         if !databases.iter().any(|d| d.name == sname) {
             databases.push(ProjectDatabase {
@@ -1355,10 +1496,17 @@ fn commit_compose_service(
                 host: "127.0.0.1".to_string(),
                 port,
                 database: sname.to_string(),
-                state: if is_port_listening(port) { "up".to_string() } else { "down".to_string() },
+                state: if is_port_listening(port) {
+                    "up".to_string()
+                } else {
+                    "down".to_string()
+                },
             });
         }
-    } else if img_lower.contains("mysql") || sname_lower.contains("mysql") || img_lower.contains("mariadb") {
+    } else if img_lower.contains("mysql")
+        || sname_lower.contains("mysql")
+        || img_lower.contains("mariadb")
+    {
         let port = ports.first().copied().unwrap_or(3306);
         if !databases.iter().any(|d| d.name == sname) {
             databases.push(ProjectDatabase {
@@ -1367,7 +1515,11 @@ fn commit_compose_service(
                 host: "127.0.0.1".to_string(),
                 port,
                 database: sname.to_string(),
-                state: if is_port_listening(port) { "up".to_string() } else { "down".to_string() },
+                state: if is_port_listening(port) {
+                    "up".to_string()
+                } else {
+                    "down".to_string()
+                },
             });
         }
     } else if img_lower.contains("redis") || sname_lower.contains("redis") {
@@ -1379,7 +1531,11 @@ fn commit_compose_service(
                 host: "127.0.0.1".to_string(),
                 port,
                 database: "0".to_string(),
-                state: if is_port_listening(port) { "up".to_string() } else { "down".to_string() },
+                state: if is_port_listening(port) {
+                    "up".to_string()
+                } else {
+                    "down".to_string()
+                },
             });
         }
     }
@@ -1391,16 +1547,31 @@ fn commit_compose_service(
                 host: "127.0.0.1".to_string(),
                 port: p,
                 protocol: "http".to_string(),
-                state: if is_port_listening(p) { "up".to_string() } else { "down".to_string() },
+                state: if is_port_listening(p) {
+                    "up".to_string()
+                } else {
+                    "down".to_string()
+                },
             });
         }
     }
 
-    if !containers.iter().any(|c| c.name == sname || c.name.contains(sname)) {
-        let ports_str = ports.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(",");
+    if !containers
+        .iter()
+        .any(|c| c.name == sname || c.name.contains(sname))
+    {
+        let ports_str = ports
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
         containers.push(ProjectContainer {
             name: format!("{project_name}-{sname}"),
-            image: if image.is_empty() { format!("{project_name}-{sname}:latest") } else { image.to_string() },
+            image: if image.is_empty() {
+                format!("{project_name}-{sname}:latest")
+            } else {
+                image.to_string()
+            },
             state: "defined".to_string(),
             status_detail: "Declared in compose".to_string(),
             ports: ports_str,
@@ -1410,10 +1581,19 @@ fn commit_compose_service(
 
 // ── Uptime Kuma Style Endpoint Monitors ──────────────────────────────────────
 
-static UPTIME_HISTORY_STORE: Mutex<Option<std::collections::HashMap<String, Vec<bool>>>> = Mutex::new(None);
+static UPTIME_HISTORY_STORE: Mutex<Option<std::collections::HashMap<String, Vec<bool>>>> =
+    Mutex::new(None);
 static PREV_UPTIME_STATE: Mutex<Option<std::collections::HashMap<String, bool>>> = Mutex::new(None);
 
-type ProbeResult = (String, String, bool, Option<u64>, Option<u16>, String, Option<String>);
+type ProbeResult = (
+    String,
+    String,
+    bool,
+    Option<u64>,
+    Option<u16>,
+    String,
+    Option<String>,
+);
 
 pub fn send_telegram_alert(token: &str, chat_id: &str, message: &str) {
     let token = token.to_string();
@@ -1440,7 +1620,11 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
 
     let default_targets: &[(&str, &str, &str)] = &[
         ("Localhost Web", "http://127.0.0.1:8080/", "Localhost"),
-        ("CAShell Local Daemon", "http://127.0.0.1:8090/api/health", "Localhost"),
+        (
+            "CAShell Local Daemon",
+            "http://127.0.0.1:8090/api/health",
+            "Localhost",
+        ),
     ];
 
     let mut targets: Vec<(String, String, String)> = default_targets
@@ -1454,8 +1638,14 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
     if let Some(ref cfg) = cfg_opt {
         targets.retain(|(name, _, _)| !cfg.uptime.disabled_monitors.contains(name));
         for m in &cfg.uptime.custom_monitors {
-            if !cfg.uptime.disabled_monitors.contains(&m.name) && !targets.iter().any(|(_, u, _)| u == &m.target) {
-                let grp = if m.group.trim().is_empty() { "Custom".to_string() } else { m.group.clone() };
+            if !cfg.uptime.disabled_monitors.contains(&m.name)
+                && !targets.iter().any(|(_, u, _)| u == &m.target)
+            {
+                let grp = if m.group.trim().is_empty() {
+                    "Custom".to_string()
+                } else {
+                    m.group.clone()
+                };
                 targets.push((m.name.clone(), m.target.clone(), grp));
             }
         }
@@ -1489,13 +1679,24 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
                         Ok(res) => {
                             let lat = start.elapsed().as_millis() as u64;
                             let code = res.status().as_u16();
-                            let is_up = res.status().is_success() || res.status().is_redirection() || code == 404 || code == 401;
+                            let is_up = res.status().is_success()
+                                || res.status().is_redirection()
+                                || code == 404
+                                || code == 401;
                             let err_msg = if !is_up {
                                 Some(format!("{code}"))
                             } else {
                                 None
                             };
-                            return (name.to_string(), url.to_string(), is_up, Some(lat), Some(code), group.to_string(), err_msg);
+                            return (
+                                name.to_string(),
+                                url.to_string(),
+                                is_up,
+                                Some(lat),
+                                Some(code),
+                                group.to_string(),
+                                err_msg,
+                            );
                         }
                         Err(err) => {
                             let reason = if err.is_timeout() {
@@ -1504,7 +1705,10 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
                                 let err_str = err.to_string().to_lowercase();
                                 if err_str.contains("refused") {
                                     "Refused".to_string()
-                                } else if err_str.contains("dns") || err_str.contains("resolve") || err_str.contains("name resolution") {
+                                } else if err_str.contains("dns")
+                                    || err_str.contains("resolve")
+                                    || err_str.contains("name resolution")
+                                {
                                     "DNS Fail".to_string()
                                 } else if err_str.contains("reset") {
                                     "Reset".to_string()
@@ -1514,13 +1718,37 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
                             } else {
                                 "Conn Err".to_string()
                             };
-                            return (name.to_string(), url.to_string(), false, None, None, group.to_string(), Some(reason));
+                            return (
+                                name.to_string(),
+                                url.to_string(),
+                                false,
+                                None,
+                                None,
+                                group.to_string(),
+                                Some(reason),
+                            );
                         }
                     }
                 }
-                (name.to_string(), url.to_string(), false, None, None, group.to_string(), Some("Client Err".to_string()))
+                (
+                    name.to_string(),
+                    url.to_string(),
+                    false,
+                    None,
+                    None,
+                    group.to_string(),
+                    Some("Client Err".to_string()),
+                )
             } else {
-                (name.to_string(), url.to_string(), false, None, None, group.to_string(), Some("Invalid URL".to_string()))
+                (
+                    name.to_string(),
+                    url.to_string(),
+                    false,
+                    None,
+                    None,
+                    group.to_string(),
+                    Some("Invalid URL".to_string()),
+                )
             }
         })
         .collect();
@@ -1555,15 +1783,19 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
                                 (None, Some(err)) => format!("ERR: {err}"),
                                 (None, None) => "Connection Error / Timeout".to_string(),
                             };
-                            let time_str = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                            let time_str =
+                                chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
                             let msg = format!(
                                 "🚨 *[CASHELL UPTIME ALERT]*\n❌ *Endpoint DOWN*: `{}`\n• URL: {}\n• Code: {}\n• Time: `{}`",
                                 name, url, code_str, time_str
                             );
                             send_telegram_alert(&token, &chat, &msg);
                         } else if !prev_up && *is_up {
-                            let lat_str = latency_ms.map(|l| format!("{l}ms")).unwrap_or_else(|| "--".to_string());
-                            let time_str = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                            let lat_str = latency_ms
+                                .map(|l| format!("{l}ms"))
+                                .unwrap_or_else(|| "--".to_string());
+                            let time_str =
+                                chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
                             let msg = format!(
                                 "✅ *[CASHELL UPTIME RECOVERY]*\n🟢 *Endpoint RECOVERED*: `{}`\n• URL: {}\n• Latency: {}\n• Time: `{}`",
                                 name, url, lat_str, time_str
@@ -1791,7 +2023,9 @@ pub fn parse_smartctl_json(json: &serde_json::Value, fallback_dev: &str) -> Opti
     if let Some(messages) = json.get("messages").and_then(|m| m.as_array()) {
         for msg in messages {
             if let Some(s) = msg.get("string").and_then(|s| s.as_str()) {
-                if (s.contains("Permission denied") || s.contains("failed") || s.contains("Cannot open"))
+                if (s.contains("Permission denied")
+                    || s.contains("failed")
+                    || s.contains("Cannot open"))
                     && json.get("nvme_smart_health_information_log").is_none()
                     && json.get("ata_smart_attributes").is_none()
                 {
@@ -1816,7 +2050,10 @@ pub fn parse_smartctl_json(json: &serde_json::Value, fallback_dev: &str) -> Opti
 
     let smart_passed = json["smart_status"]["passed"].as_bool().unwrap_or(true);
 
-    let mut temp_c: f32 = json["temperature"]["current"].as_f64().map(|v| v as f32).unwrap_or(0.0);
+    let mut temp_c: f32 = json["temperature"]["current"]
+        .as_f64()
+        .map(|v| v as f32)
+        .unwrap_or(0.0);
     let mut read_tb = 0.0f64;
     let mut written_tb = 0.0f64;
     let mut power_on_hours = json["power_on_time"]["hours"].as_u64().unwrap_or(0);
@@ -1917,7 +2154,10 @@ fn probe_sysfs_disk_health(dev_name: &str) -> Option<DiskHealthInfo> {
     let mut model = String::new();
     let model_paths = [
         format!("/sys/block/{dev_name}/device/model"),
-        format!("/sys/class/nvme/{}/model", dev_name.split('n').next().unwrap_or(dev_name)),
+        format!(
+            "/sys/class/nvme/{}/model",
+            dev_name.split('n').next().unwrap_or(dev_name)
+        ),
     ];
     for p in &model_paths {
         if let Ok(m) = std::fs::read_to_string(p) {
@@ -1955,7 +2195,11 @@ fn probe_sysfs_disk_health(dev_name: &str) -> Option<DiskHealthInfo> {
     for d in disks.iter() {
         let d_name = d.name().to_string_lossy();
         let mp = d.mount_point().to_string_lossy();
-        if d_name.contains(dev_name) || mp.contains(dev_name) || mp.starts_with("/run/media") || mp.starts_with("/media") {
+        if d_name.contains(dev_name)
+            || mp.contains(dev_name)
+            || mp.starts_with("/run/media")
+            || mp.starts_with("/media")
+        {
             let total = d.total_space();
             let avail = d.available_space();
             if total > 0 {
@@ -2026,11 +2270,19 @@ fn probe_sysfs_disk_health(dev_name: &str) -> Option<DiskHealthInfo> {
     // Power on hours estimation from uptime
     let uptime_hours = std::fs::read_to_string("/proc/uptime")
         .ok()
-        .and_then(|up| up.split_whitespace().next().and_then(|s| s.parse::<f64>().ok()))
+        .and_then(|up| {
+            up.split_whitespace()
+                .next()
+                .and_then(|s| s.parse::<f64>().ok())
+        })
         .map(|sec| (sec / 3600.0) as u64)
         .unwrap_or(24);
 
-    let wear_level_pct = if is_removable { usage_pct } else { ((written_tb / 300.0) * 100.0).clamp(1.0, 100.0) as u8 };
+    let wear_level_pct = if is_removable {
+        usage_pct
+    } else {
+        ((written_tb / 300.0) * 100.0).clamp(1.0, 100.0) as u8
+    };
     let critical_warnings = if temp_c >= 80.0 { 1 } else { 0 };
     let remaining_pct = 100u8.saturating_sub(wear_level_pct);
 
@@ -2151,16 +2403,42 @@ fn probe_peer(name: &str, targets: &[&str], display_endpoint: &str) -> MeshPeer 
 
 pub fn probe_mesh() -> Vec<MeshPeer> {
     use rayon::prelude::*;
-    let peers: [(&str, &[&str], &str); 4] = [
-        ("Hostinger VPS", &["100.76.150.46:22", "100.76.150.46:80"], "100.76.150.46"),
-        ("Tencent Cloud VPS", &["43.157.208.83:22", "43.157.208.83:80"], "43.157.208.83"),
-        ("9router Gateway", &["127.0.0.1:20128"], "localhost:20128"),
-        ("YPC Dokploy", &["100.127.232.32:22", "100.127.232.32:80"], "100.127.232.32"),
-    ];
+    // H-09: mesh peers come from user config only (daemon.nodes + doctor targets).
+    // No private IPs or personal gateway endpoints are hardcoded.
+    let cfg = crate::config::Config::load(None).ok();
+
+    let mut peers: Vec<(String, Vec<String>, String)> = Vec::new();
+
+    if let Some(ref c) = cfg {
+        // From daemon.nodes config (user-configured fleet)
+        for (name, node) in &c.daemon.nodes {
+            if name == "local" {
+                continue;
+            }
+            let ip = node.ip.clone();
+            let targets = vec![format!("{ip}:22"), format!("{ip}:80")];
+            peers.push((name.clone(), targets, ip.clone()));
+        }
+
+        // From doctor config target (user-configured)
+        if !c.doctor.target_addr.is_empty() {
+            let addr = c.doctor.target_addr.clone();
+            let port = c.doctor.target_port;
+            peers.push((addr.clone(), vec![format!("{addr}:{port}")], addr));
+        }
+    }
+
+    if peers.is_empty() {
+        return vec![];
+    }
 
     peers
-        .into_par_iter()
-        .map(|(name, targets, disp)| probe_peer(name, targets, disp))
+        .into_iter()
+        .par_bridge()
+        .map(|(name, targets, disp)| {
+            let target_refs: Vec<&str> = targets.iter().map(|s| s.as_str()).collect();
+            probe_peer(&name, &target_refs, &disp)
+        })
         .collect()
 }
 
@@ -2175,8 +2453,6 @@ pub fn assign_role(name: &str, cmd: &[std::ffi::OsString]) -> String {
 
     if cmd_str.contains("hermes") || name_lower.contains("hermes") {
         "AI Agent Runtime".to_string()
-    } else if cmd_str.contains("9router") || name_lower.contains("9router") {
-        "AI Proxy Gateway".to_string()
     } else if cmd_str.contains("cloudflared") || name_lower.contains("cloudflared") {
         "Edge Tunnel".to_string()
     } else if cmd_str.contains("caterm") || name_lower.contains("caterm") {
@@ -2312,8 +2588,12 @@ impl SysSnapshot {
 
 /// Format a concise telemetry bar for TUI rendering
 pub fn status_bar_text(s: &SysSnapshot) -> String {
-    let ram_pct = (s.ram_used_mb * 100).checked_div(s.ram_total_mb).unwrap_or(0);
-    let dsk_pct = (s.disk_used_gb * 100).checked_div(s.disk_total_gb).unwrap_or(0);
+    let ram_pct = (s.ram_used_mb * 100)
+        .checked_div(s.ram_total_mb)
+        .unwrap_or(0);
+    let dsk_pct = (s.disk_used_gb * 100)
+        .checked_div(s.disk_total_gb)
+        .unwrap_or(0);
     let swap_str = if s.swap_total_mb > 0 {
         format!(" SWP: {}/{}MB", s.swap_used_mb, s.swap_total_mb)
     } else {
@@ -2359,15 +2639,33 @@ mod tests {
     #[test]
     fn test_assign_role_classification() {
         assert_eq!(
-            assign_role("python3", &[std::ffi::OsString::from("python3"), std::ffi::OsString::from("hermes_cli.main")]),
+            assign_role(
+                "python3",
+                &[
+                    std::ffi::OsString::from("python3"),
+                    std::ffi::OsString::from("hermes_cli.main")
+                ]
+            ),
             "AI Agent Runtime"
         );
         assert_eq!(
-            assign_role("node", &[std::ffi::OsString::from("node"), std::ffi::OsString::from("/path/9router/cli.js")]),
-            "AI Proxy Gateway"
+            assign_role(
+                "node",
+                &[
+                    std::ffi::OsString::from("node"),
+                    std::ffi::OsString::from("/path/to/cli.js")
+                ]
+            ),
+            "Node.js Service"
         );
         assert_eq!(
-            assign_role("cloudflared", &[std::ffi::OsString::from("cloudflared"), std::ffi::OsString::from("tunnel")]),
+            assign_role(
+                "cloudflared",
+                &[
+                    std::ffi::OsString::from("cloudflared"),
+                    std::ffi::OsString::from("tunnel")
+                ]
+            ),
             "Edge Tunnel"
         );
         assert_eq!(
@@ -2375,7 +2673,10 @@ mod tests {
             "Web Terminal Console"
         );
         assert_eq!(
-            assign_role("systemd", &[std::ffi::OsString::from("/usr/lib/systemd/systemd")]),
+            assign_role(
+                "systemd",
+                &[std::ffi::OsString::from("/usr/lib/systemd/systemd")]
+            ),
             "System Service"
         );
     }
@@ -2401,7 +2702,10 @@ mod tests {
     fn test_fleet_node_resume_structure() {
         let node = probe_fleet_nodes(42.0, 55, 24);
         assert!(!node.is_empty());
-        let local = node.iter().find(|n| n.ip == "127.0.0.1").expect("local node");
+        let local = node
+            .iter()
+            .find(|n| n.ip == "127.0.0.1")
+            .expect("local node");
         assert_eq!(local.status, "ONLINE");
         assert_eq!(local.latency_ms, Some(0));
         assert_eq!(local.cpu_pct, Some(42.0));
@@ -2413,7 +2717,12 @@ mod tests {
     #[test]
     fn test_services_health_probe() {
         let health = probe_services_health(2, 8);
-        let expected_names = vec!["tailscaled", "cloudflared", "9router / omniroute", "docker / podman", "hermes agent gateway"];
+        let expected_names = vec![
+            "tailscaled",
+            "cloudflared",
+            "docker / podman",
+            "hermes agent gateway",
+        ];
         for n in expected_names {
             assert!(health.iter().any(|h| h.name == n), "missing {n}");
         }

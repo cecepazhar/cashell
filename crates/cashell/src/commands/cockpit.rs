@@ -17,16 +17,18 @@ use crate::systat::{
     snapshot_slow, snapshot_telemetry, AnalyticSiteItem, CpuCoreInfo, SysSnapshot,
 };
 use anyhow::Result;
+use catui::layout::centered_rect;
 use clap::Parser;
 use crossterm::event::{self, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Clear, Gauge, List, ListItem, ListState, Paragraph, Row, Table, Wrap},
+    widgets::{
+        Block, Borders, Cell, Clear, Gauge, List, ListItem, ListState, Paragraph, Row, Table, Wrap,
+    },
     Frame, Terminal,
 };
-use catui::layout::centered_rect;
 use std::collections::VecDeque;
 use std::fs;
 use std::net::{SocketAddr, TcpStream};
@@ -472,10 +474,22 @@ impl AuditStep {
 }
 
 pub const AUDIT_PROMPT_PRESETS: &[(&str, &str)] = &[
-    ("Security & Auth", "cek security auth, jwt token, injection dan session leak"),
-    ("Query & DB Perf", "cek query database, n+1 query, index dan performa bottleneck"),
-    ("Error & Memory", "cek error handling, unwrap panic, resource leak dan memory safety"),
-    ("Full OWASP Scan", "audit full owasp top 10 vulnerabilities, input validation and access control"),
+    (
+        "Security & Auth",
+        "cek security auth, jwt token, injection dan session leak",
+    ),
+    (
+        "Query & DB Perf",
+        "cek query database, n+1 query, index dan performa bottleneck",
+    ),
+    (
+        "Error & Memory",
+        "cek error handling, unwrap panic, resource leak dan memory safety",
+    ),
+    (
+        "Full OWASP Scan",
+        "audit full owasp top 10 vulnerabilities, input validation and access control",
+    ),
 ];
 
 /// Automatically transforms a natural user prompt into a structured, high-signal audit prompt
@@ -484,12 +498,38 @@ pub fn tune_audit_prompt(natural: &str, project_name: &str, folder_path: &str) -
     let lower = natural.to_lowercase();
     let mut focus_areas = Vec::new();
 
-    let has_auth = lower.contains("auth") || lower.contains("login") || lower.contains("token") || lower.contains("jwt") || lower.contains("session") || lower.contains("permission");
-    let has_security = lower.contains("security") || lower.contains("keamanan") || lower.contains("vulnerability") || lower.contains("cve") || lower.contains("injection") || lower.contains("sanitiz");
-    let has_perf = lower.contains("performa") || lower.contains("performance") || lower.contains("speed") || lower.contains("latency") || lower.contains("slow") || lower.contains("cepat");
-    let has_db = lower.contains("db") || lower.contains("database") || lower.contains("query") || lower.contains("sql") || lower.contains("orm") || lower.contains("n+1");
-    let has_memory = lower.contains("memory") || lower.contains("leak") || lower.contains("ram") || lower.contains("alloc");
-    let has_api = lower.contains("api") || lower.contains("http") || lower.contains("endpoint") || lower.contains("rest");
+    let has_auth = lower.contains("auth")
+        || lower.contains("login")
+        || lower.contains("token")
+        || lower.contains("jwt")
+        || lower.contains("session")
+        || lower.contains("permission");
+    let has_security = lower.contains("security")
+        || lower.contains("keamanan")
+        || lower.contains("vulnerability")
+        || lower.contains("cve")
+        || lower.contains("injection")
+        || lower.contains("sanitiz");
+    let has_perf = lower.contains("performa")
+        || lower.contains("performance")
+        || lower.contains("speed")
+        || lower.contains("latency")
+        || lower.contains("slow")
+        || lower.contains("cepat");
+    let has_db = lower.contains("db")
+        || lower.contains("database")
+        || lower.contains("query")
+        || lower.contains("sql")
+        || lower.contains("orm")
+        || lower.contains("n+1");
+    let has_memory = lower.contains("memory")
+        || lower.contains("leak")
+        || lower.contains("ram")
+        || lower.contains("alloc");
+    let has_api = lower.contains("api")
+        || lower.contains("http")
+        || lower.contains("endpoint")
+        || lower.contains("rest");
 
     if has_auth || has_security {
         focus_areas.push("- [SECURITY & AUTH]: Enforce constant-time token comparison, verify token signatures/expiration, prevent authorization bypass, avoid leaking sensitive credentials/tokens in logs, and scan for SQL/command injection vectors.");
@@ -570,7 +610,7 @@ pub const SETTINGS_FIELDS: &[&str] = &[
     "Audit Context Limit",
 ];
 
-pub const PROVIDER_OPTIONS: &[&str] = &["9router", "omniroute", "openai", "anthropic", "local"];
+pub const PROVIDER_OPTIONS: &[&str] = &["", "openai", "anthropic", "local"];
 pub const MASCOT_SPEED_OPTIONS: &[&str] = &["Fast", "Normal", "Slow", "Zen"];
 pub const MASCOT_SENSITIVITY_OPTIONS: &[&str] = &["High", "Balanced", "Calm"];
 pub const MASCOT_COLOR_OPTIONS: &[&str] = &[
@@ -873,8 +913,12 @@ impl CockpitApp {
         chat_state.select(Some(chat_lines.len().saturating_sub(1)));
 
         let default_proj = snap.tracked_projects.first();
-        let init_folder = default_proj.map(|p| p.path.clone()).unwrap_or_else(|| ".".to_string());
-        let init_name = default_proj.map(|p| p.name.clone()).unwrap_or_else(|| "current".to_string());
+        let init_folder = default_proj
+            .map(|p| p.path.clone())
+            .unwrap_or_else(|| ".".to_string());
+        let init_name = default_proj
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "current".to_string());
         let init_prompt = "cek security auth dan performa query database".to_string();
         let init_tuned = tune_audit_prompt(&init_prompt, &init_name, &init_folder);
 
@@ -960,7 +1004,8 @@ impl CockpitApp {
             term_output: vec![
                 "=== CAShell Terminal & Quick Runner ===".to_string(),
                 "Execute local shell commands or route commands to fleet servers.".to_string(),
-                "Type command (e.g. 'cas doctor', 'uptime', 'docker ps') and press Enter.".to_string(),
+                "Type command (e.g. 'cas doctor', 'uptime', 'docker ps') and press Enter."
+                    .to_string(),
             ],
             term_busy: false,
             term_scroll: 0,
@@ -1052,7 +1097,8 @@ impl CockpitApp {
             site_import_name: String::new(),
             site_import_domain: String::new(),
 
-            is_locked: cfg.security.require_password && !cfg.security.master_password_hash.is_empty(),
+            is_locked: cfg.security.require_password
+                && !cfg.security.master_password_hash.is_empty(),
             lock_password_buf: String::new(),
             lock_error_msg: None,
             lock_mask_visible: false,
@@ -1132,12 +1178,18 @@ impl CockpitApp {
             self.set_notification("⚠ No containers to start");
             return;
         }
-        let idx = self.selected_container.min(self.latest_snap.docker_containers.len() - 1);
+        let idx = self
+            .selected_container
+            .min(self.latest_snap.docker_containers.len() - 1);
         let name = self.latest_snap.docker_containers[idx].name.clone();
         let out = std::process::Command::new("docker")
             .args(["start", &name])
             .output()
-            .or_else(|_| std::process::Command::new("podman").args(["start", &name]).output());
+            .or_else(|_| {
+                std::process::Command::new("podman")
+                    .args(["start", &name])
+                    .output()
+            });
         match out {
             Ok(o) if o.status.success() => {
                 self.latest_snap.docker_containers[idx].state = "running".to_string();
@@ -1159,12 +1211,18 @@ impl CockpitApp {
             self.set_notification("⚠ No containers to stop");
             return;
         }
-        let idx = self.selected_container.min(self.latest_snap.docker_containers.len() - 1);
+        let idx = self
+            .selected_container
+            .min(self.latest_snap.docker_containers.len() - 1);
         let name = self.latest_snap.docker_containers[idx].name.clone();
         let out = std::process::Command::new("docker")
             .args(["stop", &name])
             .output()
-            .or_else(|_| std::process::Command::new("podman").args(["stop", &name]).output());
+            .or_else(|_| {
+                std::process::Command::new("podman")
+                    .args(["stop", &name])
+                    .output()
+            });
         match out {
             Ok(o) if o.status.success() => {
                 self.latest_snap.docker_containers[idx].state = "exited".to_string();
@@ -1186,16 +1244,23 @@ impl CockpitApp {
             self.set_notification("⚠ No containers to restart");
             return;
         }
-        let idx = self.selected_container.min(self.latest_snap.docker_containers.len() - 1);
+        let idx = self
+            .selected_container
+            .min(self.latest_snap.docker_containers.len() - 1);
         let name = self.latest_snap.docker_containers[idx].name.clone();
         let out = std::process::Command::new("docker")
             .args(["restart", &name])
             .output()
-            .or_else(|_| std::process::Command::new("podman").args(["restart", &name]).output());
+            .or_else(|_| {
+                std::process::Command::new("podman")
+                    .args(["restart", &name])
+                    .output()
+            });
         match out {
             Ok(o) if o.status.success() => {
                 self.latest_snap.docker_containers[idx].state = "running".to_string();
-                self.latest_snap.docker_containers[idx].status_detail = "Restarted (Active)".to_string();
+                self.latest_snap.docker_containers[idx].status_detail =
+                    "Restarted (Active)".to_string();
                 self.set_notification(format!("✓ Container '{name}' restarted"));
             }
             Ok(o) => {
@@ -1213,7 +1278,10 @@ impl CockpitApp {
     pub fn project_server_targets(&self) -> Vec<(String, String)> {
         let mut list = vec![("local".to_string(), "ThinkPad X1 (Local)".to_string())];
         for (name, node) in &self.cfg.daemon.nodes {
-            list.push((name.clone(), format!("{} ({})", name.to_uppercase(), node.ip)));
+            list.push((
+                name.clone(),
+                format!("{} ({})", name.to_uppercase(), node.ip),
+            ));
         }
         list
     }
@@ -1232,7 +1300,9 @@ impl CockpitApp {
             self.set_notification("⚠ No tracked projects to remove");
             return;
         }
-        let idx = self.selected_project.min(self.latest_snap.tracked_projects.len() - 1);
+        let idx = self
+            .selected_project
+            .min(self.latest_snap.tracked_projects.len() - 1);
         let project = self.latest_snap.tracked_projects[idx].clone();
         self.request_project_deletion(project.name, &project.path);
     }
@@ -1291,7 +1361,9 @@ impl CockpitApp {
     pub fn execute_kill_process(&mut self) {
         if let Some((pid, ref name)) = self.pending_kill_proc.take() {
             let sig = if self.pending_kill_force { "-9" } else { "-15" };
-            let res = std::process::Command::new("kill").args([sig, &pid.to_string()]).output();
+            let res = std::process::Command::new("kill")
+                .args([sig, &pid.to_string()])
+                .output();
             match res {
                 Ok(out) if out.status.success() => {
                     self.set_notification(format!("Terminated process {name} (PID {pid})"));
@@ -1301,7 +1373,10 @@ impl CockpitApp {
                     if err.is_empty() {
                         self.set_notification(format!("Terminated process {name} (PID {pid})"));
                     } else {
-                        self.set_notification(format!("Kill error for {name} ({pid}): {}", err.trim()));
+                        self.set_notification(format!(
+                            "Kill error for {name} ({pid}): {}",
+                            err.trim()
+                        ));
                     }
                 }
                 Err(e) => {
@@ -1317,10 +1392,15 @@ impl CockpitApp {
         if self.server_probe_results.is_empty() {
             return;
         }
-        let idx = self.selected_server.min(self.server_probe_results.len() - 1);
+        let idx = self
+            .selected_server
+            .min(self.server_probe_results.len() - 1);
         let server_name = self.server_probe_results[idx].0.clone();
 
-        if server_name.starts_with("ThinkPad X1") || server_name.starts_with("Local") || server_name == "local" {
+        if server_name.starts_with("ThinkPad X1")
+            || server_name.starts_with("Local")
+            || server_name == "local"
+        {
             self.set_notification("Local machine node cannot be removed.");
             return;
         }
@@ -1333,11 +1413,15 @@ impl CockpitApp {
 
         self.server_probe_results.remove(idx);
         self.selected_server = 0;
-        self.set_notification(format!("🗑 Fleet server '{server_name}' permanently removed"));
+        self.set_notification(format!(
+            "🗑 Fleet server '{server_name}' permanently removed"
+        ));
     }
 
     fn execute_project_deletion(&mut self) {
-        let idx = self.selected_project.min(self.latest_snap.tracked_projects.len().saturating_sub(1));
+        let idx = self
+            .selected_project
+            .min(self.latest_snap.tracked_projects.len().saturating_sub(1));
         let (path, name) = match self.latest_snap.tracked_projects.get(idx) {
             Some(p) => (p.path.clone(), p.name.clone()),
             None => {
@@ -1349,7 +1433,13 @@ impl CockpitApp {
         if let Some(ref d) = self.db {
             let _ = d.delete_tracked_project(&path);
         }
-        if let Some(pos) = self.cfg.workspace.custom_projects.iter().position(|p| *p == path) {
+        if let Some(pos) = self
+            .cfg
+            .workspace
+            .custom_projects
+            .iter()
+            .position(|p| *p == path)
+        {
             self.cfg.workspace.custom_projects.remove(pos);
             self.save_config_silent();
         }
@@ -1362,13 +1452,19 @@ impl CockpitApp {
         if self.latest_snap.docker_containers.is_empty() {
             return;
         }
-        let idx = self.selected_container.min(self.latest_snap.docker_containers.len() - 1);
+        let idx = self
+            .selected_container
+            .min(self.latest_snap.docker_containers.len() - 1);
         let name = self.latest_snap.docker_containers[idx].name.clone();
 
         let out = std::process::Command::new("docker")
             .args(["rm", "-f", &name])
             .output()
-            .or_else(|_| std::process::Command::new("podman").args(["rm", "-f", &name]).output());
+            .or_else(|_| {
+                std::process::Command::new("podman")
+                    .args(["rm", "-f", &name])
+                    .output()
+            });
         if let Ok(o) = out {
             if o.status.success() {
                 self.set_notification(format!("🗑 Container '{name}' destroyed"));
@@ -1388,16 +1484,30 @@ impl CockpitApp {
         if self.latest_snap.uptime_monitors.is_empty() {
             return;
         }
-        let idx = self.selected_monitor.min(self.latest_snap.uptime_monitors.len() - 1);
+        let idx = self
+            .selected_monitor
+            .min(self.latest_snap.uptime_monitors.len() - 1);
         let monitor_name = self.latest_snap.uptime_monitors[idx].name.clone();
 
         // Permanently record the deletion so the probe engine (systat.rs)
         // will not re-create this monitor from default_targets on the next tick.
-        if !self.cfg.uptime.disabled_monitors.iter().any(|d| *d == monitor_name) {
+        if !self
+            .cfg
+            .uptime
+            .disabled_monitors
+            .iter()
+            .any(|d| *d == monitor_name)
+        {
             self.cfg.uptime.disabled_monitors.push(monitor_name.clone());
         }
 
-        if let Some(pos) = self.cfg.uptime.custom_monitors.iter().position(|m| m.name == monitor_name) {
+        if let Some(pos) = self
+            .cfg
+            .uptime
+            .custom_monitors
+            .iter()
+            .position(|m| m.name == monitor_name)
+        {
             self.cfg.uptime.custom_monitors.remove(pos);
         }
         self.save_config_silent();
@@ -1457,7 +1567,9 @@ impl CockpitApp {
             self.set_notification("⚠ No tracked projects to edit");
             return;
         }
-        let idx = self.selected_project.min(self.latest_snap.tracked_projects.len() - 1);
+        let idx = self
+            .selected_project
+            .min(self.latest_snap.tracked_projects.len() - 1);
         let project = &self.latest_snap.tracked_projects[idx];
         self.project_path_buf = project.path.clone();
         self.project_name_buf = project.name.clone();
@@ -1474,7 +1586,9 @@ impl CockpitApp {
             self.set_notification("⚠ No tracked projects to clone");
             return;
         }
-        let idx = self.selected_project.min(self.latest_snap.tracked_projects.len() - 1);
+        let idx = self
+            .selected_project
+            .min(self.latest_snap.tracked_projects.len() - 1);
         let project = &self.latest_snap.tracked_projects[idx];
         let new_name = format!("{}-copy", project.name);
         let new_path = format!("{}-copy", project.path);
@@ -1489,7 +1603,9 @@ impl CockpitApp {
             self.set_notification("⚠ No containers to remove");
             return;
         }
-        let idx = self.selected_container.min(self.latest_snap.docker_containers.len() - 1);
+        let idx = self
+            .selected_container
+            .min(self.latest_snap.docker_containers.len() - 1);
         let name = self.latest_snap.docker_containers[idx].name.clone();
         self.request_container_deletion(name);
     }
@@ -1505,7 +1621,9 @@ impl CockpitApp {
             self.set_notification("⚠ No containers to edit");
             return;
         }
-        let idx = self.selected_container.min(self.latest_snap.docker_containers.len() - 1);
+        let idx = self
+            .selected_container
+            .min(self.latest_snap.docker_containers.len() - 1);
         let container = &self.latest_snap.docker_containers[idx];
 
         self.container_name_buf = container.name.clone();
@@ -1521,7 +1639,9 @@ impl CockpitApp {
             self.set_notification("⚠ No uptime monitors to remove");
             return;
         }
-        let idx = self.selected_monitor.min(self.latest_snap.uptime_monitors.len() - 1);
+        let idx = self
+            .selected_monitor
+            .min(self.latest_snap.uptime_monitors.len() - 1);
         let monitor_name = self.latest_snap.uptime_monitors[idx].name.clone();
         self.request_monitor_deletion(monitor_name);
     }
@@ -1537,7 +1657,9 @@ impl CockpitApp {
             self.set_notification("⚠ No uptime monitors to edit");
             return;
         }
-        let idx = self.selected_monitor.min(self.latest_snap.uptime_monitors.len() - 1);
+        let idx = self
+            .selected_monitor
+            .min(self.latest_snap.uptime_monitors.len() - 1);
         let monitor = &self.latest_snap.uptime_monitors[idx];
 
         self.monitor_name_buf = monitor.name.clone();
@@ -1552,17 +1674,22 @@ impl CockpitApp {
             self.set_notification("⚠ No uptime monitors to clone");
             return;
         }
-        let idx = self.selected_monitor.min(self.latest_snap.uptime_monitors.len() - 1);
+        let idx = self
+            .selected_monitor
+            .min(self.latest_snap.uptime_monitors.len() - 1);
         let monitor = &self.latest_snap.uptime_monitors[idx];
         let new_name = format!("{}-copy", monitor.name);
         if let Some(ref d) = self.db {
             let _ = d.add_uptime_monitor(&new_name, &monitor.target);
         }
-        self.cfg.uptime.custom_monitors.push(crate::config::UptimeMonitorConfig {
-            name: new_name.clone(),
-            target: monitor.target.clone(),
-            group: monitor.group.clone(),
-        });
+        self.cfg
+            .uptime
+            .custom_monitors
+            .push(crate::config::UptimeMonitorConfig {
+                name: new_name.clone(),
+                target: monitor.target.clone(),
+                group: monitor.group.clone(),
+            });
         self.save_config_silent();
         self.set_notification(format!("✓ Cloned uptime monitor as '{new_name}'"));
     }
@@ -1572,21 +1699,24 @@ impl CockpitApp {
             self.set_notification("⚠ No fleet servers to test");
             return;
         }
-        let idx = self.selected_server.min(self.server_probe_results.len() - 1);
+        let idx = self
+            .selected_server
+            .min(self.server_probe_results.len() - 1);
         let server_name = self.server_probe_results[idx].0.clone();
 
-        let (ip, user, port) = if server_name.eq_ignore_ascii_case("Local") || server_name.starts_with("ThinkPad") {
-            let default_user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
-            ("127.0.0.1".to_string(), default_user, 22u16)
-        } else if let Some(cfg_node) = self.cfg.daemon.nodes.get(&server_name) {
-            (
-                cfg_node.ip.clone(),
-                cfg_node.user.clone(),
-                cfg_node.services.first().map(|s| s.port).unwrap_or(22),
-            )
-        } else {
-            ("unknown".to_string(), "unknown".to_string(), 22u16)
-        };
+        let (ip, user, port) =
+            if server_name.eq_ignore_ascii_case("Local") || server_name.starts_with("ThinkPad") {
+                let default_user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
+                ("127.0.0.1".to_string(), default_user, 22u16)
+            } else if let Some(cfg_node) = self.cfg.daemon.nodes.get(&server_name) {
+                (
+                    cfg_node.ip.clone(),
+                    cfg_node.user.clone(),
+                    cfg_node.services.first().map(|s| s.port).unwrap_or(22),
+                )
+            } else {
+                ("unknown".to_string(), "unknown".to_string(), 22u16)
+            };
 
         let outcome = {
             let addr_str = format!("{ip}:{port}");
@@ -1599,7 +1729,9 @@ impl CockpitApp {
                             "✓ SSH endpoint {server_name} ({user}@{ip}:{port}) REACHABLE in {elapsed}ms",
                         )
                     }
-                    Err(e) => format!("✗ SSH endpoint {server_name} ({user}@{ip}:{port}) unreachable: {e}"),
+                    Err(e) => format!(
+                        "✗ SSH endpoint {server_name} ({user}@{ip}:{port}) unreachable: {e}"
+                    ),
                 }
             } else {
                 format!("✗ Invalid SSH endpoint for {server_name} ({ip}:{port})")
@@ -1614,7 +1746,9 @@ impl CockpitApp {
             self.set_notification("⚠ No fleet servers to remove");
             return;
         }
-        let idx = self.selected_server.min(self.server_probe_results.len() - 1);
+        let idx = self
+            .selected_server
+            .min(self.server_probe_results.len() - 1);
         let server_name = self.server_probe_results[idx].0.clone();
         if server_name.starts_with("ThinkPad X1") || server_name.starts_with("Local") {
             self.set_notification("Node 'ThinkPad X1 (Local)' is a hardcoded system fleet node and cannot be removed.");
@@ -1688,18 +1822,23 @@ impl CockpitApp {
                 {
                     let raw = String::from_utf8_lossy(&out.stdout);
                     for l in raw.lines() {
-                        let level = if l.contains("error") || l.contains("fail") || l.contains("ERR") {
-                            "ERROR"
-                        } else if l.contains("warn") || l.contains("WARN") {
-                            "WARN"
-                        } else {
-                            "INFO"
-                        };
+                        let level =
+                            if l.contains("error") || l.contains("fail") || l.contains("ERR") {
+                                "ERROR"
+                            } else if l.contains("warn") || l.contains("WARN") {
+                                "WARN"
+                            } else {
+                                "INFO"
+                            };
                         lines.push((level.to_string(), "journald".to_string(), l.to_string()));
                     }
                 }
                 if lines.is_empty() {
-                    lines.push(("INFO".to_string(), "journald".to_string(), "System journal is clean. No active alerts.".to_string()));
+                    lines.push((
+                        "INFO".to_string(),
+                        "journald".to_string(),
+                        "System journal is clean. No active alerts.".to_string(),
+                    ));
                 }
             }
             LogSource::Docker => {
@@ -1717,14 +1856,22 @@ impl CockpitApp {
                             {
                                 let log_raw = String::from_utf8_lossy(&logs_out.stdout);
                                 for l in log_raw.lines() {
-                                    lines.push(("INFO".to_string(), format!("docker:{name}"), l.to_string()));
+                                    lines.push((
+                                        "INFO".to_string(),
+                                        format!("docker:{name}"),
+                                        l.to_string(),
+                                    ));
                                 }
                             }
                         }
                     }
                 }
                 if lines.is_empty() {
-                    lines.push(("INFO".to_string(), "docker".to_string(), "No active docker containers logging.".to_string()));
+                    lines.push((
+                        "INFO".to_string(),
+                        "docker".to_string(),
+                        "No active docker containers logging.".to_string(),
+                    ));
                 }
             }
             LogSource::Agents => {
@@ -1736,7 +1883,11 @@ impl CockpitApp {
                     }
                 }
                 if lines.is_empty() {
-                    lines.push(("INFO".to_string(), "casheld".to_string(), "No agent system events recorded in SQLite.".to_string()));
+                    lines.push((
+                        "INFO".to_string(),
+                        "casheld".to_string(),
+                        "No agent system events recorded in SQLite.".to_string(),
+                    ));
                 }
             }
         }
@@ -1753,7 +1904,9 @@ impl CockpitApp {
 
         if cmd == "/disk" || cmd == "/disk health" || cmd == "disk health" || cmd == "crystaldisk" {
             self.show_disk_health_modal = true;
-            self.term_output.push("💽 Opened CrystalDisk SSD & NVMe SMART Health Diagnostic modal.".to_string());
+            self.term_output.push(
+                "💽 Opened CrystalDisk SSD & NVMe SMART Health Diagnostic modal.".to_string(),
+            );
             self.set_notification("CrystalDisk SSD Diagnostic opened");
             return;
         }
@@ -1767,7 +1920,12 @@ impl CockpitApp {
         let output = if let Some(ref r) = self.term_remote {
             if let Some(node) = self.cfg.daemon.nodes.get(r) {
                 std::process::Command::new("ssh")
-                    .args(["-o", "ConnectTimeout=3", &format!("{}@{}", node.user, node.ip), &cmd])
+                    .args([
+                        "-o",
+                        "ConnectTimeout=3",
+                        &format!("{}@{}", node.user, node.ip),
+                        &cmd,
+                    ])
                     .output()
             } else {
                 std::process::Command::new("sh").args(["-c", &cmd]).output()
@@ -1787,7 +1945,10 @@ impl CockpitApp {
                     self.term_output.push(format!("! {line}"));
                 }
                 if stdout.is_empty() && stderr.is_empty() {
-                    self.term_output.push(format!("(Process exited with code {})", o.status.code().unwrap_or(0)));
+                    self.term_output.push(format!(
+                        "(Process exited with code {})",
+                        o.status.code().unwrap_or(0)
+                    ));
                 }
             }
             Err(e) => {
@@ -1809,7 +1970,8 @@ impl CockpitApp {
             port: Some(20128),
             status: ServiceStatus::Probing,
             latency_ms: None,
-            details: "Unified AI Proxy routing to ZA126_PRO / Omniroute / OpenAI / Anthropic".to_string(),
+            details: "Unified AI Proxy routing to ZA126_PRO / Omniroute / OpenAI / Anthropic"
+                .to_string(),
         });
 
         // 2. caterm
@@ -1863,7 +2025,9 @@ impl CockpitApp {
             port: Some(8083),
             status: ServiceStatus::Probing,
             latency_ms: None,
-            details: format!("Global Computing Coordinator / Dispatcher (Coolify UUID: {gcc_uuid})"),
+            details: format!(
+                "Global Computing Coordinator / Dispatcher (Coolify UUID: {gcc_uuid})"
+            ),
         });
 
         // 5. Local Port Matrix (8081..=8088 from doctor config)
@@ -1917,11 +2081,15 @@ impl CockpitApp {
         self.latest_snap.uptime_monitors = crate::systat::probe_uptime_monitors();
         for app in &mut self.apps {
             if let Some(port) = app.port {
-                let target_ip = if app.target.starts_with("http") || app.target.starts_with("coolify:") {
-                    "127.0.0.1"
-                } else {
-                    app.target.split_once(':').map(|(host, _)| host).unwrap_or("127.0.0.1")
-                };
+                let target_ip =
+                    if app.target.starts_with("http") || app.target.starts_with("coolify:") {
+                        "127.0.0.1"
+                    } else {
+                        app.target
+                            .split_once(':')
+                            .map(|(host, _)| host)
+                            .unwrap_or("127.0.0.1")
+                    };
                 let addr: Option<SocketAddr> = format!("{target_ip}:{port}").parse().ok();
                 if let Some(addr) = addr {
                     let start = Instant::now();
@@ -1971,11 +2139,8 @@ impl CockpitApp {
                         if filename.starts_with("Audit_") && filename.ends_with(".md") {
                             let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
                             let content = fs::read_to_string(&path).unwrap_or_default();
-                            let preview: Vec<String> = content
-                                .lines()
-                                .take(60)
-                                .map(|l| l.to_string())
-                                .collect();
+                            let preview: Vec<String> =
+                                content.lines().take(60).map(|l| l.to_string()).collect();
 
                             // Simple count of findings tags
                             let findings_count = content.matches("### [").count()
@@ -2044,10 +2209,18 @@ impl CockpitApp {
         }
 
         if projects.is_empty() {
-            projects.push((std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_else(|_| ".".into()), "project".into()));
+            projects.push((
+                std::env::current_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| ".".into()),
+                "project".into(),
+            ));
         }
 
-        if let Some(idx) = projects.iter().position(|(p, _)| p == &self.audit_folder_path) {
+        if let Some(idx) = projects
+            .iter()
+            .position(|(p, _)| p == &self.audit_folder_path)
+        {
             self.audit_selected_project_idx = idx;
         }
 
@@ -2063,10 +2236,15 @@ impl CockpitApp {
                     self.audit_selected_history_idx = self.audit_db_history.len().saturating_sub(1);
                 }
 
-                if let Some(sel_report) = self.audit_db_history.get(self.audit_selected_history_idx) {
+                if let Some(sel_report) = self.audit_db_history.get(self.audit_selected_history_idx)
+                {
                     self.audit_preview_markdown = sel_report.report_markdown.clone();
                     self.audit_preview_score = sel_report.score;
-                    let total_findings = (sel_report.critical_count + sel_report.high_count + sel_report.medium_count + sel_report.low_count + sel_report.info_count) as usize;
+                    let total_findings = (sel_report.critical_count
+                        + sel_report.high_count
+                        + sel_report.medium_count
+                        + sel_report.low_count
+                        + sel_report.info_count) as usize;
                     self.audit_preview_findings_count = total_findings;
                 } else {
                     self.audit_preview_markdown = String::new();
@@ -2080,8 +2258,11 @@ impl CockpitApp {
     /// Automatically transforms the natural chat prompt into a high-signal tuned audit prompt.
     pub fn tune_audit_directive(&mut self) {
         if !self.audit_natural_prompt.trim().is_empty() {
-            self.audit_tuned_prompt =
-                tune_audit_prompt(&self.audit_natural_prompt, &self.audit_project_name, &self.audit_folder_path);
+            self.audit_tuned_prompt = tune_audit_prompt(
+                &self.audit_natural_prompt,
+                &self.audit_project_name,
+                &self.audit_folder_path,
+            );
             self.audit_step = AuditStep::PromptTuning;
             self.set_notification("Prompt tuned: high-signal audit directive generated");
         }
@@ -2112,11 +2293,7 @@ impl CockpitApp {
             return;
         }
         let cur = self.audit_selected_project_idx;
-        let prev = if cur == 0 {
-            folders.len() - 1
-        } else {
-            cur - 1
-        };
+        let prev = if cur == 0 { folders.len() - 1 } else { cur - 1 };
         self.switch_audit_project(prev);
     }
 
@@ -2161,7 +2338,9 @@ impl CockpitApp {
                 &chat_id,
                 "✅ CAShell Test Alert: Uptime Monitor OK — all endpoints reachable",
             );
-            self.set_notification("📨 Test Telegram alert sent! Check your Telegram if it's configured.");
+            self.set_notification(
+                "📨 Test Telegram alert sent! Check your Telegram if it's configured.",
+            );
         }
     }
 
@@ -2173,9 +2352,16 @@ impl CockpitApp {
         }
 
         // 1. Try remediation config if defined
-        let remediation_cmd = self.cfg.daemon.remediation.get(trimmed)
+        let remediation_cmd = self
+            .cfg
+            .daemon
+            .remediation
+            .get(trimmed)
             .or_else(|| {
-                self.cfg.daemon.remediation.iter()
+                self.cfg
+                    .daemon
+                    .remediation
+                    .iter()
                     .find(|(k, _)| k.ends_with(&format!(".{trimmed}")))
                     .map(|(_, v)| v)
             })
@@ -2203,7 +2389,9 @@ impl CockpitApp {
         match result {
             Ok(out) if out.status.success() => {
                 self.set_notification(format!("✓ Service '{trimmed}' restarted"));
-                self.add_ai_response(&format!("✅ Fleet: Service '{trimmed}' successfully restarted."));
+                self.add_ai_response(&format!(
+                    "✅ Fleet: Service '{trimmed}' successfully restarted."
+                ));
                 self.sample_system();
             }
             Ok(out) => {
@@ -2215,7 +2403,9 @@ impl CockpitApp {
                 };
                 let short_err = err_msg.lines().next().unwrap_or("Non-zero exit");
                 self.set_notification(format!("✗ Failed to restart '{trimmed}'"));
-                self.add_ai_response(&format!("✗ Fleet: Failed to restart '{trimmed}': {short_err}"));
+                self.add_ai_response(&format!(
+                    "✗ Fleet: Failed to restart '{trimmed}': {short_err}"
+                ));
             }
             Err(e) => {
                 self.set_notification(format!("✗ Error restarting '{trimmed}'"));
@@ -2278,7 +2468,9 @@ impl CockpitApp {
 
     pub fn import_all_landing_sites(&mut self) {
         // Look for custom import file first: ~/.config/cashell/profile.toml or sites.toml
-        let config_dir = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".config")).join("cashell");
+        let config_dir = dirs::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from(".config"))
+            .join("cashell");
         let profile_path = config_dir.join("profile.toml");
         let sites_path = config_dir.join("sites.toml");
 
@@ -2295,11 +2487,21 @@ impl CockpitApp {
                 Ok(content) => {
                     let mut imported = 0;
                     if let Ok(val) = toml::from_str::<toml::Value>(&content) {
-                        if let Some(sites) = val.get("analytics_websites").and_then(|w| w.as_array()) {
+                        if let Some(sites) =
+                            val.get("analytics_websites").and_then(|w| w.as_array())
+                        {
                             if let Some(ref d) = self.db {
                                 for s in sites {
-                                    if let (Some(name), Some(domain)) = (s.get("name").and_then(|v| v.as_str()), s.get("domain").and_then(|v| v.as_str())) {
-                                        let id = s.get("id").and_then(|v| v.as_str()).unwrap_or(name).to_lowercase().replace(' ', "-");
+                                    if let (Some(name), Some(domain)) = (
+                                        s.get("name").and_then(|v| v.as_str()),
+                                        s.get("domain").and_then(|v| v.as_str()),
+                                    ) {
+                                        let id = s
+                                            .get("id")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or(name)
+                                            .to_lowercase()
+                                            .replace(' ', "-");
                                         let _ = d.add_analytic_site(&id, name, domain);
                                         imported += 1;
                                     }
@@ -2308,7 +2510,10 @@ impl CockpitApp {
                         }
                     }
                     self.sample_system();
-                    self.set_notification(format!("✓ Imported {imported} sites from {}", path.display()));
+                    self.set_notification(format!(
+                        "✓ Imported {imported} sites from {}",
+                        path.display()
+                    ));
                 }
                 Err(e) => {
                     self.set_notification(format!("✗ Failed to read {}: {e}", path.display()));
@@ -2321,12 +2526,18 @@ impl CockpitApp {
 
     pub fn export_analytics_data_json(&mut self) {
         if let Some(ref d) = self.db {
-            let path = dirs::config_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("/home/cecepazhar/.config"))
-                .join("cashell/analytics_export.json");
+            let config_dir =
+                dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".config"));
+            let path = config_dir.join("cashell/analytics_export.json");
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
             match d.export_analytics_json(&path.to_string_lossy()) {
                 Ok(count) => {
-                    self.set_notification(format!("✓ Exported {count} events to {}", path.display()));
+                    self.set_notification(format!(
+                        "✓ Exported {count} events to {}",
+                        path.display()
+                    ));
                 }
                 Err(e) => {
                     self.set_notification(format!("✗ Export JSON failed: {e}"));
@@ -2337,12 +2548,18 @@ impl CockpitApp {
 
     pub fn export_analytics_data_csv(&mut self) {
         if let Some(ref d) = self.db {
-            let path = dirs::config_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("/home/cecepazhar/.config"))
-                .join("cashell/analytics_export.csv");
+            let config_dir =
+                dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".config"));
+            let path = config_dir.join("cashell/analytics_export.csv");
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
             match d.export_analytics_csv(&path.to_string_lossy()) {
                 Ok(count) => {
-                    self.set_notification(format!("✓ Exported {count} events to {}", path.display()));
+                    self.set_notification(format!(
+                        "✓ Exported {count} events to {}",
+                        path.display()
+                    ));
                 }
                 Err(e) => {
                     self.set_notification(format!("✗ Export CSV failed: {e}"));
@@ -2354,7 +2571,9 @@ impl CockpitApp {
     pub fn remove_selected_analytics_site(&mut self) {
         let sites = self.analytic_sites();
         if self.analytics_selected_site == 0 || self.analytics_selected_site >= sites.len() {
-            self.set_notification("⚠ Select a specific website to remove (cannot remove All Sites filter)");
+            self.set_notification(
+                "⚠ Select a specific website to remove (cannot remove All Sites filter)",
+            );
             return;
         }
         let site = &sites[self.analytics_selected_site];
@@ -2393,14 +2612,20 @@ impl CockpitApp {
 
     pub fn simulate_analytics_pageview(&mut self) {
         if let Some(ref d) = self.db {
-            let sites = ["caterm", "fathstore", "caui", "cecepazhar.com", "camark"];
+            let sites = ["example", "docs", "blog", "site", "demo"];
             let site = self.analytics_site_filter.clone().unwrap_or_else(|| {
-                let now_s = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                let now_s = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
                 sites[(now_s % sites.len() as u64) as usize].to_string()
             });
 
             let pages = ["/", "/docs", "/pricing", "/features", "/download", "/blog"];
-            let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+            let secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
             let page = pages[(secs % pages.len() as u64) as usize];
             let browsers = ["Chrome", "Firefox", "Safari", "Edge"];
             let browser = browsers[(secs % browsers.len() as u64) as usize];
@@ -2410,7 +2635,12 @@ impl CockpitApp {
             let dev = devs[(secs % 3 == 0) as usize];
             let countries = ["ID", "SG", "US", "MY", "JP", "GB"];
             let country = countries[(secs % countries.len() as u64) as usize];
-            let refs = ["https://google.com", "https://x.com", "https://github.com", "Direct"];
+            let refs = [
+                "https://google.com",
+                "https://x.com",
+                "https://github.com",
+                "Direct",
+            ];
             let referrer = refs[(secs % refs.len() as u64) as usize];
             let sess = format!("sess_{}", secs / 120);
             let v_hash = format!("sim_hash_{}", secs % 19);
@@ -2429,7 +2659,9 @@ impl CockpitApp {
             );
 
             self.sample_system();
-            self.set_notification(format!("Simulated pageview: {site}{page} from {country} ({browser}/{os_name})"));
+            self.set_notification(format!(
+                "Simulated pageview: {site}{page} from {country} ({browser}/{os_name})"
+            ));
         }
     }
 
@@ -2503,7 +2735,8 @@ impl CockpitApp {
             3 => {
                 // Theme
                 let current = &self.cfg.output.theme;
-                let cur_preset = catui::ThemePreset::parse(current).unwrap_or(catui::ThemePreset::CaClassic);
+                let cur_preset =
+                    catui::ThemePreset::parse(current).unwrap_or(catui::ThemePreset::CaClassic);
                 let cur_idx = THEME_OPTIONS
                     .iter()
                     .position(|&t| catui::ThemePreset::parse(t) == Some(cur_preset))
@@ -2533,11 +2766,17 @@ impl CockpitApp {
             }
             11 => {
                 self.cfg.security.require_password = !self.cfg.security.require_password;
-                if self.cfg.security.require_password && self.cfg.security.master_password_hash.is_empty() {
+                if self.cfg.security.require_password
+                    && self.cfg.security.master_password_hash.is_empty()
+                {
                     self.show_set_password_modal = true;
                 } else {
                     self.save_config_silent();
-                    let state_str = if self.cfg.security.require_password { "Enabled" } else { "Disabled" };
+                    let state_str = if self.cfg.security.require_password {
+                        "Enabled"
+                    } else {
+                        "Disabled"
+                    };
                     self.set_notification(format!("Master Password Protection: {state_str}"));
                 }
             }
@@ -2547,73 +2786,150 @@ impl CockpitApp {
             21 => {
                 self.cfg.database.auto_prune = !self.cfg.database.auto_prune;
                 self.save_config_silent();
-                let state_str = if self.cfg.database.auto_prune { "Enabled" } else { "Disabled" };
+                let state_str = if self.cfg.database.auto_prune {
+                    "Enabled"
+                } else {
+                    "Disabled"
+                };
                 self.set_notification(format!("DB Auto-Prune: {state_str}"));
             }
             22 => {
                 self.cfg.output.matrix_rain = !self.cfg.output.matrix_rain;
                 self.save_config_silent();
-                let state_str = if self.cfg.output.matrix_rain { "Enabled" } else { "Disabled" };
+                let state_str = if self.cfg.output.matrix_rain {
+                    "Enabled"
+                } else {
+                    "Disabled"
+                };
                 self.set_notification(format!("Matrix Rain Effect: {state_str}"));
             }
             23 => {
                 let cur = &self.cfg.mascot.matrix_speed;
-                let cur_idx = MATRIX_SPEED_OPTIONS.iter().position(|&s| s == cur).unwrap_or(1);
-                let next_idx = if forward { (cur_idx + 1) % MATRIX_SPEED_OPTIONS.len() } else { (cur_idx + MATRIX_SPEED_OPTIONS.len() - 1) % MATRIX_SPEED_OPTIONS.len() };
+                let cur_idx = MATRIX_SPEED_OPTIONS
+                    .iter()
+                    .position(|&s| s == cur)
+                    .unwrap_or(1);
+                let next_idx = if forward {
+                    (cur_idx + 1) % MATRIX_SPEED_OPTIONS.len()
+                } else {
+                    (cur_idx + MATRIX_SPEED_OPTIONS.len() - 1) % MATRIX_SPEED_OPTIONS.len()
+                };
                 self.cfg.mascot.matrix_speed = MATRIX_SPEED_OPTIONS[next_idx].to_string();
                 self.save_config_silent();
-                self.set_notification(format!("Matrix Rain Speed: {}", self.cfg.mascot.matrix_speed));
+                self.set_notification(format!(
+                    "Matrix Rain Speed: {}",
+                    self.cfg.mascot.matrix_speed
+                ));
             }
             24 => {
                 let cur = &self.cfg.mascot.speed;
-                let cur_idx = MASCOT_SPEED_OPTIONS.iter().position(|&s| s == cur).unwrap_or(1);
-                let next_idx = if forward { (cur_idx + 1) % MASCOT_SPEED_OPTIONS.len() } else { (cur_idx + MASCOT_SPEED_OPTIONS.len() - 1) % MASCOT_SPEED_OPTIONS.len() };
+                let cur_idx = MASCOT_SPEED_OPTIONS
+                    .iter()
+                    .position(|&s| s == cur)
+                    .unwrap_or(1);
+                let next_idx = if forward {
+                    (cur_idx + 1) % MASCOT_SPEED_OPTIONS.len()
+                } else {
+                    (cur_idx + MASCOT_SPEED_OPTIONS.len() - 1) % MASCOT_SPEED_OPTIONS.len()
+                };
                 self.cfg.mascot.speed = MASCOT_SPEED_OPTIONS[next_idx].to_string();
                 self.save_config_silent();
-                self.set_notification(format!("Mascot Expression Speed: {}", self.cfg.mascot.speed));
+                self.set_notification(format!(
+                    "Mascot Expression Speed: {}",
+                    self.cfg.mascot.speed
+                ));
             }
             25 => {
                 let cur = &self.cfg.mascot.sensitivity;
-                let cur_idx = MASCOT_SENSITIVITY_OPTIONS.iter().position(|&s| s == cur).unwrap_or(1);
-                let next_idx = if forward { (cur_idx + 1) % MASCOT_SENSITIVITY_OPTIONS.len() } else { (cur_idx + MASCOT_SENSITIVITY_OPTIONS.len() - 1) % MASCOT_SENSITIVITY_OPTIONS.len() };
+                let cur_idx = MASCOT_SENSITIVITY_OPTIONS
+                    .iter()
+                    .position(|&s| s == cur)
+                    .unwrap_or(1);
+                let next_idx = if forward {
+                    (cur_idx + 1) % MASCOT_SENSITIVITY_OPTIONS.len()
+                } else {
+                    (cur_idx + MASCOT_SENSITIVITY_OPTIONS.len() - 1)
+                        % MASCOT_SENSITIVITY_OPTIONS.len()
+                };
                 self.cfg.mascot.sensitivity = MASCOT_SENSITIVITY_OPTIONS[next_idx].to_string();
                 self.save_config_silent();
-                self.set_notification(format!("Mascot Hardware Sensitivity: {}", self.cfg.mascot.sensitivity));
+                self.set_notification(format!(
+                    "Mascot Hardware Sensitivity: {}",
+                    self.cfg.mascot.sensitivity
+                ));
             }
             26 => {
                 self.cfg.mascot.condition_tracking = !self.cfg.mascot.condition_tracking;
                 self.save_config_silent();
-                let state_str = if self.cfg.mascot.condition_tracking { "Enabled (Reflects CPU/RAM/Outage)" } else { "Disabled (Neutral)" };
+                let state_str = if self.cfg.mascot.condition_tracking {
+                    "Enabled (Reflects CPU/RAM/Outage)"
+                } else {
+                    "Disabled (Neutral)"
+                };
                 self.set_notification(format!("Mascot Hardware Tracking: {state_str}"));
             }
             27 => {
                 let cur = &self.cfg.mascot.color_scheme;
-                let cur_idx = MASCOT_COLOR_OPTIONS.iter().position(|&s| s == cur).unwrap_or(0);
-                let next_idx = if forward { (cur_idx + 1) % MASCOT_COLOR_OPTIONS.len() } else { (cur_idx + MASCOT_COLOR_OPTIONS.len() - 1) % MASCOT_COLOR_OPTIONS.len() };
+                let cur_idx = MASCOT_COLOR_OPTIONS
+                    .iter()
+                    .position(|&s| s == cur)
+                    .unwrap_or(0);
+                let next_idx = if forward {
+                    (cur_idx + 1) % MASCOT_COLOR_OPTIONS.len()
+                } else {
+                    (cur_idx + MASCOT_COLOR_OPTIONS.len() - 1) % MASCOT_COLOR_OPTIONS.len()
+                };
                 self.cfg.mascot.color_scheme = MASCOT_COLOR_OPTIONS[next_idx].to_string();
                 self.save_config_silent();
-                self.set_notification(format!("Mascot Color Scheme: {}", self.cfg.mascot.color_scheme));
+                self.set_notification(format!(
+                    "Mascot Color Scheme: {}",
+                    self.cfg.mascot.color_scheme
+                ));
             }
             28 => {
                 let cur = &self.cfg.mascot.animation_style;
-                let cur_idx = MASCOT_ANIMATION_OPTIONS.iter().position(|&s| s == cur).unwrap_or(0);
-                let next_idx = if forward { (cur_idx + 1) % MASCOT_ANIMATION_OPTIONS.len() } else { (cur_idx + MASCOT_ANIMATION_OPTIONS.len() - 1) % MASCOT_ANIMATION_OPTIONS.len() };
+                let cur_idx = MASCOT_ANIMATION_OPTIONS
+                    .iter()
+                    .position(|&s| s == cur)
+                    .unwrap_or(0);
+                let next_idx = if forward {
+                    (cur_idx + 1) % MASCOT_ANIMATION_OPTIONS.len()
+                } else {
+                    (cur_idx + MASCOT_ANIMATION_OPTIONS.len() - 1) % MASCOT_ANIMATION_OPTIONS.len()
+                };
                 self.cfg.mascot.animation_style = MASCOT_ANIMATION_OPTIONS[next_idx].to_string();
                 self.save_config_silent();
-                self.set_notification(format!("Mascot Animation Style: {}", self.cfg.mascot.animation_style));
+                self.set_notification(format!(
+                    "Mascot Animation Style: {}",
+                    self.cfg.mascot.animation_style
+                ));
             }
             29 => {
                 let cur = &self.cfg.mascot.render_scale;
-                let cur_idx = MASCOT_SCALE_OPTIONS.iter().position(|&s| s == cur).unwrap_or(0);
-                let next_idx = if forward { (cur_idx + 1) % MASCOT_SCALE_OPTIONS.len() } else { (cur_idx + MASCOT_SCALE_OPTIONS.len() - 1) % MASCOT_SCALE_OPTIONS.len() };
+                let cur_idx = MASCOT_SCALE_OPTIONS
+                    .iter()
+                    .position(|&s| s == cur)
+                    .unwrap_or(0);
+                let next_idx = if forward {
+                    (cur_idx + 1) % MASCOT_SCALE_OPTIONS.len()
+                } else {
+                    (cur_idx + MASCOT_SCALE_OPTIONS.len() - 1) % MASCOT_SCALE_OPTIONS.len()
+                };
                 self.cfg.mascot.render_scale = MASCOT_SCALE_OPTIONS[next_idx].to_string();
                 self.save_config_silent();
-                self.set_notification(format!("Mascot Render Scale: {}", self.cfg.mascot.render_scale));
+                self.set_notification(format!(
+                    "Mascot Render Scale: {}",
+                    self.cfg.mascot.render_scale
+                ));
             }
             30 => {
                 self.cfg.mascot.chat_avatar_enabled = !self.cfg.mascot.chat_avatar_enabled;
                 self.save_config_silent();
-                let state_str = if self.cfg.mascot.chat_avatar_enabled { "Enabled (Live Reactor & Avatars)" } else { "Disabled" };
+                let state_str = if self.cfg.mascot.chat_avatar_enabled {
+                    "Enabled (Live Reactor & Avatars)"
+                } else {
+                    "Disabled"
+                };
                 self.set_notification(format!("Mascot In AI Chat: {state_str}"));
             }
             31 => {
@@ -2653,7 +2969,8 @@ impl CockpitApp {
             }
         }
         self.chat_lines.clear();
-        self.chat_lines.push("=== Hana AI Chat (localhost:20128) ===".to_string());
+        self.chat_lines
+            .push("=== Hana AI Chat (localhost:20128) ===".to_string());
         self.chat_lines.push("Chat history cleared.".to_string());
         self.chat_state.select(Some(1));
         self.set_notification("✓ Chat history cleared from SQLite DB");
@@ -2740,7 +3057,12 @@ impl CockpitApp {
         if let Some(ref d) = self.db {
             if let Ok(Some(pet)) = d.get_active_pet() {
                 self.pet_mood = crate::pet::PetMood::Idle;
-                let _ = d.log_pet_action(pet.id, &pet.name, "Train", "Combat training & cured [ATTACK]");
+                let _ = d.log_pet_action(
+                    pet.id,
+                    &pet.name,
+                    "Train",
+                    "Combat training & cured [ATTACK]",
+                );
                 notif = Some(format!("⚔ Trained {} in combat! Mood restored.", pet.name));
             }
             if let Ok(logs) = d.get_pet_history(10) {
@@ -2810,7 +3132,9 @@ impl CockpitApp {
                 }
 
                 self.turbo_profile_active = "PURGE_CACHE".to_string();
-                self.turbo_log_buffer.push(format!("🧹 [PURGE] VFS Caches dropped. SQLite vacuumed. Docker & SSD: {summary}"));
+                self.turbo_log_buffer.push(format!(
+                    "🧹 [PURGE] VFS Caches dropped. SQLite vacuumed. Docker & SSD: {summary}"
+                ));
                 self.set_notification("🧹 Deep Memory & Storage Purge Completed");
             }
             3 => {
@@ -2836,7 +3160,8 @@ impl CockpitApp {
                     .arg("-c")
                     .arg("sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true")
                     .status();
-                self.turbo_log_buffer.push("✔ [VFS CACHE] Pagecaches, dentries & inodes flushed clean.".to_string());
+                self.turbo_log_buffer
+                    .push("✔ [VFS CACHE] Pagecaches, dentries & inodes flushed clean.".to_string());
                 self.set_notification("✔ Dropped Linux Kernel VFS Caches");
             }
             1 => {
@@ -2854,11 +3179,16 @@ impl CockpitApp {
                     .args(["builder", "prune", "-f"])
                     .output();
                 let msg = if let Ok(o) = out {
-                    String::from_utf8_lossy(&o.stdout).lines().last().unwrap_or("Done").to_string()
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .last()
+                        .unwrap_or("Done")
+                        .to_string()
                 } else {
                     "Docker not running or error".to_string()
                 };
-                self.turbo_log_buffer.push(format!("✔ [DOCKER BUILDER] {msg}"));
+                self.turbo_log_buffer
+                    .push(format!("✔ [DOCKER BUILDER] {msg}"));
                 self.set_notification("✔ Docker BuildKit Cache Pruned");
             }
             3 => {
@@ -2867,11 +3197,16 @@ impl CockpitApp {
                     .args(["image", "prune", "-f"])
                     .output();
                 let msg = if let Ok(o) = out {
-                    String::from_utf8_lossy(&o.stdout).lines().last().unwrap_or("Done").to_string()
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .last()
+                        .unwrap_or("Done")
+                        .to_string()
                 } else {
                     "Docker image prune completed".to_string()
                 };
-                self.turbo_log_buffer.push(format!("✔ [DOCKER IMAGES] {msg}"));
+                self.turbo_log_buffer
+                    .push(format!("✔ [DOCKER IMAGES] {msg}"));
                 self.set_notification("✔ Unused Docker Images Pruned");
             }
             4 => {
@@ -2880,7 +3215,10 @@ impl CockpitApp {
                     .arg("-c")
                     .arg("pgrep -f 'cashell|caorch|9router' | xargs -r renice -n -10 >/dev/null 2>&1 || true")
                     .status();
-                self.turbo_log_buffer.push("✔ [PROCESS PRIORITY] CAShell daemon & 9Router proxy elevated to nice -10.".to_string());
+                self.turbo_log_buffer.push(
+                    "✔ [PROCESS PRIORITY] CAShell daemon & 9Router proxy elevated to nice -10."
+                        .to_string(),
+                );
                 self.set_notification("✔ CA Ecosystem Processes Elevated (Nice -10)");
             }
             5 => {
@@ -2907,7 +3245,8 @@ impl CockpitApp {
                 } else {
                     "TCP CC checked".to_string()
                 };
-                self.turbo_log_buffer.push(format!("✔ [NETWORK TCP] Congestion control: {msg}"));
+                self.turbo_log_buffer
+                    .push(format!("✔ [NETWORK TCP] Congestion control: {msg}"));
                 self.set_notification(format!("✔ TCP CC: {msg}"));
             }
             7 => {
@@ -3036,7 +3375,9 @@ impl CockpitApp {
         self.pro_wizard_status_msg = None;
         self.pro_wizard_field = 0;
         self.show_pro_wizard = true;
-        self.set_notification("★ Pro Account Wizard opened (Enter: sign in | t: 7-day trial | y: sync | Esc: close)");
+        self.set_notification(
+            "★ Pro Account Wizard opened (Enter: sign in | t: 7-day trial | y: sync | Esc: close)",
+        );
     }
 
     /// Submit the Pro login form in the wizard.
@@ -3045,7 +3386,8 @@ impl CockpitApp {
         let token = self.pro_wizard_token_buf.trim().to_string();
 
         if email.is_empty() {
-            self.pro_wizard_status_msg = Some("✗ Login email is required to activate Pro.".to_string());
+            self.pro_wizard_status_msg =
+                Some("✗ Login email is required to activate Pro.".to_string());
             return;
         }
         if !email.contains('@') {
@@ -3074,7 +3416,11 @@ impl CockpitApp {
         let _ = cache.save();
 
         self.show_pro_wizard = false;
-        let token_hint = if token.is_empty() { " (token not required)" } else { " (token set)" };
+        let token_hint = if token.is_empty() {
+            " (token not required)"
+        } else {
+            " (token set)"
+        };
         self.set_notification(format!("★ Pro account signed in: {email}{token_hint}"));
     }
 
@@ -3168,7 +3514,11 @@ impl CockpitApp {
         }
 
         let existing_cfg = if self.server_wizard_is_edit {
-            self.cfg.daemon.nodes.get(&self.server_wizard_orig_name).cloned()
+            self.cfg
+                .daemon
+                .nodes
+                .get(&self.server_wizard_orig_name)
+                .cloned()
         } else {
             None
         };
@@ -3211,7 +3561,11 @@ impl CockpitApp {
                 &format!(
                     "Fleet node '{}' {} via wizard",
                     name,
-                    if self.server_wizard_is_edit { "updated" } else { "registered" }
+                    if self.server_wizard_is_edit {
+                        "updated"
+                    } else {
+                        "registered"
+                    }
                 ),
             );
         }
@@ -3230,7 +3584,11 @@ impl CockpitApp {
             self.selected_server = pos;
         }
 
-        let action = if self.server_wizard_is_edit { "updated" } else { "added" };
+        let action = if self.server_wizard_is_edit {
+            "updated"
+        } else {
+            "added"
+        };
         self.set_notification(format!(
             "✓ Fleet node '{}' {} and auto-probed",
             name, action
@@ -3252,7 +3610,9 @@ impl CockpitApp {
             self.set_notification("⚠ No fleet servers to edit");
             return;
         }
-        let idx = self.selected_server.min(self.server_probe_results.len() - 1);
+        let idx = self
+            .selected_server
+            .min(self.server_probe_results.len() - 1);
         let server_name = self.server_probe_results[idx].0.clone();
 
         // Allow editing any server, including built‑in presets.
@@ -3278,11 +3638,21 @@ impl CockpitApp {
             self.set_notification(format!("✎ Editing fleet server '{}'", server_name));
         } else {
             // Built‑in preset not in config – construct from known preset or probe data.
-            let (ip, user, svcs) = if server_name.eq_ignore_ascii_case("Local") || server_name.starts_with("ThinkPad") {
+            let (ip, user, svcs) = if server_name.eq_ignore_ascii_case("Local")
+                || server_name.starts_with("ThinkPad")
+            {
                 let default_user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
-                ("127.0.0.1".to_string(), default_user, "http:80,ssh:22".to_string())
+                (
+                    "127.0.0.1".to_string(),
+                    default_user,
+                    "http:80,ssh:22".to_string(),
+                )
             } else {
-                ("10.0.0.1".to_string(), "root".to_string(), "http:80,ssh:22".to_string())
+                (
+                    "10.0.0.1".to_string(),
+                    "root".to_string(),
+                    "http:80,ssh:22".to_string(),
+                )
             };
             // Pre-populate self.cfg.daemon.nodes so this node is properly tracked as an existing config node.
             let parsed_svcs = self.parse_services(&svcs);
@@ -3313,7 +3683,9 @@ impl CockpitApp {
             self.set_notification("⚠ No fleet servers to clone");
             return;
         }
-        let idx = self.selected_server.min(self.server_probe_results.len() - 1);
+        let idx = self
+            .selected_server
+            .min(self.server_probe_results.len() - 1);
         let server_name = self.server_probe_results[idx].0.clone();
 
         if server_name.starts_with("ThinkPad X1") || server_name.starts_with("Local") {
@@ -3361,7 +3733,9 @@ impl CockpitApp {
             self.set_notification("⚠ No fleet servers to toggle");
             return;
         }
-        let idx = self.selected_server.min(self.server_probe_results.len() - 1);
+        let idx = self
+            .selected_server
+            .min(self.server_probe_results.len() - 1);
         let server_name = self.server_probe_results[idx].0.clone();
 
         if server_name.starts_with("ThinkPad X1") || server_name.starts_with("Local") {
@@ -3371,7 +3745,11 @@ impl CockpitApp {
 
         if let Some(cfg_node) = self.cfg.daemon.nodes.get_mut(&server_name) {
             cfg_node.active = !cfg_node.active;
-            let state = if cfg_node.active { "Active" } else { "Inactive" };
+            let state = if cfg_node.active {
+                "Active"
+            } else {
+                "Inactive"
+            };
             if self.save_config_silent() {
                 if let Some(ref d) = self.db {
                     let _ = d.log_event(
@@ -3381,10 +3759,7 @@ impl CockpitApp {
                     );
                 }
             }
-            self.set_notification(format!(
-                "⏯ Fleet server '{}' is now {state}",
-                server_name
-            ));
+            self.set_notification(format!("⏯ Fleet server '{}' is now {state}", server_name));
         } else {
             self.set_notification(format!(
                 "Fleet server '{}' is a built-in preset and cannot be toggled.",
@@ -3435,24 +3810,27 @@ impl CockpitApp {
         } else {
             expanded.clone()
         };
-        if !self.cfg.workspace.custom_projects.iter().any(|p| p == &normalized) {
+        if !self
+            .cfg
+            .workspace
+            .custom_projects
+            .iter()
+            .any(|p| p == &normalized)
+        {
             self.cfg.workspace.custom_projects.push(normalized.clone());
             self.save_config_silent();
         }
 
         // Persist to SQLite
         if let Some(ref d) = self.db {
-            let _ = d.add_tracked_project(
-                &normalized,
-                &display_name,
-                &cat,
-                "main",
-                false,
-            );
+            let _ = d.add_tracked_project(&normalized, &display_name, &cat, "main", false);
             let _ = d.log_event(
                 "INFO",
                 "cockpit",
-                &format!("Project '{}' ({}) added via add-project wizard", display_name, cat),
+                &format!(
+                    "Project '{}' ({}) added via add-project wizard",
+                    display_name, cat
+                ),
             );
         }
 
@@ -3496,7 +3874,11 @@ impl CockpitApp {
         let _ = std::process::Command::new("docker")
             .args(["rm", "-f", &name])
             .output()
-            .or_else(|_| std::process::Command::new("podman").args(["rm", "-f", &name]).output());
+            .or_else(|_| {
+                std::process::Command::new("podman")
+                    .args(["rm", "-f", &name])
+                    .output()
+            });
 
         // Build the docker/podman run command
         let mut args: Vec<String> = vec!["run".into(), "-d".into(), "--name".into(), name.clone()];
@@ -3521,12 +3903,14 @@ impl CockpitApp {
 
         let mut engine = "docker";
         let (success, detail) = match result {
-            Ok(ref out) if out.status.success() => {
-                (true, String::from_utf8_lossy(&out.stdout).trim().to_string())
-            }
-            Ok(ref out) => {
-                (false, String::from_utf8_lossy(&out.stderr).trim().to_string())
-            }
+            Ok(ref out) if out.status.success() => (
+                true,
+                String::from_utf8_lossy(&out.stdout).trim().to_string(),
+            ),
+            Ok(ref out) => (
+                false,
+                String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            ),
             Err(_) => {
                 engine = "podman";
                 let mut cmd2 = std::process::Command::new("podman");
@@ -3535,39 +3919,35 @@ impl CockpitApp {
                     Ok(ref o) if o.status.success() => {
                         (true, String::from_utf8_lossy(&o.stdout).trim().to_string())
                     }
-                    Ok(ref o) => {
-                        (false, String::from_utf8_lossy(&o.stderr).trim().to_string())
-                    }
+                    Ok(ref o) => (false, String::from_utf8_lossy(&o.stderr).trim().to_string()),
                     Err(e) => (false, e.to_string()),
                 }
             }
         };
 
         let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
-        self.cfg.docker.containers.push(crate::config::DockerContainerConfig {
-            name: name.clone(),
-            image: image.clone(),
-            ports: if port.is_empty() {
-                vec![]
-            } else {
-                vec![port.clone()]
-            },
-            env: if env.is_empty() {
-                vec![]
-            } else {
-                env.split(',').map(|s| s.trim().to_string()).collect()
-            },
-            started_at: now,
-        });
+        self.cfg
+            .docker
+            .containers
+            .push(crate::config::DockerContainerConfig {
+                name: name.clone(),
+                image: image.clone(),
+                ports: if port.is_empty() {
+                    vec![]
+                } else {
+                    vec![port.clone()]
+                },
+                env: if env.is_empty() {
+                    vec![]
+                } else {
+                    env.split(',').map(|s| s.trim().to_string()).collect()
+                },
+                started_at: now,
+            });
         self.save_config_silent();
 
         if let Some(ref d) = self.db {
-            let _ = d.add_docker_container(
-                &name,
-                &image,
-                &port,
-                &env,
-            );
+            let _ = d.add_docker_container(&name, &image, &port, &env);
             let _ = d.log_event(
                 "INFO",
                 "cockpit",
@@ -3579,16 +3959,25 @@ impl CockpitApp {
         let (state, status_detail) = if success {
             ("running".to_string(), "Just started".to_string())
         } else {
-            ("created".to_string(), if detail.is_empty() { "Engine stopped".to_string() } else { detail.clone() })
+            (
+                "created".to_string(),
+                if detail.is_empty() {
+                    "Engine stopped".to_string()
+                } else {
+                    detail.clone()
+                },
+            )
         };
 
-        self.latest_snap.docker_containers.push(crate::systat::DockerContainerInfo {
-            name: name.clone(),
-            image: image.clone(),
-            state,
-            status_detail,
-            ports: port.clone(),
-        });
+        self.latest_snap
+            .docker_containers
+            .push(crate::systat::DockerContainerInfo {
+                name: name.clone(),
+                image: image.clone(),
+                state,
+                status_detail,
+                ports: port.clone(),
+            });
 
         if success {
             self.set_notification(format!(
@@ -3596,10 +3985,7 @@ impl CockpitApp {
                 name, engine
             ));
         } else {
-            self.set_notification(format!(
-                "✓ Container '{}' configured ({})",
-                name, engine
-            ));
+            self.set_notification(format!("✓ Container '{}' configured ({})", name, engine));
         }
 
         self.show_container_wizard = false;
@@ -3615,7 +4001,11 @@ impl CockpitApp {
         let name = self.monitor_name_buf.trim().to_string();
         let url_raw = self.monitor_url_buf.trim().to_string();
         let group_raw = self.monitor_group_buf.trim().to_string();
-        let group = if group_raw.is_empty() { "Custom".to_string() } else { group_raw };
+        let group = if group_raw.is_empty() {
+            "Custom".to_string()
+        } else {
+            group_raw
+        };
 
         if name.is_empty() {
             self.set_notification("✗ Monitor name cannot be empty");
@@ -3637,20 +4027,34 @@ impl CockpitApp {
         self.cfg.uptime.disabled_monitors.retain(|d| d != &name);
 
         // If monitor exists by name, update it; otherwise check for duplicate target
-        if let Some(pos) = self.cfg.uptime.custom_monitors.iter().position(|m| m.name == name) {
+        if let Some(pos) = self
+            .cfg
+            .uptime
+            .custom_monitors
+            .iter()
+            .position(|m| m.name == name)
+        {
             self.cfg.uptime.custom_monitors[pos].target = url.clone();
             self.cfg.uptime.custom_monitors[pos].group = group.clone();
         } else {
-            let target_exists = self.cfg.uptime.custom_monitors.iter().any(|m| m.target == url);
+            let target_exists = self
+                .cfg
+                .uptime
+                .custom_monitors
+                .iter()
+                .any(|m| m.target == url);
             if target_exists {
                 self.set_notification(format!("✗ Monitor URL '{}' already exists", url));
                 return;
             }
-            self.cfg.uptime.custom_monitors.push(crate::config::UptimeMonitorConfig {
-                name: name.clone(),
-                target: url.clone(),
-                group: group.clone(),
-            });
+            self.cfg
+                .uptime
+                .custom_monitors
+                .push(crate::config::UptimeMonitorConfig {
+                    name: name.clone(),
+                    target: url.clone(),
+                    group: group.clone(),
+                });
         }
         self.save_config_silent();
 
@@ -3660,26 +4064,36 @@ impl CockpitApp {
             let _ = d.log_event(
                 "INFO",
                 "cockpit",
-                &format!("Uptime monitor '{}' ({}) updated via monitor wizard", name, url),
+                &format!(
+                    "Uptime monitor '{}' ({}) updated via monitor wizard",
+                    name, url
+                ),
             );
         }
 
         // Update in-memory snapshot
-        if let Some(m) = self.latest_snap.uptime_monitors.iter_mut().find(|m| m.name == name) {
+        if let Some(m) = self
+            .latest_snap
+            .uptime_monitors
+            .iter_mut()
+            .find(|m| m.name == name)
+        {
             m.target = url.clone();
             m.group = group.clone();
         } else {
-            self.latest_snap.uptime_monitors.push(crate::systat::UptimeMonitor {
-                name: name.clone(),
-                target: url.clone(),
-                is_up: true,
-                latency_ms: None,
-                status_code: None,
-                uptime_pct: 100.0,
-                history: vec![true],
-                group: group.clone(),
-                error: None,
-            });
+            self.latest_snap
+                .uptime_monitors
+                .push(crate::systat::UptimeMonitor {
+                    name: name.clone(),
+                    target: url.clone(),
+                    is_up: true,
+                    latency_ms: None,
+                    status_code: None,
+                    uptime_pct: 100.0,
+                    history: vec![true],
+                    group: group.clone(),
+                    error: None,
+                });
         }
 
         self.set_notification(format!("✓ Uptime monitor '{}' saved", name));
@@ -3722,7 +4136,8 @@ pub fn run(_cmd: &CockpitCommand, cfg: &Config) -> Result<()> {
     let mut app = CockpitApp::new(cfg);
 
     if let Ok((w, h)) = crossterm::terminal::size() {
-        app.is_compact = catui::layout::Breakpoint::of(Rect::new(0, 0, w, h)) == catui::layout::Breakpoint::TooSmall;
+        app.is_compact = catui::layout::Breakpoint::of(Rect::new(0, 0, w, h))
+            == catui::layout::Breakpoint::TooSmall;
     }
 
     let mut session = catui::terminal::TerminalSession::enter(catui::terminal::TerminalOptions {
@@ -3813,7 +4228,9 @@ pub fn run(_cmd: &CockpitCommand, cfg: &Config) -> Result<()> {
 
                 std::thread::sleep(Duration::from_millis(800)); // Visible blinking badge during sync
                 let _ = sync_tx.send(SyncEvent::Syncing(false));
-                let _ = sync_tx.send(SyncEvent::Message("✔ Auto-sync with GCC Coordinator finished".to_string()));
+                let _ = sync_tx.send(SyncEvent::Message(
+                    "✔ Auto-sync with GCC Coordinator finished".to_string(),
+                ));
             }
 
             // Sleep in short increments to allow graceful shutdown
@@ -3903,9 +4320,7 @@ fn event_loop<B: ratatui::backend::Backend>(
             // normalises the rest.
             match catui::event::map(event::read()?) {
                 Some(catui::event::AppEvent::Key(key)) => {
-                    if key.kind == KeyEventKind::Press
-                        && handle_key_event(key, app, terminal)?
-                    {
+                    if key.kind == KeyEventKind::Press && handle_key_event(key, app, terminal)? {
                         return Ok(());
                     }
                 }
@@ -4011,7 +4426,9 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
                     if has_token {
                         app.add_ai_response("📨 Test Telegram alert sent! Check your Telegram.");
                     } else {
-                        app.add_ai_response("⚠ Configure Telegram Bot Token & Chat ID in Settings first.");
+                        app.add_ai_response(
+                            "⚠ Configure Telegram Bot Token & Chat ID in Settings first.",
+                        );
                     }
                 }
                 "add-monitor" | "add" => {
@@ -4040,15 +4457,24 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
 
                     app.cfg.uptime.disabled_monitors.retain(|d| d != &name);
 
-                    if let Some(pos) = app.cfg.uptime.custom_monitors.iter().position(|m| m.name == name) {
+                    if let Some(pos) = app
+                        .cfg
+                        .uptime
+                        .custom_monitors
+                        .iter()
+                        .position(|m| m.name == name)
+                    {
                         app.cfg.uptime.custom_monitors[pos].target = url.clone();
                         app.cfg.uptime.custom_monitors[pos].group = group.clone();
                     } else {
-                        app.cfg.uptime.custom_monitors.push(crate::config::UptimeMonitorConfig {
-                            name: name.clone(),
-                            target: url.clone(),
-                            group: group.clone(),
-                        });
+                        app.cfg
+                            .uptime
+                            .custom_monitors
+                            .push(crate::config::UptimeMonitorConfig {
+                                name: name.clone(),
+                                target: url.clone(),
+                                group: group.clone(),
+                            });
                     }
                     app.save_config_silent();
 
@@ -4061,21 +4487,28 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
                         );
                     }
 
-                    if let Some(m) = app.latest_snap.uptime_monitors.iter_mut().find(|m| m.name == name) {
+                    if let Some(m) = app
+                        .latest_snap
+                        .uptime_monitors
+                        .iter_mut()
+                        .find(|m| m.name == name)
+                    {
                         m.target = url.clone();
                         m.group = group.clone();
                     } else {
-                        app.latest_snap.uptime_monitors.push(crate::systat::UptimeMonitor {
-                            name: name.clone(),
-                            target: url.clone(),
-                            is_up: true,
-                            latency_ms: None,
-                            status_code: None,
-                            uptime_pct: 100.0,
-                            history: vec![true],
-                            group: group.clone(),
-                            error: None,
-                        });
+                        app.latest_snap
+                            .uptime_monitors
+                            .push(crate::systat::UptimeMonitor {
+                                name: name.clone(),
+                                target: url.clone(),
+                                is_up: true,
+                                latency_ms: None,
+                                status_code: None,
+                                uptime_pct: 100.0,
+                                history: vec![true],
+                                group: group.clone(),
+                                error: None,
+                            });
                     }
 
                     app.set_notification(format!("✓ Uptime monitor '{name}' saved"));
@@ -4087,12 +4520,23 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
                         return true;
                     }
                     let name = tokens[2].trim();
-                    if let Some(idx) = app.latest_snap.uptime_monitors.iter().position(|m| m.name.eq_ignore_ascii_case(name)) {
+                    if let Some(idx) = app
+                        .latest_snap
+                        .uptime_monitors
+                        .iter()
+                        .position(|m| m.name.eq_ignore_ascii_case(name))
+                    {
                         let actual_name = app.latest_snap.uptime_monitors[idx].name.clone();
                         app.selected_monitor = idx;
                         app.request_monitor_deletion(actual_name.clone());
                         app.add_ai_response(&format!("🗑 Requested deletion confirmation for monitor '{actual_name}'. Press 'y' to confirm or 'n' to cancel."));
-                    } else if let Some(pos) = app.cfg.uptime.custom_monitors.iter().position(|m| m.name.eq_ignore_ascii_case(name)) {
+                    } else if let Some(pos) = app
+                        .cfg
+                        .uptime
+                        .custom_monitors
+                        .iter()
+                        .position(|m| m.name.eq_ignore_ascii_case(name))
+                    {
                         let actual_name = app.cfg.uptime.custom_monitors[pos].name.clone();
                         app.request_monitor_deletion(actual_name.clone());
                         app.add_ai_response(&format!("🗑 Requested deletion confirmation for monitor '{actual_name}'. Press 'y' to confirm or 'n' to cancel."));
@@ -4108,7 +4552,9 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
         }
         "/analytics" => {
             if tokens.len() < 2 {
-                app.add_ai_response("Usage: /analytics <list | detail <site> | refresh | site <site-name>>");
+                app.add_ai_response(
+                    "Usage: /analytics <list | detail <site> | refresh | site <site-name>>",
+                );
                 return true;
             }
             let sub = tokens[1].to_lowercase();
@@ -4138,10 +4584,14 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
                             app.sample_system();
                             app.ingest_snapshot(app.latest_snap.clone());
                             app.set_notification(format!("Analytics detail: {site_name}"));
-                            app.add_ai_response(&format!("✅ Analytics detail opened for '{site_name}'"));
+                            app.add_ai_response(&format!(
+                                "✅ Analytics detail opened for '{site_name}'"
+                            ));
                             return true;
                         } else {
-                            app.add_ai_response(&format!("⚠ Analytics site '{site_query}' not found."));
+                            app.add_ai_response(&format!(
+                                "⚠ Analytics site '{site_query}' not found."
+                            ));
                             return true;
                         }
                     } else {
@@ -4158,7 +4608,9 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
                 }
                 "site" | "filter" => {
                     if tokens.len() < 3 {
-                        app.add_ai_response("Usage: /analytics site <site-name> (or /analytics site all)");
+                        app.add_ai_response(
+                            "Usage: /analytics site <site-name> (or /analytics site all)",
+                        );
                         return true;
                     }
                     let site_query = tokens[2..].join(" ").trim().to_string();
@@ -4187,9 +4639,13 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
                             app.sample_system();
                             app.ingest_snapshot(app.latest_snap.clone());
                             app.set_notification(format!("Analytics filter: {site_name}"));
-                            app.add_ai_response(&format!("✅ Analytics filter set to '{site_name}'"));
+                            app.add_ai_response(&format!(
+                                "✅ Analytics filter set to '{site_name}'"
+                            ));
                         } else {
-                            app.add_ai_response(&format!("⚠ Analytics site '{site_query}' not found."));
+                            app.add_ai_response(&format!(
+                                "⚠ Analytics site '{site_query}' not found."
+                            ));
                         }
                     }
                 }
@@ -4209,20 +4665,37 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
                 "status" | "info" => {
                     let snap = &app.latest_snap;
                     let total = snap.fleet_nodes.len();
-                    let online = snap.fleet_nodes.iter().filter(|n| n.status == "ONLINE").count();
-                    let mut status_lines = vec![
-                        format!("🖥 Fleet Status: {online}/{total} Nodes Online"),
-                    ];
+                    let online = snap
+                        .fleet_nodes
+                        .iter()
+                        .filter(|n| n.status == "ONLINE")
+                        .count();
+                    let mut status_lines =
+                        vec![format!("🖥 Fleet Status: {online}/{total} Nodes Online")];
                     for n in &snap.fleet_nodes {
-                        let rtt = n.latency_ms.map(|ms| format!("{ms}ms")).unwrap_or_else(|| "--".to_string());
-                        let cpu = n.cpu_pct.map(|c| format!("{c:.1}%")).unwrap_or_else(|| "--".to_string());
-                        let ram = n.ram_pct.map(|r| format!("{r}%")).unwrap_or_else(|| "--".to_string());
-                        status_lines.push(format!("  • {:<16} {:<15} [{}] RTT: {:<6} CPU: {:<6} RAM: {}", n.name, n.ip, n.status, rtt, cpu, ram));
+                        let rtt = n
+                            .latency_ms
+                            .map(|ms| format!("{ms}ms"))
+                            .unwrap_or_else(|| "--".to_string());
+                        let cpu = n
+                            .cpu_pct
+                            .map(|c| format!("{c:.1}%"))
+                            .unwrap_or_else(|| "--".to_string());
+                        let ram = n
+                            .ram_pct
+                            .map(|r| format!("{r}%"))
+                            .unwrap_or_else(|| "--".to_string());
+                        status_lines.push(format!(
+                            "  • {:<16} {:<15} [{}] RTT: {:<6} CPU: {:<6} RAM: {}",
+                            n.name, n.ip, n.status, rtt, cpu, ram
+                        ));
                     }
                     if total == 0 && !app.server_probe_results.is_empty() {
                         status_lines.push("Probed Fleet Servers:".to_string());
                         for (name, lat) in &app.server_probe_results {
-                            let lat_str = lat.map(|ms| format!("{ms}ms")).unwrap_or_else(|| "Unreachable".to_string());
+                            let lat_str = lat
+                                .map(|ms| format!("{ms}ms"))
+                                .unwrap_or_else(|| "Unreachable".to_string());
                             status_lines.push(format!("  • {name}: {lat_str}"));
                         }
                     }
@@ -4236,7 +4709,10 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
                         return true;
                     }
                     let service_name = tokens[2].trim().to_string();
-                    let has_flag = tokens.iter().skip(3).any(|t| t == "--confirm" || t == "--yes" || t == "-y");
+                    let has_flag = tokens
+                        .iter()
+                        .skip(3)
+                        .any(|t| t == "--confirm" || t == "--yes" || t == "-y");
                     if has_flag {
                         app.execute_service_restart(&service_name);
                     } else {
@@ -4319,7 +4795,10 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
             true
         }
         "/disk" => {
-            let sub = tokens.get(1).map(|s| s.to_lowercase()).unwrap_or_else(|| "health".to_string());
+            let sub = tokens
+                .get(1)
+                .map(|s| s.to_lowercase())
+                .unwrap_or_else(|| "health".to_string());
             match sub.as_str() {
                 "health" | "status" | "smart" | "info" | "" => {
                     app.show_disk_health_modal = true;
@@ -4334,7 +4813,10 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
                     }
                 }
                 _ => {
-                    app.add_ai_response(&format!("⚠ Unknown disk subcommand '{}'. Usage: /disk health", tokens[1]));
+                    app.add_ai_response(&format!(
+                        "⚠ Unknown disk subcommand '{}'. Usage: /disk health",
+                        tokens[1]
+                    ));
                 }
             }
             true
@@ -4343,17 +4825,29 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
             app.add_ai_response("📖 Available Cockpit Slash Commands:");
             app.add_ai_response("  /disk health                         - Open CrystalDisk SSD & NVMe SMART Health Diagnostic");
             app.add_ai_response("  /uptime test-telegram                - Send test alert to configured Telegram bot/chat");
-            app.add_ai_response("  /uptime add-monitor \"name\" \"url\"     - Add new uptime monitor");
+            app.add_ai_response(
+                "  /uptime add-monitor \"name\" \"url\"     - Add new uptime monitor",
+            );
             app.add_ai_response("  /uptime delete \"name\"                - Request deletion confirmation for monitor");
-            app.add_ai_response("  /analytics refresh                   - Refresh web analytics metrics");
+            app.add_ai_response(
+                "  /analytics refresh                   - Refresh web analytics metrics",
+            );
             app.add_ai_response("  /analytics site <site-name>          - Set active analytics site filter (or 'all')");
-            app.add_ai_response("  /fleet status                        - View fleet nodes health & latency matrix");
-            app.add_ai_response("  /fleet restart <service> [--confirm] - Restart a fleet container/service");
-            app.add_ai_response("  /go <uptime|analytics|fleet|...>     - Switch directly to cockpit tab");
+            app.add_ai_response(
+                "  /fleet status                        - View fleet nodes health & latency matrix",
+            );
+            app.add_ai_response(
+                "  /fleet restart <service> [--confirm] - Restart a fleet container/service",
+            );
+            app.add_ai_response(
+                "  /go <uptime|analytics|fleet|...>     - Switch directly to cockpit tab",
+            );
             true
         }
         _ => {
-            app.add_ai_response(&format!("⚠ Unknown command '{cmd}'. Type /help for available slash commands."));
+            app.add_ai_response(&format!(
+                "⚠ Unknown command '{cmd}'. Type /help for available slash commands."
+            ));
             true
         }
     }
@@ -4499,7 +4993,11 @@ fn handle_key_event<B: ratatui::backend::Backend>(
     // 2. Help Modal toggle and dismissal
     if app.show_help_modal {
         match key.code {
-            KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter | KeyCode::F(1) => {
+            KeyCode::Char('?')
+            | KeyCode::Esc
+            | KeyCode::Char('q')
+            | KeyCode::Enter
+            | KeyCode::F(1) => {
                 app.show_help_modal = false;
             }
             _ => {}
@@ -4666,10 +5164,11 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                     tailscale = tailscale_status,
                 );
 
-                let answer = match crate::ai::query_buffered(&cfg_clone, Some(&system_prompt), &prompt) {
-                    Ok(ans) => ans,
-                    Err(e) => format!("Error: {e}"),
-                };
+                let answer =
+                    match crate::ai::query_buffered(&cfg_clone, Some(&system_prompt), &prompt) {
+                        Ok(ans) => ans,
+                        Err(e) => format!("Error: {e}"),
+                    };
 
                 if let Some(ref d) = app.db {
                     let _ = d.save_chat("AI", &answer);
@@ -4686,7 +5185,9 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 app.chat_input.pop();
                 return Ok(false);
             }
-            KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
+            KeyCode::Char(c)
+                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+            {
                 // If input is empty, direct tab switching with 1-9 or 0
                 if app.chat_input.is_empty() {
                     if ('1'..='9').contains(&c) {
@@ -4738,7 +5239,9 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 app.term_input.pop();
                 return Ok(false);
             }
-            KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
+            KeyCode::Char(c)
+                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+            {
                 if app.term_input.is_empty() {
                     if ('1'..='9').contains(&c) {
                         let idx = (c as usize) - ('1' as usize);
@@ -4752,9 +5255,13 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                         if app.term_remote.is_none() {
                             if let Some(first_node) = app.cfg.daemon.nodes.keys().next() {
                                 app.term_remote = Some(first_node.clone());
-                                app.set_notification(format!("Terminal target: Remote [{first_node}]"));
+                                app.set_notification(format!(
+                                    "Terminal target: Remote [{first_node}]"
+                                ));
                             } else {
-                                app.set_notification("Terminal target: Local (No remote nodes configured)");
+                                app.set_notification(
+                                    "Terminal target: Local (No remote nodes configured)",
+                                );
                             }
                         } else {
                             app.term_remote = None;
@@ -4771,7 +5278,8 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 return Ok(false);
             }
             KeyCode::Down => {
-                app.term_scroll = (app.term_scroll + 1).min(app.term_output.len().saturating_sub(1));
+                app.term_scroll =
+                    (app.term_scroll + 1).min(app.term_output.len().saturating_sub(1));
                 return Ok(false);
             }
             _ => {}
@@ -4820,14 +5328,18 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 return Ok(false);
             }
             KeyCode::Tab => {
-                app.audit_input_active_field = (app.audit_input_active_field + 1) % audit_field_count;
+                app.audit_input_active_field =
+                    (app.audit_input_active_field + 1) % audit_field_count;
                 return Ok(false);
             }
             KeyCode::BackTab => {
-                app.audit_input_active_field = (app.audit_input_active_field + audit_field_count - 1) % audit_field_count;
+                app.audit_input_active_field =
+                    (app.audit_input_active_field + audit_field_count - 1) % audit_field_count;
                 return Ok(false);
             }
-            KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
+            KeyCode::Char(c)
+                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+            {
                 if active_field == 0 {
                     app.audit_folder_path.push(c);
                 } else {
@@ -4987,7 +5499,11 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             app.toggle_pet_history();
         }
         KeyCode::Char('k') | KeyCode::Char('K') if app.current_tab == CockpitTab::Dashboard => {
-            let target = app.latest_snap.top_processes.get(app.dashboard_proc_selected).map(|p| (p.pid, p.name.clone()));
+            let target = app
+                .latest_snap
+                .top_processes
+                .get(app.dashboard_proc_selected)
+                .map(|p| (p.pid, p.name.clone()));
             if let Some((pid, name)) = target {
                 app.prompt_kill_process_with_name(pid, &name);
             } else {
@@ -5007,7 +5523,8 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             if app.current_tab == CockpitTab::Dashboard {
                 app.dashboard_focused_panel = (app.dashboard_focused_panel + 5) % 6;
             } else {
-                let prev_idx = (app.current_tab.to_index() + CockpitTab::COUNT - 1) % CockpitTab::COUNT;
+                let prev_idx =
+                    (app.current_tab.to_index() + CockpitTab::COUNT - 1) % CockpitTab::COUNT;
                 app.current_tab = CockpitTab::from_index(prev_idx);
             }
         }
@@ -5020,24 +5537,37 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 } else {
                     app.pet_selected_action = (app.pet_selected_action + 4) % 5;
                     match app.dashboard_focused_panel {
-                        0 => app.dashboard_fleet_scroll = app.dashboard_fleet_scroll.saturating_sub(1),
-                        1 => app.dashboard_services_scroll = app.dashboard_services_scroll.saturating_sub(1),
-                        2 => app.dashboard_containers_scroll = app.dashboard_containers_scroll.saturating_sub(1),
-                        3 => app.dashboard_monitors_scroll = app.dashboard_monitors_scroll.saturating_sub(1),
-                        _ => app.dashboard_analytics_scroll = app.dashboard_analytics_scroll.saturating_sub(1),
+                        0 => {
+                            app.dashboard_fleet_scroll =
+                                app.dashboard_fleet_scroll.saturating_sub(1)
+                        }
+                        1 => {
+                            app.dashboard_services_scroll =
+                                app.dashboard_services_scroll.saturating_sub(1)
+                        }
+                        2 => {
+                            app.dashboard_containers_scroll =
+                                app.dashboard_containers_scroll.saturating_sub(1)
+                        }
+                        3 => {
+                            app.dashboard_monitors_scroll =
+                                app.dashboard_monitors_scroll.saturating_sub(1)
+                        }
+                        _ => {
+                            app.dashboard_analytics_scroll =
+                                app.dashboard_analytics_scroll.saturating_sub(1)
+                        }
                     }
                 }
             }
-            CockpitTab::Project => {
-                match app.project_view {
-                    ProjectView::Hierarchy | ProjectView::Tree => {
-                        app.selected_project = app.selected_project.saturating_sub(1);
-                    }
-                    ProjectView::Containers => {
-                        app.selected_container = app.selected_container.saturating_sub(1);
-                    }
+            CockpitTab::Project => match app.project_view {
+                ProjectView::Hierarchy | ProjectView::Tree => {
+                    app.selected_project = app.selected_project.saturating_sub(1);
                 }
-            }
+                ProjectView::Containers => {
+                    app.selected_container = app.selected_container.saturating_sub(1);
+                }
+            },
             CockpitTab::Uptime => {
                 app.selected_monitor = app.selected_monitor.saturating_sub(1);
             }
@@ -5080,35 +5610,49 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                     app.pet_selected_action = (app.pet_selected_action + 1) % 5;
                     match app.dashboard_focused_panel {
                         0 => app.dashboard_fleet_scroll = (app.dashboard_fleet_scroll + 1).min(30),
-                        1 => app.dashboard_services_scroll = (app.dashboard_services_scroll + 1).min(30),
-                        2 => app.dashboard_containers_scroll = (app.dashboard_containers_scroll + 1).min(30),
-                        3 => app.dashboard_monitors_scroll = (app.dashboard_monitors_scroll + 1).min(30),
-                        _ => app.dashboard_analytics_scroll = (app.dashboard_analytics_scroll + 1).min(30),
+                        1 => {
+                            app.dashboard_services_scroll =
+                                (app.dashboard_services_scroll + 1).min(30)
+                        }
+                        2 => {
+                            app.dashboard_containers_scroll =
+                                (app.dashboard_containers_scroll + 1).min(30)
+                        }
+                        3 => {
+                            app.dashboard_monitors_scroll =
+                                (app.dashboard_monitors_scroll + 1).min(30)
+                        }
+                        _ => {
+                            app.dashboard_analytics_scroll =
+                                (app.dashboard_analytics_scroll + 1).min(30)
+                        }
                     }
                 }
             }
-            CockpitTab::Project => {
-                match app.project_view {
-                    ProjectView::Hierarchy | ProjectView::Tree => {
-                        if !app.latest_snap.tracked_projects.is_empty() {
-                            app.selected_project = (app.selected_project + 1).min(app.latest_snap.tracked_projects.len() - 1);
-                        }
-                    }
-                    ProjectView::Containers => {
-                        if !app.latest_snap.docker_containers.is_empty() {
-                            app.selected_container = (app.selected_container + 1).min(app.latest_snap.docker_containers.len() - 1);
-                        }
+            CockpitTab::Project => match app.project_view {
+                ProjectView::Hierarchy | ProjectView::Tree => {
+                    if !app.latest_snap.tracked_projects.is_empty() {
+                        app.selected_project = (app.selected_project + 1)
+                            .min(app.latest_snap.tracked_projects.len() - 1);
                     }
                 }
-            }
+                ProjectView::Containers => {
+                    if !app.latest_snap.docker_containers.is_empty() {
+                        app.selected_container = (app.selected_container + 1)
+                            .min(app.latest_snap.docker_containers.len() - 1);
+                    }
+                }
+            },
             CockpitTab::Uptime => {
                 if !app.latest_snap.uptime_monitors.is_empty() {
-                    app.selected_monitor = (app.selected_monitor + 1).min(app.latest_snap.uptime_monitors.len() - 1);
+                    app.selected_monitor =
+                        (app.selected_monitor + 1).min(app.latest_snap.uptime_monitors.len() - 1);
                 }
             }
             CockpitTab::Server => {
                 if !app.server_probe_results.is_empty() {
-                    app.selected_server = (app.selected_server + 1).min(app.server_probe_results.len() - 1);
+                    app.selected_server =
+                        (app.selected_server + 1).min(app.server_probe_results.len() - 1);
                 }
             }
             CockpitTab::Analytics => {
@@ -5117,7 +5661,8 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 } else {
                     let total_sites = app.analytic_sites().len();
                     if total_sites > 0 {
-                        app.analytics_selected_site = (app.analytics_selected_site + 1).min(total_sites - 1);
+                        app.analytics_selected_site =
+                            (app.analytics_selected_site + 1).min(total_sites - 1);
                     }
                 }
             }
@@ -5129,7 +5674,8 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 app.log_scroll = (app.log_scroll + 1).min(app.log_buffer.len().saturating_sub(1));
             }
             CockpitTab::Terminal => {
-                app.term_scroll = (app.term_scroll + 1).min(app.term_output.len().saturating_sub(1));
+                app.term_scroll =
+                    (app.term_scroll + 1).min(app.term_output.len().saturating_sub(1));
             }
             CockpitTab::AI => {
                 app.scroll_chat_down();
@@ -5185,7 +5731,11 @@ fn handle_key_event<B: ratatui::backend::Backend>(
 
         KeyCode::Enter if app.show_cron_wizard => {
             if let Some(ref d) = app.db {
-                let _ = d.add_cron_job(&app.cron_schedule_buffer, &app.cron_command_buffer, "Custom task");
+                let _ = d.add_cron_job(
+                    &app.cron_schedule_buffer,
+                    &app.cron_command_buffer,
+                    "Custom task",
+                );
                 app.set_notification("✔ Saved scheduled job");
             }
             app.show_cron_wizard = false;
@@ -5195,7 +5745,9 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 if !app.show_analytics_detail {
                     let sites = app.analytic_sites();
                     if !sites.is_empty() {
-                        let idx = app.analytics_selected_site.min(sites.len().saturating_sub(1));
+                        let idx = app
+                            .analytics_selected_site
+                            .min(sites.len().saturating_sub(1));
                         app.analytics_site_filter = if idx == 0 {
                             None
                         } else {
@@ -5205,7 +5757,10 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                         app.analytics_scroll = 0;
                         app.sample_system();
                         app.ingest_snapshot(app.latest_snap.clone());
-                        let label = app.analytics_site_filter.as_deref().unwrap_or("All Sovereign Apps");
+                        let label = app
+                            .analytics_site_filter
+                            .as_deref()
+                            .unwrap_or("All Sovereign Apps");
                         app.set_notification(format!("Detail Analytics: {label}"));
                     }
                 }
@@ -5213,7 +5768,9 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             CockpitTab::Uptime => {
                 if !app.show_uptime_detail_modal {
                     if !app.latest_snap.uptime_monitors.is_empty() {
-                        let idx = app.selected_monitor.min(app.latest_snap.uptime_monitors.len().saturating_sub(1));
+                        let idx = app
+                            .selected_monitor
+                            .min(app.latest_snap.uptime_monitors.len().saturating_sub(1));
                         app.uptime_detail_index = idx;
                         app.show_uptime_detail_modal = true;
                         let mon_name = app.latest_snap.uptime_monitors[idx].name.clone();
@@ -5240,11 +5797,17 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         },
 
         // Project Tab shortcuts: 'o'/'P': Add project, 'd': Add container, 's': Start, 'x': Stop, 'r': Restart
-        KeyCode::Char('o') | KeyCode::Char('P') if app.current_tab == CockpitTab::Project || app.current_tab == CockpitTab::Dashboard => {
+        KeyCode::Char('o') | KeyCode::Char('P')
+            if app.current_tab == CockpitTab::Project
+                || app.current_tab == CockpitTab::Dashboard =>
+        {
             app.show_project_wizard = true;
             app.project_wizard_field = 0;
         }
-        KeyCode::Char('d') if app.current_tab == CockpitTab::Project || app.current_tab == CockpitTab::Dashboard => {
+        KeyCode::Char('d')
+            if app.current_tab == CockpitTab::Project
+                || app.current_tab == CockpitTab::Dashboard =>
+        {
             app.show_container_wizard = true;
             app.container_wizard_field = 0;
         }
@@ -5271,7 +5834,10 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
 
         // Uptime Tab shortcuts: 'm'/'u': Add monitor, 'p': Probe monitors, 'x': Delete monitor, 'e': Edit monitor
-        KeyCode::Char('m') | KeyCode::Char('u') if app.current_tab == CockpitTab::Uptime || app.current_tab == CockpitTab::Dashboard => {
+        KeyCode::Char('m') | KeyCode::Char('u')
+            if app.current_tab == CockpitTab::Uptime
+                || app.current_tab == CockpitTab::Dashboard =>
+        {
             app.show_monitor_wizard = true;
             app.monitor_wizard_field = 0;
         }
@@ -5322,7 +5888,10 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
 
         // Project Tab shortcuts: 'e': Edit project, 'c': Clone project
-        KeyCode::Char('e') if app.current_tab == CockpitTab::Project && app.project_view != ProjectView::Containers => {
+        KeyCode::Char('e')
+            if app.current_tab == CockpitTab::Project
+                && app.project_view != ProjectView::Containers =>
+        {
             app.edit_selected_project();
         }
         KeyCode::Char('c') if app.current_tab == CockpitTab::Project => {
@@ -5339,7 +5908,9 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
         KeyCode::Char('v') | KeyCode::Char('V') if app.current_tab == CockpitTab::Uptime => {
             if !app.latest_snap.uptime_monitors.is_empty() {
-                let idx = app.selected_monitor.min(app.latest_snap.uptime_monitors.len().saturating_sub(1));
+                let idx = app
+                    .selected_monitor
+                    .min(app.latest_snap.uptime_monitors.len().saturating_sub(1));
                 app.uptime_detail_index = idx;
                 app.show_uptime_detail_modal = true;
                 let mon_name = app.latest_snap.uptime_monitors[idx].name.clone();
@@ -5348,11 +5919,15 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
 
         // Analytics Tab shortcuts: 'w': Cycle site, 's'/'t': Script/Template, 'r': Refresh, 'p': Test hit, 'i': Import, 'e': Export, 'a': Add Site, 'x': Clear/Delete, 'd'/'v': View Detail, 'b': Back to List
-        KeyCode::Char('b') if app.current_tab == CockpitTab::Analytics && app.show_analytics_detail => {
+        KeyCode::Char('b')
+            if app.current_tab == CockpitTab::Analytics && app.show_analytics_detail =>
+        {
             app.show_analytics_detail = false;
             app.set_notification("Analytics: Sites Overview");
         }
-        KeyCode::Char('d') | KeyCode::Char('v') if app.current_tab == CockpitTab::Analytics && !app.show_analytics_detail => {
+        KeyCode::Char('d') | KeyCode::Char('v')
+            if app.current_tab == CockpitTab::Analytics && !app.show_analytics_detail =>
+        {
             let sites = app.analytic_sites();
             if !sites.is_empty() {
                 let idx = app.analytics_selected_site.min(sites.len() - 1);
@@ -5419,7 +5994,8 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         // Cron Tab shortcuts: 'n': New Cron Job, 'x': Remove selected managed cron job
         KeyCode::Char('x') | KeyCode::Delete if app.current_tab == CockpitTab::Cron => {
             app.pending_delete_target = DeleteTarget::CronJob;
-            app.pending_delete_label = format!("selected scheduled cron job #{}", app.selected_cron_job);
+            app.pending_delete_label =
+                format!("selected scheduled cron job #{}", app.selected_cron_job);
             app.show_delete_confirm = true;
         }
 
@@ -5530,15 +6106,21 @@ fn handle_server_wizard_key(key: event::KeyEvent, app: &mut CockpitApp) {
         KeyCode::BackTab | KeyCode::Up => {
             app.server_wizard_field = (app.server_wizard_field + 3) % 4;
         }
-        KeyCode::Backspace => {
-            match app.server_wizard_field {
-                0 => { app.server_name_buf.pop(); }
-                1 => { app.server_ip_buf.pop(); }
-                2 => { app.server_user_buf.pop(); }
-                3 => { app.server_services_buf.pop(); }
-                _ => {}
+        KeyCode::Backspace => match app.server_wizard_field {
+            0 => {
+                app.server_name_buf.pop();
             }
-        }
+            1 => {
+                app.server_ip_buf.pop();
+            }
+            2 => {
+                app.server_user_buf.pop();
+            }
+            3 => {
+                app.server_services_buf.pop();
+            }
+            _ => {}
+        },
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             match app.server_wizard_field {
                 0 => app.server_name_buf.push(c),
@@ -5566,14 +6148,18 @@ fn handle_project_wizard_key(key: event::KeyEvent, app: &mut CockpitApp) {
         KeyCode::BackTab | KeyCode::Up => {
             app.project_wizard_field = (app.project_wizard_field + 2) % 3;
         }
-        KeyCode::Backspace => {
-            match app.project_wizard_field {
-                0 => { app.project_path_buf.pop(); }
-                1 => { app.project_name_buf.pop(); }
-                2 => { app.project_category_buf.pop(); }
-                _ => {}
+        KeyCode::Backspace => match app.project_wizard_field {
+            0 => {
+                app.project_path_buf.pop();
             }
-        }
+            1 => {
+                app.project_name_buf.pop();
+            }
+            2 => {
+                app.project_category_buf.pop();
+            }
+            _ => {}
+        },
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             match app.project_wizard_field {
                 0 => app.project_path_buf.push(c),
@@ -5600,15 +6186,21 @@ fn handle_container_wizard_key(key: event::KeyEvent, app: &mut CockpitApp) {
         KeyCode::BackTab | KeyCode::Up => {
             app.container_wizard_field = (app.container_wizard_field + 3) % 4;
         }
-        KeyCode::Backspace => {
-            match app.container_wizard_field {
-                0 => { app.container_name_buf.pop(); }
-                1 => { app.container_image_buf.pop(); }
-                2 => { app.container_port_buf.pop(); }
-                3 => { app.container_env_buf.pop(); }
-                _ => {}
+        KeyCode::Backspace => match app.container_wizard_field {
+            0 => {
+                app.container_name_buf.pop();
             }
-        }
+            1 => {
+                app.container_image_buf.pop();
+            }
+            2 => {
+                app.container_port_buf.pop();
+            }
+            3 => {
+                app.container_env_buf.pop();
+            }
+            _ => {}
+        },
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             match app.container_wizard_field {
                 0 => app.container_name_buf.push(c),
@@ -5636,14 +6228,18 @@ fn handle_monitor_wizard_key(key: event::KeyEvent, app: &mut CockpitApp) {
         KeyCode::BackTab | KeyCode::Up => {
             app.monitor_wizard_field = (app.monitor_wizard_field + 2) % 3;
         }
-        KeyCode::Backspace => {
-            match app.monitor_wizard_field {
-                0 => { app.monitor_name_buf.pop(); }
-                1 => { app.monitor_url_buf.pop(); }
-                2 => { app.monitor_group_buf.pop(); }
-                _ => {}
+        KeyCode::Backspace => match app.monitor_wizard_field {
+            0 => {
+                app.monitor_name_buf.pop();
             }
-        }
+            1 => {
+                app.monitor_url_buf.pop();
+            }
+            2 => {
+                app.monitor_group_buf.pop();
+            }
+            _ => {}
+        },
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             match app.monitor_wizard_field {
                 0 => app.monitor_name_buf.push(c),
@@ -5670,13 +6266,15 @@ fn handle_site_import_modal_key(key: event::KeyEvent, app: &mut CockpitApp) {
         KeyCode::BackTab | KeyCode::Up => {
             app.site_import_selected = (app.site_import_selected + 1) % 2;
         }
-        KeyCode::Backspace => {
-            match app.site_import_selected {
-                0 => { app.site_import_name.pop(); }
-                1 => { app.site_import_domain.pop(); }
-                _ => {}
+        KeyCode::Backspace => match app.site_import_selected {
+            0 => {
+                app.site_import_name.pop();
             }
-        }
+            1 => {
+                app.site_import_domain.pop();
+            }
+            _ => {}
+        },
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             match app.site_import_selected {
                 0 => app.site_import_name.push(c),
@@ -5711,8 +6309,12 @@ fn handle_pro_wizard_key(key: event::KeyEvent, app: &mut CockpitApp) {
         }
         KeyCode::Backspace => {
             match app.pro_wizard_field {
-                0 => { app.pro_wizard_email_buf.pop(); }
-                1 => { app.pro_wizard_token_buf.pop(); }
+                0 => {
+                    app.pro_wizard_email_buf.pop();
+                }
+                1 => {
+                    app.pro_wizard_token_buf.pop();
+                }
                 _ => {}
             }
             app.pro_wizard_status_msg = None;
@@ -5740,32 +6342,50 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
         MouseEventKind::ScrollUp => match app.current_tab {
             CockpitTab::Dashboard => match app.dashboard_focused_panel {
                 0 => app.dashboard_fleet_scroll = app.dashboard_fleet_scroll.saturating_sub(1),
-                1 => app.dashboard_services_scroll = app.dashboard_services_scroll.saturating_sub(1),
-                2 => app.dashboard_containers_scroll = app.dashboard_containers_scroll.saturating_sub(1),
-                3 => app.dashboard_monitors_scroll = app.dashboard_monitors_scroll.saturating_sub(1),
-                4 => app.dashboard_analytics_scroll = app.dashboard_analytics_scroll.saturating_sub(1),
+                1 => {
+                    app.dashboard_services_scroll = app.dashboard_services_scroll.saturating_sub(1)
+                }
+                2 => {
+                    app.dashboard_containers_scroll =
+                        app.dashboard_containers_scroll.saturating_sub(1)
+                }
+                3 => {
+                    app.dashboard_monitors_scroll = app.dashboard_monitors_scroll.saturating_sub(1)
+                }
+                4 => {
+                    app.dashboard_analytics_scroll =
+                        app.dashboard_analytics_scroll.saturating_sub(1)
+                }
                 _ => app.dashboard_proc_selected = app.dashboard_proc_selected.saturating_sub(1),
             },
             CockpitTab::Project => match app.project_view {
-                ProjectView::Hierarchy | ProjectView::Tree => app.selected_project = app.selected_project.saturating_sub(1),
-                ProjectView::Containers => app.selected_container = app.selected_container.saturating_sub(1),
+                ProjectView::Hierarchy | ProjectView::Tree => {
+                    app.selected_project = app.selected_project.saturating_sub(1)
+                }
+                ProjectView::Containers => {
+                    app.selected_container = app.selected_container.saturating_sub(1)
+                }
             },
             CockpitTab::Uptime => app.selected_monitor = app.selected_monitor.saturating_sub(1),
             CockpitTab::Server => app.selected_server = app.selected_server.saturating_sub(1),
             CockpitTab::Analytics => app.analytics_scroll = app.analytics_scroll.saturating_sub(3),
             CockpitTab::Topology => app.topology_nav_up(),
-            CockpitTab::Cron => {},
+            CockpitTab::Cron => {}
             CockpitTab::Log => app.log_scroll = app.log_scroll.saturating_sub(1),
             CockpitTab::Terminal => app.term_scroll = app.term_scroll.saturating_sub(1),
             CockpitTab::AI => app.scroll_chat_up(),
             CockpitTab::Setting => app.selected_field = app.selected_field.saturating_sub(1),
-            CockpitTab::Turbo => app.turbo_selected_action = app.turbo_selected_action.saturating_sub(1),
+            CockpitTab::Turbo => {
+                app.turbo_selected_action = app.turbo_selected_action.saturating_sub(1)
+            }
         },
         MouseEventKind::ScrollDown => match app.current_tab {
             CockpitTab::Dashboard => match app.dashboard_focused_panel {
                 0 => app.dashboard_fleet_scroll = (app.dashboard_fleet_scroll + 1).min(30),
                 1 => app.dashboard_services_scroll = (app.dashboard_services_scroll + 1).min(30),
-                2 => app.dashboard_containers_scroll = (app.dashboard_containers_scroll + 1).min(30),
+                2 => {
+                    app.dashboard_containers_scroll = (app.dashboard_containers_scroll + 1).min(30)
+                }
                 3 => app.dashboard_monitors_scroll = (app.dashboard_monitors_scroll + 1).min(30),
                 4 => app.dashboard_analytics_scroll = (app.dashboard_analytics_scroll + 1).min(30),
                 _ => {
@@ -5776,35 +6396,40 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
             CockpitTab::Project => match app.project_view {
                 ProjectView::Hierarchy | ProjectView::Tree => {
                     if !app.latest_snap.tracked_projects.is_empty() {
-                        app.selected_project = (app.selected_project + 1).min(app.latest_snap.tracked_projects.len() - 1);
+                        app.selected_project = (app.selected_project + 1)
+                            .min(app.latest_snap.tracked_projects.len() - 1);
                     }
                 }
                 ProjectView::Containers => {
                     if !app.latest_snap.docker_containers.is_empty() {
-                        app.selected_container = (app.selected_container + 1).min(app.latest_snap.docker_containers.len() - 1);
+                        app.selected_container = (app.selected_container + 1)
+                            .min(app.latest_snap.docker_containers.len() - 1);
                     }
                 }
             },
             CockpitTab::Uptime => {
                 if !app.latest_snap.uptime_monitors.is_empty() {
-                    app.selected_monitor = (app.selected_monitor + 1).min(app.latest_snap.uptime_monitors.len() - 1);
+                    app.selected_monitor =
+                        (app.selected_monitor + 1).min(app.latest_snap.uptime_monitors.len() - 1);
                 }
             }
             CockpitTab::Server => {
                 if !app.server_probe_results.is_empty() {
-                    app.selected_server = (app.selected_server + 1).min(app.server_probe_results.len() - 1);
+                    app.selected_server =
+                        (app.selected_server + 1).min(app.server_probe_results.len() - 1);
                 }
             }
             CockpitTab::Analytics => {
                 app.analytics_scroll = (app.analytics_scroll + 3).min(30);
             }
             CockpitTab::Topology => app.topology_nav_down(),
-            CockpitTab::Cron => {},
+            CockpitTab::Cron => {}
             CockpitTab::Log => {
                 app.log_scroll = (app.log_scroll + 1).min(app.log_buffer.len().saturating_sub(1));
             }
             CockpitTab::Terminal => {
-                app.term_scroll = (app.term_scroll + 1).min(app.term_output.len().saturating_sub(1));
+                app.term_scroll =
+                    (app.term_scroll + 1).min(app.term_output.len().saturating_sub(1));
             }
             CockpitTab::AI => app.scroll_chat_down(),
             CockpitTab::Setting => {
@@ -6198,9 +6823,14 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                         app.show_uptime_detail_modal = false;
                     }
                     HitboxAction::ToggleMonitorAlerts => {
-                        app.cfg.uptime.telegram_alerts_enabled = !app.cfg.uptime.telegram_alerts_enabled;
+                        app.cfg.uptime.telegram_alerts_enabled =
+                            !app.cfg.uptime.telegram_alerts_enabled;
                         app.save_config_silent();
-                        let state = if app.cfg.uptime.telegram_alerts_enabled { "ON" } else { "OFF" };
+                        let state = if app.cfg.uptime.telegram_alerts_enabled {
+                            "ON"
+                        } else {
+                            "OFF"
+                        };
                         app.set_notification(format!("Telegram alerts toggled: {state}"));
                     }
                     HitboxAction::TestTelegramAlert => {
@@ -6272,7 +6902,12 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                         if let Some(item) = app.audit_db_history.get(idx) {
                             app.audit_preview_markdown = item.report_markdown.clone();
                             app.audit_preview_score = item.score;
-                            app.audit_preview_findings_count = (item.critical_count + item.high_count + item.medium_count + item.low_count + item.info_count) as usize;
+                            app.audit_preview_findings_count = (item.critical_count
+                                + item.high_count
+                                + item.medium_count
+                                + item.low_count
+                                + item.info_count)
+                                as usize;
                             app.audit_step = AuditStep::PreviewResult;
                             app.report_scroll = 0;
                         }
@@ -6424,12 +7059,24 @@ fn start_field_edit(app: &mut CockpitApp) {
         19 => {
             // Coolify Base URL
             app.editing_field = Some(19);
-            app.edit_buffer = app.cfg.deploy.coolify.as_ref().map(|c| c.base_url.clone()).unwrap_or_default();
+            app.edit_buffer = app
+                .cfg
+                .deploy
+                .coolify
+                .as_ref()
+                .map(|c| c.base_url.clone())
+                .unwrap_or_default();
         }
         20 => {
             // Coolify API Token
             app.editing_field = Some(20);
-            app.edit_buffer = app.cfg.deploy.coolify.as_ref().map(|c| c.api_token.clone()).unwrap_or_default();
+            app.edit_buffer = app
+                .cfg
+                .deploy
+                .coolify
+                .as_ref()
+                .map(|c| c.api_token.clone())
+                .unwrap_or_default();
         }
         21 | 22 | 23 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31 => app.cycle_field_value(true),
         _ => {}
@@ -6611,7 +7258,10 @@ fn trigger_turbo_audit<B: ratatui::backend::Backend>(
 
     match res {
         Ok(code) => {
-            let msg = format!("✓ Audit on {} completed (exit code {code})", app.audit_project_name);
+            let msg = format!(
+                "✓ Audit on {} completed (exit code {code})",
+                app.audit_project_name
+            );
             app.audit_status_msg = Some(msg.clone());
             app.set_notification(msg);
         }
@@ -6681,7 +7331,8 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         return;
     }
 
-    if app.is_compact || catui::layout::Breakpoint::of(area) == catui::layout::Breakpoint::TooSmall {
+    if app.is_compact || catui::layout::Breakpoint::of(area) == catui::layout::Breakpoint::TooSmall
+    {
         draw_compact_fallback(f, app, area);
         return;
     }
@@ -6800,7 +7451,9 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     // Dynamic Pro / Free / Syncing edition badge (CATUI `Edition`)
     let edition = if app.is_syncing_gcc {
         // Blink ~0.5s using pet_tick (10 ticks/sec)
-        catui::widgets::Edition::Syncing { blink_on: (app.pet_tick / 5) % 2 == 0 }
+        catui::widgets::Edition::Syncing {
+            blink_on: (app.pet_tick / 5) % 2 == 0,
+        }
     } else if app.is_pro() {
         catui::widgets::Edition::Pro
     } else {
@@ -6821,7 +7474,9 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             };
             Span::styled(
                 format!(" {} ", status.format_badge()),
-                Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD),
             )
         } else {
             Span::styled(" 🥚 No Pet (p) ", Style::default().fg(palette.text_muted))
@@ -6832,7 +7487,9 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let host_badge = Span::styled(
         format!(" {} ", app.hostname),
-        Style::default().fg(palette.text).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(palette.text)
+            .add_modifier(Modifier::BOLD),
     );
     let router_badge = if app.is_9router_online {
         Span::styled(" 9router: ● ONLINE ", palette.status(catui::Status::Ok))
@@ -6842,7 +7499,10 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let tailscale_badge = if app.is_tailscale_ok {
         Span::styled(" Tailscale: ● OK ", palette.status(catui::Status::Ok))
     } else {
-        Span::styled(" Tailscale: ✖ DOWN ", palette.status(catui::Status::Warning))
+        Span::styled(
+            " Tailscale: ✖ DOWN ",
+            palette.status(catui::Status::Warning),
+        )
     };
     let time_badge = Span::styled(format!(" {time_str} "), Style::default().fg(palette.accent));
 
@@ -6874,8 +7534,18 @@ fn draw_tabs(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 }
 
 /// CPU braille curve via CATUI, keeping CAShell's 90/80/60 % colour bands.
-fn cpu_braille_lines(palette: &catui::Theme, data: &[f32], width: usize, height: usize) -> Vec<Line<'static>> {
-    let (danger, warning, mid, ok) = (palette.danger, palette.warning, palette.chart[1], palette.success);
+fn cpu_braille_lines(
+    palette: &catui::Theme,
+    data: &[f32],
+    width: usize,
+    height: usize,
+) -> Vec<Line<'static>> {
+    let (danger, warning, mid, ok) = (
+        palette.danger,
+        palette.warning,
+        palette.chart[1],
+        palette.success,
+    );
     catui::widgets::braille_lines(data, width, height, 100.0, &move |pct: f32| {
         if pct >= 90.0 {
             danger
@@ -6895,7 +7565,9 @@ fn format_core_span(core: Option<&CpuCoreInfo>, id: usize, bar_len: usize) -> Ve
     } else {
         (0.0, 0)
     };
-    let filled = ((usage / 100.0) * (bar_len as f32)).round().clamp(0.0, bar_len as f32) as usize;
+    let filled = ((usage / 100.0) * (bar_len as f32))
+        .round()
+        .clamp(0.0, bar_len as f32) as usize;
     let unfilled = bar_len.saturating_sub(filled);
 
     let color = if usage >= 90.0 {
@@ -6917,7 +7589,12 @@ fn format_core_span(core: Option<&CpuCoreInfo>, id: usize, bar_len: usize) -> Ve
     };
 
     vec![
-        Span::styled(format!("C{id} "), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("C{id} "),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("[", Style::default().fg(Color::DarkGray)),
         Span::styled("█".repeat(filled), Style::default().fg(color)),
         Span::styled("░".repeat(unfilled), Style::default().fg(Color::DarkGray)),
@@ -6978,7 +7655,11 @@ fn format_mount_capacity(used_mb: u64, total_mb: u64, used_gb: u64, total_gb: u6
             format!("{gb}G")
         }
     };
-    format!("{} / {}", fmt_val(used_mb, used_gb), fmt_val(total_mb, total_gb))
+    format!(
+        "{} / {}",
+        fmt_val(used_mb, used_gb),
+        fmt_val(total_mb, total_gb)
+    )
 }
 
 fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
@@ -7012,17 +7693,47 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         };
         let line = Line::from(vec![
             Span::styled("CPU: ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{:.1}%  ", snap.cpu_pct), Style::default().fg(palette.success).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{:.1}%  ", snap.cpu_pct),
+                Style::default()
+                    .fg(palette.success)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("Temp: ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{:.1}°C  ", snap.cpu_temp_c), Style::default().fg(if snap.cpu_temp_c > 85.0 { palette.danger } else { palette.success })),
+            Span::styled(
+                format!("{:.1}°C  ", snap.cpu_temp_c),
+                Style::default().fg(if snap.cpu_temp_c > 85.0 {
+                    palette.danger
+                } else {
+                    palette.success
+                }),
+            ),
             Span::styled("RAM: ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{}M/{}M  ", snap.ram_used_mb, snap.ram_total_mb), Style::default().fg(palette.chart[0])),
+            Span::styled(
+                format!("{}M/{}M  ", snap.ram_used_mb, snap.ram_total_mb),
+                Style::default().fg(palette.chart[0]),
+            ),
             Span::styled("Disk: ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{}G/{}G  ", snap.disk_used_gb, snap.disk_total_gb), Style::default().fg(palette.success)),
+            Span::styled(
+                format!("{}G/{}G  ", snap.disk_used_gb, snap.disk_total_gb),
+                Style::default().fg(palette.success),
+            ),
             Span::styled("Net: ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("▼{} ▲{}  ", format_kbps(snap.net_rx_rate_kbps), format_kbps(snap.net_tx_rate_kbps)), Style::default().fg(palette.accent)),
+            Span::styled(
+                format!(
+                    "▼{} ▲{}  ",
+                    format_kbps(snap.net_rx_rate_kbps),
+                    format_kbps(snap.net_tx_rate_kbps)
+                ),
+                Style::default().fg(palette.accent),
+            ),
             Span::styled("Companion: ", Style::default().fg(palette.text_muted)),
-            Span::styled(pet_badge, Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                pet_badge,
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]);
         f.render_widget(Paragraph::new(line), chunks[0]);
     } else {
@@ -7062,7 +7773,9 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
         if cpu_inner.width > 8 && cpu_inner.height > 2 {
             let temp_style = if snap.cpu_temp_c >= 80.0 {
-                Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::LightRed)
+                    .add_modifier(Modifier::BOLD)
             } else if snap.cpu_temp_c >= 65.0 {
                 Style::default().fg(Color::Yellow)
             } else {
@@ -7072,7 +7785,10 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             let mut header_spans = vec![
                 Span::styled("Load: ", Style::default().fg(palette.text_muted)),
                 Span::styled(
-                    format!("[{:.2}, {:.2}, {:.2}]  ", snap.load_avg[0], snap.load_avg[1], snap.load_avg[2]),
+                    format!(
+                        "[{:.2}, {:.2}, {:.2}]  ",
+                        snap.load_avg[0], snap.load_avg[1], snap.load_avg[2]
+                    ),
                     Style::default().fg(palette.accent),
                 ),
                 Span::styled("Temp: ", Style::default().fg(palette.text_muted)),
@@ -7082,16 +7798,29 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             if thermal_alert {
                 header_spans.push(Span::styled(
                     " [ALERT]",
-                    Style::default().fg(palette.danger).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(palette.danger)
+                        .add_modifier(Modifier::BOLD),
                 ));
             }
 
             let cpu_hist_vec: Vec<f32> = app.cpu_history.iter().copied().collect();
             let braille_height = if cpu_inner.height >= 8 { 2 } else { 1 };
-            let braille_lines = cpu_braille_lines(&palette, &cpu_hist_vec, cpu_inner.width as usize, braille_height);
+            let braille_lines = cpu_braille_lines(
+                &palette,
+                &cpu_hist_vec,
+                cpu_inner.width as usize,
+                braille_height,
+            );
 
             let half_w = (cpu_inner.width.saturating_sub(3) / 2) as usize;
-            let bar_len = if half_w >= 26 { 10 } else if half_w >= 18 { 5 } else { 3 };
+            let bar_len = if half_w >= 26 {
+                10
+            } else if half_w >= 18 {
+                5
+            } else {
+                3
+            };
 
             let mut core_lines = Vec::new();
             if cpu_inner.width >= 30 {
@@ -7099,8 +7828,10 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                     let c_left_idx = row;
                     let c_right_idx = row + 4;
 
-                    let left_spans = format_core_span(snap.cpus.get(c_left_idx), c_left_idx, bar_len);
-                    let right_spans = format_core_span(snap.cpus.get(c_right_idx), c_right_idx, bar_len);
+                    let left_spans =
+                        format_core_span(snap.cpus.get(c_left_idx), c_left_idx, bar_len);
+                    let right_spans =
+                        format_core_span(snap.cpus.get(c_right_idx), c_right_idx, bar_len);
 
                     let mut line_spans = left_spans;
                     line_spans.push(Span::styled(" │ ", Style::default().fg(palette.text_muted)));
@@ -7108,7 +7839,9 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                     core_lines.push(Line::from(line_spans));
                 }
             } else {
-                for row in 0..4.min(cpu_inner.height.saturating_sub(3 + braille_height as u16) as usize) {
+                for row in
+                    0..4.min(cpu_inner.height.saturating_sub(3 + braille_height as u16) as usize)
+                {
                     let spans = format_core_span(snap.cpus.get(row), row, bar_len);
                     core_lines.push(Line::from(spans));
                 }
@@ -7153,7 +7886,9 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             };
             let ram_label_span = Span::styled(
                 format!("RAM: {ram_used}M/{ram_total}M ({ram_pct}%)"),
-                Style::default().fg(Color::Rgb(10, 15, 25)).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Rgb(10, 15, 25))
+                    .add_modifier(Modifier::BOLD),
             );
             let ram_gauge = Gauge::default()
                 .gauge_style(Style::default().fg(ram_color).bg(Color::DarkGray))
@@ -7170,7 +7905,9 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             };
             let swap_label_span = Span::styled(
                 format!("SWP: {swap_used}M/{swap_total}M ({swap_pct}%)"),
-                Style::default().fg(Color::Rgb(10, 15, 25)).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Rgb(10, 15, 25))
+                    .add_modifier(Modifier::BOLD),
             );
             let swap_gauge = Gauge::default()
                 .gauge_style(Style::default().fg(palette.chart[1]).bg(Color::DarkGray))
@@ -7194,7 +7931,9 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             };
             let disk_label_span = Span::styled(
                 format!("DSK: {disk_used}G/{disk_total}G ({disk_pct}%)"),
-                Style::default().fg(Color::Rgb(10, 15, 25)).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Rgb(10, 15, 25))
+                    .add_modifier(Modifier::BOLD),
             );
             let disk_gauge = Gauge::default()
                 .gauge_style(Style::default().fg(disk_color).bg(Color::DarkGray))
@@ -7204,23 +7943,36 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
             // Compact breakdown lines without large tables
             let gpu_info = if snap.gpu_label != "No GPU" && !snap.gpu_label.is_empty() {
-                let util = snap.gpu_pct.map(|p| format!("{p:.0}%")).unwrap_or_else(|| "--".to_string());
+                let util = snap
+                    .gpu_pct
+                    .map(|p| format!("{p:.0}%"))
+                    .unwrap_or_else(|| "--".to_string());
                 format!("{}: {}", snap.gpu_label, util)
             } else {
                 "Integrated Intel/AMD".to_string()
             };
 
-            let mount_summary = snap.mounts.first().map(|m| {
-                let cap = format_mount_capacity(m.used_mb, m.total_mb, m.used_gb, m.total_gb);
-                format!("{}: {} ({}%)", m.mountpoint, cap, m.pct)
-            }).unwrap_or_else(|| format!("/ : {}G/{}G", snap.disk_used_gb, snap.disk_total_gb));
+            let mount_summary = snap
+                .mounts
+                .first()
+                .map(|m| {
+                    let cap = format_mount_capacity(m.used_mb, m.total_mb, m.used_gb, m.total_gb);
+                    format!("{}: {} ({}%)", m.mountpoint, cap, m.pct)
+                })
+                .unwrap_or_else(|| format!("/ : {}G/{}G", snap.disk_used_gb, snap.disk_total_gb));
 
             let mut mem_lines = vec![
                 Line::from(vec![
                     Span::styled("Avail: ", Style::default().fg(palette.text_muted)),
-                    Span::styled(format!("{}M ", snap.ram_available_mb), Style::default().fg(palette.accent)),
+                    Span::styled(
+                        format!("{}M ", snap.ram_available_mb),
+                        Style::default().fg(palette.accent),
+                    ),
                     Span::styled("Cache: ", Style::default().fg(palette.text_muted)),
-                    Span::styled(format!("{}M", snap.ram_cached_mb), Style::default().fg(Color::White)),
+                    Span::styled(
+                        format!("{}M", snap.ram_cached_mb),
+                        Style::default().fg(Color::White),
+                    ),
                 ]),
                 Line::from(vec![
                     Span::styled("Mount: ", Style::default().fg(palette.text_muted)),
@@ -7228,7 +7980,9 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 ]),
             ];
             if let Some(disk) = snap.disk_health.first() {
-                let health_color = if disk.health_status.contains("HEALTHY") || disk.health_status.contains("GOOD") {
+                let health_color = if disk.health_status.contains("HEALTHY")
+                    || disk.health_status.contains("GOOD")
+                {
                     palette.success
                 } else if disk.health_status.contains("WARN") {
                     palette.warning
@@ -7237,14 +7991,25 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 };
                 mem_lines.push(Line::from(vec![
                     Span::styled("SMART: ", Style::default().fg(palette.text_muted)),
-                    Span::styled(format!("[● {}] ", disk.health_status), Style::default().fg(health_color).add_modifier(Modifier::BOLD)),
-                    Span::styled(format!("[● {:.0}°C] ", disk.temperature_c), Style::default().fg(palette.accent)),
+                    Span::styled(
+                        format!("[● {}] ", disk.health_status),
+                        Style::default()
+                            .fg(health_color)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("[● {:.0}°C] ", disk.temperature_c),
+                        Style::default().fg(palette.accent),
+                    ),
                     Span::styled("(H)", Style::default().fg(palette.text_muted)),
                 ]));
             } else {
                 mem_lines.push(Line::from(vec![
                     Span::styled("GPU:   ", Style::default().fg(palette.text_muted)),
-                    Span::styled(truncate_str(&gpu_info, 20), Style::default().fg(palette.text_muted)),
+                    Span::styled(
+                        truncate_str(&gpu_info, 20),
+                        Style::default().fg(palette.text_muted),
+                    ),
                 ]));
             }
             f.render_widget(Paragraph::new(mem_lines), mem_layout[3]);
@@ -7273,17 +8038,37 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             let net_lines = vec![
                 Line::from(vec![
                     Span::styled("Iface:    ", Style::default().fg(palette.text_muted)),
-                    Span::styled(iface_display, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                    Span::styled(" [OK]", Style::default().fg(palette.success).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        iface_display,
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        " [OK]",
+                        Style::default()
+                            .fg(palette.success)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ]),
                 Line::from(vec![
                     Span::styled("▼ RX:     ", Style::default().fg(palette.text_muted)),
-                    Span::styled(rx_rate_str, Style::default().fg(palette.success).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        rx_rate_str,
+                        Style::default()
+                            .fg(palette.success)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::styled(" (live)", Style::default().fg(palette.text_muted)),
                 ]),
                 Line::from(vec![
                     Span::styled("▲ TX:     ", Style::default().fg(palette.text_muted)),
-                    Span::styled(tx_rate_str, Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        tx_rate_str,
+                        Style::default()
+                            .fg(palette.accent)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::styled(" (live)", Style::default().fg(palette.text_muted)),
                 ]),
                 Line::from(vec![
@@ -7296,7 +8081,12 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 ]),
                 Line::from(vec![
                     Span::styled("State:    ", Style::default().fg(palette.text_muted)),
-                    Span::styled("● ACTIVE", Style::default().fg(palette.success).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "● ACTIVE",
+                        Style::default()
+                            .fg(palette.success)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ]),
             ];
             f.render_widget(Paragraph::new(net_lines), net_inner);
@@ -7319,42 +8109,64 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     // 1. Armada Fleet Node summary badge
     let total_nodes = snap.fleet_nodes.len();
-    let online_nodes = snap.fleet_nodes.iter().filter(|n| n.status == "ONLINE").count();
+    let online_nodes = snap
+        .fleet_nodes
+        .iter()
+        .filter(|n| n.status == "ONLINE")
+        .count();
     let fleet_offline = total_nodes.saturating_sub(online_nodes);
     if fleet_offline == 0 && total_nodes > 0 {
         alerts_spans.push(Span::styled(
             format!(" Armada: ● {online_nodes}/{total_nodes} Online "),
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         ));
     } else {
         alerts_spans.push(Span::styled(
             " Armada: ",
-            Style::default().fg(Color::Rgb(245, 175, 130)).bg(Color::Rgb(48, 22, 28)),
+            Style::default()
+                .fg(Color::Rgb(245, 175, 130))
+                .bg(Color::Rgb(48, 22, 28)),
         ));
         alerts_spans.push(Span::styled(
             format!("[DOWN] {online_nodes}/{total_nodes} Online · {fleet_offline} Down "),
-            Style::default().fg(Color::Rgb(242, 135, 125)).bg(Color::Rgb(48, 22, 28)).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Rgb(242, 135, 125))
+                .bg(Color::Rgb(48, 22, 28))
+                .add_modifier(Modifier::BOLD),
         ));
     }
     alerts_spans.push(Span::raw("  "));
 
     // 2. Docker Containers summary count badge
     let total_cont = snap.docker_containers.len();
-    let running_cont = snap.docker_containers.iter().filter(|c| c.state == "running").count();
+    let running_cont = snap
+        .docker_containers
+        .iter()
+        .filter(|c| c.state == "running")
+        .count();
     let down_cont = total_cont.saturating_sub(running_cont);
     if down_cont == 0 && total_cont > 0 {
         alerts_spans.push(Span::styled(
             format!(" ● {running_cont}/{total_cont} Containers Running "),
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         ));
     } else if down_cont > 0 {
         alerts_spans.push(Span::styled(
             " ■ Containers: ",
-            Style::default().fg(Color::Rgb(245, 165, 130)).bg(Color::Rgb(48, 24, 28)),
+            Style::default()
+                .fg(Color::Rgb(245, 165, 130))
+                .bg(Color::Rgb(48, 24, 28)),
         ));
         alerts_spans.push(Span::styled(
             format!("{running_cont}/{total_cont} Running · {down_cont} [DOWN] "),
-            Style::default().fg(Color::Rgb(235, 130, 120)).bg(Color::Rgb(48, 24, 28)).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Rgb(235, 130, 120))
+                .bg(Color::Rgb(48, 24, 28))
+                .add_modifier(Modifier::BOLD),
         ));
     } else {
         alerts_spans.push(Span::styled(
@@ -7366,20 +8178,37 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     // 3. Core Daemons summary
     let total_daemons = snap.service_health.len();
-    let active_daemons = snap.service_health.iter().filter(|s| s.state == crate::systat::DaemonState::Active).count();
-    let degraded_daemons = snap.service_health.iter().filter(|s| s.state == crate::systat::DaemonState::Degraded).count();
+    let active_daemons = snap
+        .service_health
+        .iter()
+        .filter(|s| s.state == crate::systat::DaemonState::Active)
+        .count();
+    let degraded_daemons = snap
+        .service_health
+        .iter()
+        .filter(|s| s.state == crate::systat::DaemonState::Degraded)
+        .count();
     if active_daemons == total_daemons && total_daemons > 0 {
         alerts_spans.push(Span::styled(
             format!(" Daemons: ● {active_daemons}/{total_daemons} Active "),
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         ));
     } else {
         let err_count = total_daemons.saturating_sub(active_daemons + degraded_daemons);
         let tag = if err_count > 0 { "[DOWN]" } else { "[ALERT]" };
-        let col = if err_count > 0 { Color::Rgb(242, 135, 125) } else { palette.warning };
+        let col = if err_count > 0 {
+            Color::Rgb(242, 135, 125)
+        } else {
+            palette.warning
+        };
         alerts_spans.push(Span::styled(
             format!(" Daemons: {tag} {active_daemons}/{total_daemons} Active "),
-            Style::default().fg(col).bg(Color::Rgb(45, 25, 30)).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(col)
+                .bg(Color::Rgb(45, 25, 30))
+                .add_modifier(Modifier::BOLD),
         ));
     }
     alerts_spans.push(Span::raw("  "));
@@ -7391,16 +8220,23 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if down_monitors == 0 && total_monitors > 0 {
         alerts_spans.push(Span::styled(
             format!(" Monitors: [OK] ALL {up_monitors} UP "),
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         ));
     } else {
         alerts_spans.push(Span::styled(
             " Monitors: ",
-            Style::default().fg(Color::Rgb(215, 165, 225)).bg(Color::Rgb(44, 22, 42)),
+            Style::default()
+                .fg(Color::Rgb(215, 165, 225))
+                .bg(Color::Rgb(44, 22, 42)),
         ));
         alerts_spans.push(Span::styled(
             format!("[DOWN] {up_monitors}/{total_monitors} UP · {down_monitors} DOWN "),
-            Style::default().fg(Color::Rgb(235, 135, 145)).bg(Color::Rgb(44, 22, 42)).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Rgb(235, 135, 145))
+                .bg(Color::Rgb(44, 22, 42))
+                .add_modifier(Modifier::BOLD),
         ));
     }
     alerts_spans.push(Span::raw("  "));
@@ -7411,27 +8247,67 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let web_active = snap.web_analytics.active_visitors;
     alerts_spans.push(Span::styled(
         format!("Web: {web_active} live · {web_pv} views · {web_uv} visitors"),
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
     ));
 
     let available_width = alerts_inner.width.saturating_sub(2) as usize;
     let mut alert_items: Vec<Vec<Span>> = Vec::new();
-    let alert_prefixes = vec![Span::styled("Status: ", Style::default().fg(palette.text_muted))];
+    let alert_prefixes = vec![Span::styled(
+        "Status: ",
+        Style::default().fg(palette.text_muted),
+    )];
     let mut any_alert = false;
 
     // Check containers down
-    let exited_cont: Vec<&str> = snap.docker_containers.iter().filter(|c| c.state != "running").map(|c| c.name.as_str()).collect();
+    let exited_cont: Vec<&str> = snap
+        .docker_containers
+        .iter()
+        .filter(|c| c.state != "running")
+        .map(|c| c.name.as_str())
+        .collect();
     if !exited_cont.is_empty() {
         let alert_bg = Color::Rgb(48, 22, 28);
-        let mut item = vec![Span::styled(" [CONTAINER ALERT: ", Style::default().fg(Color::Rgb(242, 135, 125)).bg(alert_bg).add_modifier(Modifier::BOLD))];
-        item.push(Span::styled(exited_cont.join(", "), Style::default().fg(Color::Rgb(245, 185, 130)).bg(alert_bg).add_modifier(Modifier::BOLD)));
-        item.push(Span::styled(" EXITED] ", Style::default().fg(Color::Rgb(235, 125, 135)).bg(alert_bg).add_modifier(Modifier::BOLD)));
+        let mut item = vec![Span::styled(
+            " [CONTAINER ALERT: ",
+            Style::default()
+                .fg(Color::Rgb(242, 135, 125))
+                .bg(alert_bg)
+                .add_modifier(Modifier::BOLD),
+        )];
+        item.push(Span::styled(
+            exited_cont.join(", "),
+            Style::default()
+                .fg(Color::Rgb(245, 185, 130))
+                .bg(alert_bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        item.push(Span::styled(
+            " EXITED] ",
+            Style::default()
+                .fg(Color::Rgb(235, 125, 135))
+                .bg(alert_bg)
+                .add_modifier(Modifier::BOLD),
+        ));
         alert_items.push(item);
         any_alert = true;
     }
 
     // Check uptime endpoints down
-    let down_endpoints: Vec<(&str, Option<u16>, &str, Option<&str>)> = snap.uptime_monitors.iter().filter(|m| !m.is_up).map(|m| (m.name.as_str(), m.status_code, m.target.as_str(), m.error.as_deref())).collect();
+    let down_endpoints: Vec<(&str, Option<u16>, &str, Option<&str>)> = snap
+        .uptime_monitors
+        .iter()
+        .filter(|m| !m.is_up)
+        .map(|m| {
+            (
+                m.name.as_str(),
+                m.status_code,
+                m.target.as_str(),
+                m.error.as_deref(),
+            )
+        })
+        .collect();
     if !down_endpoints.is_empty() {
         let alert_bg = Color::Rgb(48, 22, 28);
         for (ep_name, code, ep_url, ep_err) in down_endpoints.iter().take(2) {
@@ -7441,10 +8317,31 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 (None, None) => "TIMEOUT/REFUSED".to_string(),
             };
             let short_url = truncate_str(ep_url, 26);
-            let mut item = vec![Span::styled(" [OUTAGE ALERT: ", Style::default().fg(Color::Rgb(235, 125, 135)).bg(alert_bg).add_modifier(Modifier::BOLD))];
-            item.push(Span::styled(format!("{ep_name} "), Style::default().fg(Color::Rgb(245, 175, 135)).bg(alert_bg).add_modifier(Modifier::BOLD)));
-            item.push(Span::styled(format!("({short_url}) "), Style::default().fg(Color::Rgb(195, 165, 215)).bg(alert_bg)));
-            item.push(Span::styled(format!("{code_str} DOWN] "), Style::default().fg(Color::Rgb(240, 185, 120)).bg(alert_bg).add_modifier(Modifier::BOLD)));
+            let mut item = vec![Span::styled(
+                " [OUTAGE ALERT: ",
+                Style::default()
+                    .fg(Color::Rgb(235, 125, 135))
+                    .bg(alert_bg)
+                    .add_modifier(Modifier::BOLD),
+            )];
+            item.push(Span::styled(
+                format!("{ep_name} "),
+                Style::default()
+                    .fg(Color::Rgb(245, 175, 135))
+                    .bg(alert_bg)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            item.push(Span::styled(
+                format!("({short_url}) "),
+                Style::default().fg(Color::Rgb(195, 165, 215)).bg(alert_bg),
+            ));
+            item.push(Span::styled(
+                format!("{code_str} DOWN] "),
+                Style::default()
+                    .fg(Color::Rgb(240, 185, 120))
+                    .bg(alert_bg)
+                    .add_modifier(Modifier::BOLD),
+            ));
             alert_items.push(item);
             any_alert = true;
         }
@@ -7452,16 +8349,32 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     // Check hardware alerts
     if snap.cpu_temp_c > 85.0 {
-        alert_items.push(vec![Span::styled(" [ALERT: Thermal > 85°C] ", Style::default().fg(Color::Rgb(238, 128, 120)).bg(Color::Rgb(48, 22, 28)).add_modifier(Modifier::BOLD))]);
+        alert_items.push(vec![Span::styled(
+            " [ALERT: Thermal > 85°C] ",
+            Style::default()
+                .fg(Color::Rgb(238, 128, 120))
+                .bg(Color::Rgb(48, 22, 28))
+                .add_modifier(Modifier::BOLD),
+        )]);
         any_alert = true;
     }
     if snap.cpu_pct > 80.0 {
-        alert_items.push(vec![Span::styled(" [ALERT: High CPU Load > 80%] ", Style::default().fg(palette.warning).add_modifier(Modifier::BOLD))]);
+        alert_items.push(vec![Span::styled(
+            " [ALERT: High CPU Load > 80%] ",
+            Style::default()
+                .fg(palette.warning)
+                .add_modifier(Modifier::BOLD),
+        )]);
         any_alert = true;
     }
     let ram_ratio = (snap.ram_used_mb as f64) / (snap.ram_total_mb.max(1) as f64);
     if ram_ratio > 0.85 {
-        alert_items.push(vec![Span::styled(" [ALERT: Low RAM Available] ", Style::default().fg(palette.danger).add_modifier(Modifier::BOLD))]);
+        alert_items.push(vec![Span::styled(
+            " [ALERT: Low RAM Available] ",
+            Style::default()
+                .fg(palette.danger)
+                .add_modifier(Modifier::BOLD),
+        )]);
         any_alert = true;
     }
 
@@ -7479,7 +8392,9 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             let remaining_total = alert_items.len().saturating_sub(items_shown);
             alert_line2.push(Span::styled(
                 format!(" …+{} alerts", remaining_total),
-                Style::default().fg(Color::Rgb(230, 185, 240)).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Rgb(230, 185, 240))
+                    .add_modifier(Modifier::BOLD),
             ));
             break;
         }
@@ -7492,10 +8407,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ));
     }
 
-    let summary_lines = vec![
-        Line::from(alerts_spans),
-        Line::from(alert_line2),
-    ];
+    let summary_lines = vec![Line::from(alerts_spans), Line::from(alert_line2)];
     f.render_widget(Paragraph::new(summary_lines), alerts_inner);
 
     // ── Bottom: Six Executive Command Center Panels ──────────────────────────
@@ -7514,26 +8426,17 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
         let upper_cols = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(50),
-                Constraint::Percentage(50),
-            ])
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(row_chunks[0]);
 
         let middle_cols = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(50),
-                Constraint::Percentage(50),
-            ])
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(row_chunks[1]);
 
         let lower_cols = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(50),
-                Constraint::Percentage(50),
-            ])
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(row_chunks[2]);
 
         let fleet_focused = app.dashboard_focused_panel == 0;
@@ -7550,36 +8453,110 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         let analytics_scroll = app.dashboard_analytics_scroll;
         let proc_selected = app.dashboard_proc_selected;
         draw_fleet_nodes_resume_panel(f, app, upper_cols[0], &palette, fleet_scroll, fleet_focused);
-        draw_services_health_resume_panel(f, app, upper_cols[1], &palette, services_scroll, services_focused);
-        draw_docker_containers_resume_panel(f, app, middle_cols[0], &palette, containers_scroll, containers_focused);
-        draw_uptime_monitors_resume_panel(f, app, middle_cols[1], &palette, monitors_scroll, monitors_focused);
-        draw_web_analytics_resume_panel(f, app, lower_cols[0], &palette, analytics_scroll, analytics_focused);
-        draw_host_top_processes_panel(f, app, lower_cols[1], &palette, proc_selected, procs_focused);
+        draw_services_health_resume_panel(
+            f,
+            app,
+            upper_cols[1],
+            &palette,
+            services_scroll,
+            services_focused,
+        );
+        draw_docker_containers_resume_panel(
+            f,
+            app,
+            middle_cols[0],
+            &palette,
+            containers_scroll,
+            containers_focused,
+        );
+        draw_uptime_monitors_resume_panel(
+            f,
+            app,
+            middle_cols[1],
+            &palette,
+            monitors_scroll,
+            monitors_focused,
+        );
+        draw_web_analytics_resume_panel(
+            f,
+            app,
+            lower_cols[0],
+            &palette,
+            analytics_scroll,
+            analytics_focused,
+        );
+        draw_host_top_processes_panel(
+            f,
+            app,
+            lower_cols[1],
+            &palette,
+            proc_selected,
+            procs_focused,
+        );
     } else {
         // Compact view: switch between Upper, Middle, and Lower panels
         let cols = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(50),
-                Constraint::Percentage(50),
-            ])
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(bottom_area);
 
         if app.dashboard_focused_panel <= 1 {
             let fleet_scroll = app.dashboard_fleet_scroll;
             let services_scroll = app.dashboard_services_scroll;
-            draw_fleet_nodes_resume_panel(f, app, cols[0], &palette, fleet_scroll, app.dashboard_focused_panel == 0);
-            draw_services_health_resume_panel(f, app, cols[1], &palette, services_scroll, app.dashboard_focused_panel == 1);
+            draw_fleet_nodes_resume_panel(
+                f,
+                app,
+                cols[0],
+                &palette,
+                fleet_scroll,
+                app.dashboard_focused_panel == 0,
+            );
+            draw_services_health_resume_panel(
+                f,
+                app,
+                cols[1],
+                &palette,
+                services_scroll,
+                app.dashboard_focused_panel == 1,
+            );
         } else if app.dashboard_focused_panel <= 3 {
             let containers_scroll = app.dashboard_containers_scroll;
             let monitors_scroll = app.dashboard_monitors_scroll;
-            draw_docker_containers_resume_panel(f, app, cols[0], &palette, containers_scroll, app.dashboard_focused_panel == 2);
-            draw_uptime_monitors_resume_panel(f, app, cols[1], &palette, monitors_scroll, app.dashboard_focused_panel == 3);
+            draw_docker_containers_resume_panel(
+                f,
+                app,
+                cols[0],
+                &palette,
+                containers_scroll,
+                app.dashboard_focused_panel == 2,
+            );
+            draw_uptime_monitors_resume_panel(
+                f,
+                app,
+                cols[1],
+                &palette,
+                monitors_scroll,
+                app.dashboard_focused_panel == 3,
+            );
         } else {
             let analytics_scroll = app.dashboard_analytics_scroll;
             let proc_selected = app.dashboard_proc_selected;
-            draw_web_analytics_resume_panel(f, app, cols[0], &palette, analytics_scroll, app.dashboard_focused_panel == 4);
-            draw_host_top_processes_panel(f, app, cols[1], &palette, proc_selected, app.dashboard_focused_panel == 5);
+            draw_web_analytics_resume_panel(
+                f,
+                app,
+                cols[0],
+                &palette,
+                analytics_scroll,
+                app.dashboard_focused_panel == 4,
+            );
+            draw_host_top_processes_panel(
+                f,
+                app,
+                cols[1],
+                &palette,
+                proc_selected,
+                app.dashboard_focused_panel == 5,
+            );
         }
     }
 }
@@ -7599,8 +8576,15 @@ fn draw_host_top_processes_panel(
     }
     app.register_hitbox(area, HitboxAction::FocusDashboardPanel(5));
     let procs = &app.latest_snap.top_processes;
-    let focus_hint = if is_focused { " [● FOCUSED - ↑/↓ Select, k Kill]" } else { "" };
-    let title = format!(" ■ Host Top Processes · Task Manager ({}){focus_hint} ", procs.len());
+    let focus_hint = if is_focused {
+        " [● FOCUSED - ↑/↓ Select, k Kill]"
+    } else {
+        ""
+    };
+    let title = format!(
+        " ■ Host Top Processes · Task Manager ({}){focus_hint} ",
+        procs.len()
+    );
     let border_color = if is_focused {
         palette.danger
     } else {
@@ -7654,9 +8638,16 @@ fn draw_host_top_processes_panel(
 
         let (row_style, pid_style, name_style, act_style) = if is_selected {
             (
-                Style::default().bg(palette.highlight_bg).fg(palette.highlight_fg).add_modifier(Modifier::BOLD),
-                Style::default().fg(Color::Black).add_modifier(Modifier::BOLD),
-                Style::default().fg(Color::Black).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .bg(palette.highlight_bg)
+                    .fg(palette.highlight_fg)
+                    .add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             )
         } else {
@@ -7672,11 +8663,21 @@ fn draw_host_top_processes_panel(
         let row_y = row_start_y + screen_row as u16;
 
         hitboxes_to_register.push((
-            Rect { x: inner.x, y: row_y, width: inner.width.saturating_sub(10), height: 1 },
+            Rect {
+                x: inner.x,
+                y: row_y,
+                width: inner.width.saturating_sub(10),
+                height: 1,
+            },
             HitboxAction::SelectProcess(idx),
         ));
         hitboxes_to_register.push((
-            Rect { x: inner.x + inner.width.saturating_sub(10), y: row_y, width: 10, height: 1 },
+            Rect {
+                x: inner.x + inner.width.saturating_sub(10),
+                y: row_y,
+                width: 10,
+                height: 1,
+            },
             HitboxAction::KillProcess(p.pid),
         ));
 
@@ -7711,17 +8712,20 @@ fn draw_host_top_processes_panel(
     let table = Table::new(
         rows,
         [
-            Constraint::Length(7),  // PID
-            Constraint::Min(12),    // NAME
-            Constraint::Length(8),  // CPU%
-            Constraint::Length(8),  // MEM(MB)
-            Constraint::Length(9),  // STATUS
-            Constraint::Length(9),  // ACTION
+            Constraint::Length(7), // PID
+            Constraint::Min(12),   // NAME
+            Constraint::Length(8), // CPU%
+            Constraint::Length(8), // MEM(MB)
+            Constraint::Length(9), // STATUS
+            Constraint::Length(9), // ACTION
         ],
     )
     .header(
-        Row::new(vec!["PID", "NAME", "CPU%", "MEM", "STATUS", "ACTION"])
-            .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
+        Row::new(vec!["PID", "NAME", "CPU%", "MEM", "STATUS", "ACTION"]).style(
+            Style::default()
+                .fg(palette.warning)
+                .add_modifier(Modifier::BOLD),
+        ),
     );
     f.render_widget(table, inner);
 }
@@ -7743,8 +8747,16 @@ fn draw_fleet_nodes_resume_panel(
     let nodes = app.latest_snap.fleet_nodes.clone();
     let online_count = nodes.iter().filter(|n| n.status == "ONLINE").count();
     let total_count = nodes.len();
-    let focus_hint = if is_focused { " [● FOCUSED - Scroll j/k]" } else { "" };
-    let scroll_hint = if area.height < 12 { " [j↓ Docker/Uptime]" } else { "" };
+    let focus_hint = if is_focused {
+        " [● FOCUSED - Scroll j/k]"
+    } else {
+        ""
+    };
+    let scroll_hint = if area.height < 12 {
+        " [j↓ Docker/Uptime]"
+    } else {
+        ""
+    };
     let title = format!(" ■ Server Fleet Resume · Armada ({online_count}/{total_count} Online){focus_hint}{scroll_hint} ");
     let border_color = if is_focused {
         palette.accent
@@ -7777,20 +8789,40 @@ fn draw_fleet_nodes_resume_panel(
             None => "--".to_string(),
         };
 
-        let cpu_str = n.cpu_pct.map(|v| format!("{v:.1}%")).unwrap_or_else(|| "--".to_string());
-        let ram_str = n.ram_pct.map(|v| format!("{v}%")).unwrap_or_else(|| "--".to_string());
-        let disk_str = n.disk_pct.map(|v| format!("{v}%")).unwrap_or_else(|| "--".to_string());
+        let cpu_str = n
+            .cpu_pct
+            .map(|v| format!("{v:.1}%"))
+            .unwrap_or_else(|| "--".to_string());
+        let ram_str = n
+            .ram_pct
+            .map(|v| format!("{v}%"))
+            .unwrap_or_else(|| "--".to_string());
+        let disk_str = n
+            .disk_pct
+            .map(|v| format!("{v}%"))
+            .unwrap_or_else(|| "--".to_string());
 
         let cpu_col = if let Some(cpu) = n.cpu_pct {
-            if cpu >= 80.0 { palette.danger } else if cpu >= 50.0 { palette.warning } else { palette.success }
+            if cpu >= 80.0 {
+                palette.danger
+            } else if cpu >= 50.0 {
+                palette.warning
+            } else {
+                palette.success
+            }
         } else {
             palette.text_muted
         };
 
         rows.push(Row::new(vec![
-            Cell::from(n.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Cell::from(n.name.clone()).style(
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Cell::from(n.ip.clone()).style(Style::default().fg(palette.accent)),
-            Cell::from(status_label).style(Style::default().fg(status_col).add_modifier(Modifier::BOLD)),
+            Cell::from(status_label)
+                .style(Style::default().fg(status_col).add_modifier(Modifier::BOLD)),
             Cell::from(rtt_str).style(Style::default().fg(palette.chart[0])),
             Cell::from(cpu_str).style(Style::default().fg(cpu_col)),
             Cell::from(ram_str).style(Style::default().fg(palette.chart[1])),
@@ -7812,7 +8844,7 @@ fn draw_fleet_nodes_resume_panel(
 
     if rows.is_empty() {
         rows.push(Row::new(vec![
-            Cell::from("No fleet nodes available").style(Style::default().fg(palette.text_muted)),
+            Cell::from("No fleet nodes available").style(Style::default().fg(palette.text_muted))
         ]));
     }
 
@@ -7838,7 +8870,11 @@ fn draw_fleet_nodes_resume_panel(
             "RAM %",
             "DISK %",
         ])
-        .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
+        .style(
+            Style::default()
+                .fg(palette.warning)
+                .add_modifier(Modifier::BOLD),
+        ),
     );
     f.render_widget(table, inner);
 }
@@ -7858,10 +8894,19 @@ fn draw_services_health_resume_panel(
     }
     app.register_hitbox(area, HitboxAction::FocusDashboardPanel(1));
     let services = app.latest_snap.service_health.clone();
-    let active_count = services.iter().filter(|s| s.state == crate::systat::DaemonState::Active).count();
+    let active_count = services
+        .iter()
+        .filter(|s| s.state == crate::systat::DaemonState::Active)
+        .count();
     let total_count = services.len();
-    let focus_hint = if is_focused { " [● FOCUSED - Scroll j/k]" } else { "" };
-    let title = format!(" ■ Services Health Resume · Daemons ({active_count}/{total_count} Active){focus_hint} ");
+    let focus_hint = if is_focused {
+        " [● FOCUSED - Scroll j/k]"
+    } else {
+        ""
+    };
+    let title = format!(
+        " ■ Services Health Resume · Daemons ({active_count}/{total_count} Active){focus_hint} "
+    );
     let border_color = if is_focused {
         palette.accent
     } else if active_count == total_count && total_count > 0 {
@@ -7889,18 +8934,24 @@ fn draw_services_health_resume_panel(
 
         let endpoint_disp = truncate_ellipsis(&s.endpoint, 18);
         rows.push(Row::new(vec![
-            Cell::from(s.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Cell::from(s.name.clone()).style(
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Cell::from(s.category.clone()).style(Style::default().fg(palette.accent)),
-            Cell::from(status_badge).style(Style::default().fg(status_col).add_modifier(Modifier::BOLD)),
+            Cell::from(status_badge)
+                .style(Style::default().fg(status_col).add_modifier(Modifier::BOLD)),
             Cell::from(endpoint_disp).style(Style::default().fg(palette.chart[0])),
             Cell::from(s.detail.clone()).style(Style::default().fg(palette.text_muted)),
         ]));
     }
 
     if rows.is_empty() {
-        rows.push(Row::new(vec![
-            Cell::from("No ecosystem daemons registered").style(Style::default().fg(palette.text_muted)),
-        ]));
+        rows.push(Row::new(vec![Cell::from(
+            "No ecosystem daemons registered",
+        )
+        .style(Style::default().fg(palette.text_muted))]));
     }
 
     let table = Table::new(
@@ -7921,7 +8972,11 @@ fn draw_services_health_resume_panel(
             "PORT / TARGET",
             "DETAILS",
         ])
-        .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
+        .style(
+            Style::default()
+                .fg(palette.warning)
+                .add_modifier(Modifier::BOLD),
+        ),
     );
     f.render_widget(table, inner);
 }
@@ -7944,9 +8999,17 @@ fn draw_docker_containers_resume_panel(
     let running_count = containers.iter().filter(|c| c.state == "running").count();
     let total_count = containers.len();
     let down_count = total_count.saturating_sub(running_count);
-    let focus_hint = if is_focused { " [● FOCUSED - Scroll j/k]" } else { "" };
+    let focus_hint = if is_focused {
+        " [● FOCUSED - Scroll j/k]"
+    } else {
+        ""
+    };
 
-    let scroll_hint = if area.height < 12 { " [k↑ Fleet/Services]" } else { "" };
+    let scroll_hint = if area.height < 12 {
+        " [k↑ Fleet/Services]"
+    } else {
+        ""
+    };
     let (title, border_color) = if is_focused {
         (
             format!(" ■ Docker Containers Resume · {running_count}/{total_count} Containers Running{focus_hint} "),
@@ -7978,7 +9041,8 @@ fn draw_docker_containers_resume_panel(
 
     let mut rows = Vec::new();
 
-    let mut sorted_containers: Vec<(usize, &crate::systat::DockerContainerInfo)> = containers.iter().enumerate().collect();
+    let mut sorted_containers: Vec<(usize, &crate::systat::DockerContainerInfo)> =
+        containers.iter().enumerate().collect();
     sorted_containers.sort_by_key(|(_, c)| if c.state == "running" { 1 } else { 0 });
 
     let scroll_offset = scroll.min(sorted_containers.len().saturating_sub(1));
@@ -8028,7 +9092,11 @@ fn draw_docker_containers_resume_panel(
                 .join(", ")
         };
 
-        let row_bg = if is_down { Some(Color::Rgb(46, 22, 28)) } else { None };
+        let row_bg = if is_down {
+            Some(Color::Rgb(46, 22, 28))
+        } else {
+            None
+        };
         let cell_style = |color: Color, bold: bool| -> Style {
             let mut s = Style::default().fg(color);
             if bold {
@@ -8063,7 +9131,7 @@ fn draw_docker_containers_resume_panel(
 
     if rows.is_empty() {
         rows.push(Row::new(vec![
-            Cell::from("No active containers").style(Style::default().fg(palette.text_muted)),
+            Cell::from("No active containers").style(Style::default().fg(palette.text_muted))
         ]));
     }
 
@@ -8085,7 +9153,11 @@ fn draw_docker_containers_resume_panel(
             "HEALTH",
             "IMAGE / REPO",
         ])
-        .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
+        .style(
+            Style::default()
+                .fg(palette.warning)
+                .add_modifier(Modifier::BOLD),
+        ),
     );
     f.render_widget(table, inner);
 }
@@ -8108,9 +9180,17 @@ fn draw_uptime_monitors_resume_panel(
     let up_count = monitors.iter().filter(|m| m.is_up).count();
     let total_count = monitors.len();
     let down_count = total_count.saturating_sub(up_count);
-    let focus_hint = if is_focused { " [● FOCUSED - Scroll j/k]" } else { "" };
+    let focus_hint = if is_focused {
+        " [● FOCUSED - Scroll j/k]"
+    } else {
+        ""
+    };
 
-    let scroll_hint = if area.height < 12 { " [k↑ Fleet/Services]" } else { "" };
+    let scroll_hint = if area.height < 12 {
+        " [k↑ Fleet/Services]"
+    } else {
+        ""
+    };
     let (title, border_color) = if is_focused {
         (
             format!(" ■ Uptime Monitors Resume · {up_count}/{total_count} UP{focus_hint} "),
@@ -8142,7 +9222,8 @@ fn draw_uptime_monitors_resume_panel(
 
     let mut rows = Vec::new();
 
-    let mut sorted_monitors: Vec<(usize, &crate::systat::UptimeMonitor)> = monitors.iter().enumerate().collect();
+    let mut sorted_monitors: Vec<(usize, &crate::systat::UptimeMonitor)> =
+        monitors.iter().enumerate().collect();
     sorted_monitors.sort_by_key(|(_, m)| if m.is_up { 1 } else { 0 });
 
     let scroll_offset = scroll.min(sorted_monitors.len().saturating_sub(1));
@@ -8173,7 +9254,10 @@ fn draw_uptime_monitors_resume_panel(
                 }
             }
         };
-        let rtt_str = m.latency_ms.map(|ms| format!("{ms}ms")).unwrap_or_else(|| "--".to_string());
+        let rtt_str = m
+            .latency_ms
+            .map(|ms| format!("{ms}ms"))
+            .unwrap_or_else(|| "--".to_string());
 
         let spark_col = if m.uptime_pct >= 95.0 {
             palette.success
@@ -8188,12 +9272,19 @@ fn draw_uptime_monitors_resume_panel(
         let history_len = m.history.len();
         let pad_needed = 20usize.saturating_sub(history_len);
         for _ in 0..pad_needed {
-            sparkline_spans.push(Span::styled("█", Style::default().fg(Color::Rgb(60, 60, 60))));
+            sparkline_spans.push(Span::styled(
+                "█",
+                Style::default().fg(Color::Rgb(60, 60, 60)),
+            ));
         }
         for &up in m.history.iter().take(20) {
             let col = if up {
                 if let Some(ms) = m.latency_ms {
-                    if ms > 500 { Color::Yellow } else { palette.success }
+                    if ms > 500 {
+                        Color::Yellow
+                    } else {
+                        palette.success
+                    }
                 } else {
                     palette.success
                 }
@@ -8202,10 +9293,17 @@ fn draw_uptime_monitors_resume_panel(
             };
             sparkline_spans.push(Span::styled("█", Style::default().fg(col)));
         }
-        sparkline_spans.push(Span::styled(format!("] {:>3.0}%", m.uptime_pct), Style::default().fg(spark_col)));
+        sparkline_spans.push(Span::styled(
+            format!("] {:>3.0}%", m.uptime_pct),
+            Style::default().fg(spark_col),
+        ));
 
         let is_down = !m.is_up;
-        let row_bg = if is_down { Some(Color::Rgb(46, 22, 28)) } else { None };
+        let row_bg = if is_down {
+            Some(Color::Rgb(46, 22, 28))
+        } else {
+            None
+        };
         let cell_style = |color: Color, bold: bool| -> Style {
             let mut s = Style::default().fg(color);
             if bold {
@@ -8218,17 +9316,41 @@ fn draw_uptime_monitors_resume_panel(
         };
 
         let endpoint_spans = vec![
-            Span::styled(&m.name, cell_style(if is_down { Color::LightRed } else { Color::White }, true)),
+            Span::styled(
+                &m.name,
+                cell_style(
+                    if is_down {
+                        Color::LightRed
+                    } else {
+                        Color::White
+                    },
+                    true,
+                ),
+            ),
             Span::styled(
                 format!(" ({})", m.target),
-                cell_style(if is_down { Color::Rgb(200, 140, 140) } else { palette.chart[0] }, false),
+                cell_style(
+                    if is_down {
+                        Color::Rgb(200, 140, 140)
+                    } else {
+                        palette.chart[0]
+                    },
+                    false,
+                ),
             ),
         ];
 
         rows.push(Row::new(vec![
             Cell::from(Line::from(endpoint_spans)),
             Cell::from(status_label).style(cell_style(status_col, true)),
-            Cell::from(http_code).style(cell_style(if is_down { Color::LightRed } else { palette.chart[0] }, false)),
+            Cell::from(http_code).style(cell_style(
+                if is_down {
+                    Color::LightRed
+                } else {
+                    palette.chart[0]
+                },
+                false,
+            )),
             Cell::from(rtt_str).style(cell_style(palette.text, false)),
             Cell::from(Line::from(sparkline_spans)),
         ]));
@@ -8247,9 +9369,8 @@ fn draw_uptime_monitors_resume_panel(
     }
 
     if rows.is_empty() {
-        rows.push(Row::new(vec![
-            Cell::from("No uptime monitors registered").style(Style::default().fg(palette.text_muted)),
-        ]));
+        rows.push(Row::new(vec![Cell::from("No uptime monitors registered")
+            .style(Style::default().fg(palette.text_muted))]));
     }
 
     let table = Table::new(
@@ -8270,7 +9391,11 @@ fn draw_uptime_monitors_resume_panel(
             "RTT",
             "HEARTBEAT HISTORY (20)",
         ])
-        .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
+        .style(
+            Style::default()
+                .fg(palette.warning)
+                .add_modifier(Modifier::BOLD),
+        ),
     );
     f.render_widget(table, inner);
 }
@@ -8293,12 +9418,20 @@ fn draw_web_analytics_resume_panel(
     let focus_hint = if is_focused { " [● FOCUSED]" } else { "" };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" ■ Product Analytics (Umami / CA-Product Landings) · {} Live{focus_hint} ", a.active_visitors))
-        .border_style(Style::default().fg(if is_focused { palette.success } else { palette.accent }));
+        .title(format!(
+            " ■ Product Analytics (Umami / CA-Product Landings) · {} Live{focus_hint} ",
+            a.active_visitors
+        ))
+        .border_style(Style::default().fg(if is_focused {
+            palette.success
+        } else {
+            palette.accent
+        }));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let mut sorted_products: Vec<&crate::systat::ProductAnalyticsSummary> = a.product_analytics.iter().collect();
+    let mut sorted_products: Vec<&crate::systat::ProductAnalyticsSummary> =
+        a.product_analytics.iter().collect();
     sorted_products.sort_by_key(|p| {
         if p.pageviews > 0 || p.status == "ACTIVE" || p.status == "IDLE" {
             0
@@ -8321,11 +9454,16 @@ fn draw_web_analytics_resume_panel(
             standby_items.push(p);
         } else {
             rows.push(Row::new(vec![
-                Cell::from(p.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Cell::from(p.name.clone()).style(
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Cell::from(p.domain.clone()).style(Style::default().fg(palette.accent)),
                 Cell::from(format!("{}", p.pageviews)).style(Style::default().fg(palette.chart[0])),
                 Cell::from(format!("{}", p.visitors)).style(Style::default().fg(palette.chart[1])),
-                Cell::from(stat_label).style(Style::default().fg(stat_color).add_modifier(Modifier::BOLD)),
+                Cell::from(stat_label)
+                    .style(Style::default().fg(stat_color).add_modifier(Modifier::BOLD)),
             ]));
         }
     }
@@ -8334,21 +9472,40 @@ fn draw_web_analytics_resume_panel(
         rows.push(Row::new(vec![
             Cell::from(format!("● {} standby items grouped", standby_items.len()))
                 .style(Style::default().fg(palette.text_muted)),
-            Cell::from(standby_items.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", "))
-                .style(Style::default().fg(palette.text_muted)),
+            Cell::from(
+                standby_items
+                    .iter()
+                    .map(|p| p.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )
+            .style(Style::default().fg(palette.text_muted)),
             Cell::from("--").style(Style::default().fg(palette.text_muted)),
             Cell::from("--").style(Style::default().fg(palette.text_muted)),
-            Cell::from("STANDBY").style(Style::default().fg(palette.text_muted).add_modifier(Modifier::BOLD)),
+            Cell::from("STANDBY").style(
+                Style::default()
+                    .fg(palette.text_muted)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]));
     }
 
     if rows.is_empty() {
         rows.push(Row::new(vec![
             Cell::from("TOTAL PAGEVIEWS").style(Style::default().fg(palette.text_muted)),
-            Cell::from(format!("{}", a.pageviews)).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Cell::from(format!("{}", a.pageviews)).style(
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Cell::from("UNIQUE VISITORS").style(Style::default().fg(palette.text_muted)),
-            Cell::from(format!("{}", a.unique_visitors)).style(Style::default().fg(palette.success).add_modifier(Modifier::BOLD)),
-            Cell::from(format!("Bounce: {:.1}%", a.bounce_rate)).style(Style::default().fg(palette.warning)),
+            Cell::from(format!("{}", a.unique_visitors)).style(
+                Style::default()
+                    .fg(palette.success)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from(format!("Bounce: {:.1}%", a.bounce_rate))
+                .style(Style::default().fg(palette.warning)),
         ]));
     }
 
@@ -8363,8 +9520,18 @@ fn draw_web_analytics_resume_panel(
         ],
     )
     .header(
-        Row::new(vec!["PRODUCT / SITE", "DOMAIN / URL", "VIEWS", "VISITORS", "STATUS"])
-            .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
+        Row::new(vec![
+            "PRODUCT / SITE",
+            "DOMAIN / URL",
+            "VIEWS",
+            "VISITORS",
+            "STATUS",
+        ])
+        .style(
+            Style::default()
+                .fg(palette.warning)
+                .add_modifier(Modifier::BOLD),
+        ),
     );
     f.render_widget(table, inner);
 }
@@ -8385,8 +9552,14 @@ fn draw_web_analytics_resume_panel2(
     let focus_hint = if is_focused { " [● FOCUSED]" } else { "" };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" 🌐 Product Landing Pages & Top Referrers{focus_hint} "))
-        .border_style(Style::default().fg(if is_focused { palette.success } else { palette.border }));
+        .title(format!(
+            " 🌐 Product Landing Pages & Top Referrers{focus_hint} "
+        ))
+        .border_style(Style::default().fg(if is_focused {
+            palette.success
+        } else {
+            palette.border
+        }));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -8409,7 +9582,11 @@ fn draw_web_analytics_resume_panel2(
         ]));
     } else {
         for (url, count) in a.top_pages.iter().take(4) {
-            let ref_str = a.top_referrers.first().map(|(r, _)| r.as_str()).unwrap_or("Direct");
+            let ref_str = a
+                .top_referrers
+                .first()
+                .map(|(r, _)| r.as_str())
+                .unwrap_or("Direct");
             rows.push(Row::new(vec![
                 Cell::from(url.clone()).style(Style::default().fg(Color::White)),
                 Cell::from(format!("{count} views")).style(Style::default().fg(palette.accent)),
@@ -8427,8 +9604,11 @@ fn draw_web_analytics_resume_panel2(
         ],
     )
     .header(
-        Row::new(vec!["LANDING PAGE", "TRAFFIC / VIEWS", "SOURCE / REFERRER"])
-            .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
+        Row::new(vec!["LANDING PAGE", "TRAFFIC / VIEWS", "SOURCE / REFERRER"]).style(
+            Style::default()
+                .fg(palette.warning)
+                .add_modifier(Modifier::BOLD),
+        ),
     );
     f.render_widget(table, inner);
 }
@@ -8479,7 +9659,10 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let target_display = if app.project_server_target == 0 {
         "LOCAL".to_string()
     } else {
-        target_list.get(app.project_server_target - 1).map(|(name, _)| name.clone()).unwrap_or_else(|| "LOCAL".to_string())
+        target_list
+            .get(app.project_server_target - 1)
+            .map(|(name, _)| name.clone())
+            .unwrap_or_else(|| "LOCAL".to_string())
     };
     let target_label_text = format!(" [🖥 Target: {} (g)] ", target_display);
     let target_btn_w = (target_label_text.len() + 1) as u16;
@@ -8489,108 +9672,228 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let y = action_inner.y;
 
     app.register_hitbox(
-        Rect { x: cur_x, y, width: btn_hier_w, height: 1 },
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_hier_w,
+            height: 1,
+        },
         HitboxAction::SelectProjectView(ProjectView::Hierarchy),
     );
     cur_x += btn_hier_w + 1;
 
     app.register_hitbox(
-        Rect { x: cur_x, y, width: btn_tree_w, height: 1 },
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_tree_w,
+            height: 1,
+        },
         HitboxAction::SelectProjectView(ProjectView::Tree),
     );
     cur_x += btn_tree_w + 1;
 
     app.register_hitbox(
-        Rect { x: cur_x, y, width: btn_cont_w, height: 1 },
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_cont_w,
+            height: 1,
+        },
         HitboxAction::SelectProjectView(ProjectView::Containers),
     );
     cur_x += btn_cont_w + 1;
 
     app.register_hitbox(
-        Rect { x: cur_x, y, width: btn_target_w, height: 1 },
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_target_w,
+            height: 1,
+        },
         HitboxAction::CycleProjectServer,
     );
     cur_x += btn_target_w + 1;
 
     app.register_hitbox(
-        Rect { x: cur_x, y, width: btn_add_proj_w, height: 1 },
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_add_proj_w,
+            height: 1,
+        },
         HitboxAction::AddProject,
     );
     cur_x += btn_add_proj_w + 1;
 
     app.register_hitbox(
-        Rect { x: cur_x, y, width: btn_add_cont_w, height: 1 },
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_add_cont_w,
+            height: 1,
+        },
         HitboxAction::AddContainer,
     );
     cur_x += btn_add_cont_w + 2;
 
     app.register_hitbox(
-        Rect { x: cur_x, y, width: btn_start_w, height: 1 },
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_start_w,
+            height: 1,
+        },
         HitboxAction::ContainerStart(app.selected_container),
     );
     cur_x += btn_start_w + 1;
 
     app.register_hitbox(
-        Rect { x: cur_x, y, width: btn_stop_w, height: 1 },
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_stop_w,
+            height: 1,
+        },
         HitboxAction::ContainerStop(app.selected_container),
     );
     cur_x += btn_stop_w + 1;
 
     app.register_hitbox(
-        Rect { x: cur_x, y, width: btn_restart_w, height: 1 },
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_restart_w,
+            height: 1,
+        },
         HitboxAction::ContainerRestart(app.selected_container),
     );
     cur_x += btn_restart_w + 1;
 
     if app.project_view == ProjectView::Containers {
         app.register_hitbox(
-            Rect { x: cur_x, y, width: btn_edit_w, height: 1 },
+            Rect {
+                x: cur_x,
+                y,
+                width: btn_edit_w,
+                height: 1,
+            },
             HitboxAction::EditContainer,
         );
         cur_x += btn_edit_w + 1;
         app.register_hitbox(
-            Rect { x: cur_x, y, width: btn_del_w, height: 1 },
+            Rect {
+                x: cur_x,
+                y,
+                width: btn_del_w,
+                height: 1,
+            },
             HitboxAction::RemoveContainer,
         );
     } else {
         app.register_hitbox(
-            Rect { x: cur_x, y, width: btn_del_w, height: 1 },
+            Rect {
+                x: cur_x,
+                y,
+                width: btn_del_w,
+                height: 1,
+            },
             HitboxAction::RemoveProject,
         );
     }
 
     let mut bar_spans = vec![
-        Span::styled(" [📁 Hierarchy] ", Style::default().fg(btn_hier_fg).bg(btn_hier_bg).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [📁 Hierarchy] ",
+            Style::default()
+                .fg(btn_hier_fg)
+                .bg(btn_hier_bg)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [🌳 Tree] ", Style::default().fg(btn_tree_fg).bg(btn_tree_bg).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [🌳 Tree] ",
+            Style::default()
+                .fg(btn_tree_fg)
+                .bg(btn_tree_bg)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [🐳 Containers] ", Style::default().fg(btn_cont_fg).bg(btn_cont_bg).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [🐳 Containers] ",
+            Style::default()
+                .fg(btn_cont_fg)
+                .bg(btn_cont_bg)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
         Span::styled(
             target_label_text.as_str(),
-            Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::LightMagenta)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" │ "),
     ];
     bar_spans.push(Span::raw(" "));
-    bar_spans.push(Span::styled(" [+ Add Project] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+    bar_spans.push(Span::styled(
+        " [+ Add Project] ",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    ));
     bar_spans.push(Span::raw(" "));
-    bar_spans.push(Span::styled(" [+ Add Container] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+    bar_spans.push(Span::styled(
+        " [+ Add Container] ",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
     bar_spans.push(Span::raw(" │ Actions: "));
-    bar_spans.push(Span::styled(" [▶ Start] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)));
+    bar_spans.push(Span::styled(
+        " [▶ Start] ",
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    ));
     bar_spans.push(Span::raw(" "));
-    bar_spans.push(Span::styled(" [■ Stop] ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)));
+    bar_spans.push(Span::styled(
+        " [■ Stop] ",
+        Style::default()
+            .fg(Color::LightRed)
+            .add_modifier(Modifier::BOLD),
+    ));
     bar_spans.push(Span::raw(" "));
-    bar_spans.push(Span::styled(" [↺ Restart] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+    bar_spans.push(Span::styled(
+        " [↺ Restart] ",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    ));
 
     if app.project_view == ProjectView::Containers {
         bar_spans.push(Span::raw(" "));
-        bar_spans.push(Span::styled(" [✎ Edit] (e) ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+        bar_spans.push(Span::styled(
+            " [✎ Edit] (e) ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
         bar_spans.push(Span::raw(" "));
-        bar_spans.push(Span::styled(" [🗑 Delete] (x) ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)));
+        bar_spans.push(Span::styled(
+            " [🗑 Delete] (x) ",
+            Style::default()
+                .fg(Color::LightRed)
+                .add_modifier(Modifier::BOLD),
+        ));
     } else {
         bar_spans.push(Span::raw(" "));
-        bar_spans.push(Span::styled(" [🗑 Delete] (x) ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)));
+        bar_spans.push(Span::styled(
+            " [🗑 Delete] (x) ",
+            Style::default()
+                .fg(Color::LightRed)
+                .add_modifier(Modifier::BOLD),
+        ));
     }
 
     f.render_widget(Paragraph::new(Line::from(bar_spans)), action_inner);
@@ -8656,32 +9959,53 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             let rows: Vec<Row> = if total_projects == 0 {
                 Vec::new()
             } else {
-                app.latest_snap
-                    .tracked_projects[start_idx..end_idx]
+                app.latest_snap.tracked_projects[start_idx..end_idx]
                     .iter()
                     .enumerate()
                     .map(|(offset, p)| {
                         let real_idx = start_idx + offset;
                         let is_sel = real_idx == app.selected_project;
-                        let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
+                        let bg = if is_sel {
+                            palette.row_selected_bg
+                        } else {
+                            Color::Reset
+                        };
                         let (dirty_badge, dirty_col) = if p.is_dirty {
                             ("● DIRTY", palette.warning)
                         } else {
                             ("● CLEAN", palette.success)
                         };
                         let repos_str = format!("📦 {}", p.repos.len());
-                        let cont_str = if p.containers.is_empty() { "-".to_string() } else { format!("🐳 {}", p.containers.len()) };
-                        let svc_str = if p.services.is_empty() { "-".to_string() } else { format!("⚙ {}", p.services.len()) };
-                        let db_str = if p.databases.is_empty() { "-".to_string() } else { format!("🗄 {}", p.databases.len()) };
+                        let cont_str = if p.containers.is_empty() {
+                            "-".to_string()
+                        } else {
+                            format!("🐳 {}", p.containers.len())
+                        };
+                        let svc_str = if p.services.is_empty() {
+                            "-".to_string()
+                        } else {
+                            format!("⚙ {}", p.services.len())
+                        };
+                        let db_str = if p.databases.is_empty() {
+                            "-".to_string()
+                        } else {
+                            format!("🗄 {}", p.databases.len())
+                        };
 
                         Row::new(vec![
-                            Cell::from(p.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                            Cell::from(p.category.clone()).style(Style::default().fg(palette.accent)),
+                            Cell::from(p.name.clone()).style(
+                                Style::default()
+                                    .fg(Color::White)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Cell::from(p.category.clone())
+                                .style(Style::default().fg(palette.accent)),
                             Cell::from(repos_str).style(Style::default().fg(palette.chart[0])),
                             Cell::from(cont_str).style(Style::default().fg(palette.success)),
                             Cell::from(svc_str).style(Style::default().fg(palette.warning)),
                             Cell::from(db_str).style(Style::default().fg(palette.accent)),
-                            Cell::from(dirty_badge).style(Style::default().fg(dirty_col).add_modifier(Modifier::BOLD)),
+                            Cell::from(dirty_badge)
+                                .style(Style::default().fg(dirty_col).add_modifier(Modifier::BOLD)),
                         ])
                         .style(Style::default().bg(bg))
                     })
@@ -8701,8 +10025,20 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 ],
             )
             .header(
-                Row::new(vec!["WORKSPACE", "CAT", "REPOS", "CONT", "SVC", "DBS", "STATUS"])
-                    .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
+                Row::new(vec![
+                    "WORKSPACE",
+                    "CAT",
+                    "REPOS",
+                    "CONT",
+                    "SVC",
+                    "DBS",
+                    "STATUS",
+                ])
+                .style(
+                    Style::default()
+                        .fg(palette.warning)
+                        .add_modifier(Modifier::BOLD),
+                ),
             );
             f.render_widget(table, inner);
 
@@ -8721,7 +10057,9 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
             // Right panel: Selected workspace resources (Repos, Containers, Services, DBs)
             if !app.latest_snap.tracked_projects.is_empty() {
-                let sel_idx = app.selected_project.min(app.latest_snap.tracked_projects.len() - 1);
+                let sel_idx = app
+                    .selected_project
+                    .min(app.latest_snap.tracked_projects.len() - 1);
                 let proj = &app.latest_snap.tracked_projects[sel_idx];
 
                 let detail_block = Block::default()
@@ -8744,115 +10082,253 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 // 1. Repos Card
                 let repo_block = Block::default()
                     .borders(Borders::ALL)
-                    .title(format!(" 📦 Repositories & Code Sources ({}) ", proj.repos.len()))
+                    .title(format!(
+                        " 📦 Repositories & Code Sources ({}) ",
+                        proj.repos.len()
+                    ))
                     .border_style(Style::default().fg(palette.border));
                 let r_inner = repo_block.inner(res_chunks[0]);
                 f.render_widget(repo_block, res_chunks[0]);
 
                 let repo_rows: Vec<Row> = if proj.repos.is_empty() {
-                    vec![Row::new(vec![Cell::from("No git repos detected in workspace").style(Style::default().fg(palette.text_muted))])]
+                    vec![Row::new(vec![Cell::from(
+                        "No git repos detected in workspace",
+                    )
+                    .style(Style::default().fg(palette.text_muted))])]
                 } else {
-                    proj.repos.iter().map(|r| {
-                        let (d_icon, d_col) = if r.is_dirty { ("● DIRTY", palette.warning) } else { ("● CLEAN", palette.success) };
-                        Row::new(vec![
-                            Cell::from(r.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                            Cell::from(r.branch.clone()).style(Style::default().fg(palette.chart[0])),
-                            Cell::from(d_icon).style(Style::default().fg(d_col).add_modifier(Modifier::BOLD)),
-                            Cell::from(if r.path.is_empty() { "root".to_string() } else { r.path.clone() }).style(Style::default().fg(palette.text_muted)),
-                        ])
-                    }).collect()
+                    proj.repos
+                        .iter()
+                        .map(|r| {
+                            let (d_icon, d_col) = if r.is_dirty {
+                                ("● DIRTY", palette.warning)
+                            } else {
+                                ("● CLEAN", palette.success)
+                            };
+                            Row::new(vec![
+                                Cell::from(r.name.clone()).style(
+                                    Style::default()
+                                        .fg(Color::White)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                                Cell::from(r.branch.clone())
+                                    .style(Style::default().fg(palette.chart[0])),
+                                Cell::from(d_icon)
+                                    .style(Style::default().fg(d_col).add_modifier(Modifier::BOLD)),
+                                Cell::from(if r.path.is_empty() {
+                                    "root".to_string()
+                                } else {
+                                    r.path.clone()
+                                })
+                                .style(Style::default().fg(palette.text_muted)),
+                            ])
+                        })
+                        .collect()
                 };
-                let r_table = Table::new(repo_rows, [Constraint::Length(22), Constraint::Length(14), Constraint::Length(12), Constraint::Min(15)])
-                    .header(Row::new(vec!["REPO", "BRANCH", "STATUS", "PATH"]).style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)));
+                let r_table = Table::new(
+                    repo_rows,
+                    [
+                        Constraint::Length(22),
+                        Constraint::Length(14),
+                        Constraint::Length(12),
+                        Constraint::Min(15),
+                    ],
+                )
+                .header(
+                    Row::new(vec!["REPO", "BRANCH", "STATUS", "PATH"]).style(
+                        Style::default()
+                            .fg(palette.warning)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                );
                 f.render_widget(r_table, r_inner);
 
                 // 2. Containers Card
                 let cont_block = Block::default()
                     .borders(Borders::ALL)
-                    .title(format!(" 🐳 Docker / Podman Containers ({}) ", proj.containers.len()))
+                    .title(format!(
+                        " 🐳 Docker / Podman Containers ({}) ",
+                        proj.containers.len()
+                    ))
                     .border_style(Style::default().fg(palette.border));
                 let c_inner = cont_block.inner(res_chunks[1]);
                 f.render_widget(cont_block, res_chunks[1]);
 
                 let cont_rows: Vec<Row> = if proj.containers.is_empty() {
-                    vec![Row::new(vec![Cell::from("No containers mapped to this workspace").style(Style::default().fg(palette.text_muted))])]
+                    vec![Row::new(vec![Cell::from(
+                        "No containers mapped to this workspace",
+                    )
+                    .style(Style::default().fg(palette.text_muted))])]
                 } else {
-                    proj.containers.iter().map(|c| {
-                        let (s_icon, s_col) = match c.state.as_str() {
-                            "running" => ("● RUNNING", palette.success),
-                            "paused" => ("● PAUSED", palette.warning),
-                            "defined" => ("◌ DEFINED", palette.chart[0]),
-                            _ => ("✖ EXITED", palette.danger),
-                        };
-                        Row::new(vec![
-                            Cell::from(c.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                            Cell::from(c.image.clone()).style(Style::default().fg(palette.chart[0])),
-                            Cell::from(s_icon).style(Style::default().fg(s_col).add_modifier(Modifier::BOLD)),
-                            Cell::from(c.ports.clone()).style(Style::default().fg(palette.text_muted)),
-                        ])
-                    }).collect()
+                    proj.containers
+                        .iter()
+                        .map(|c| {
+                            let (s_icon, s_col) = match c.state.as_str() {
+                                "running" => ("● RUNNING", palette.success),
+                                "paused" => ("● PAUSED", palette.warning),
+                                "defined" => ("◌ DEFINED", palette.chart[0]),
+                                _ => ("✖ EXITED", palette.danger),
+                            };
+                            Row::new(vec![
+                                Cell::from(c.name.clone()).style(
+                                    Style::default()
+                                        .fg(Color::White)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                                Cell::from(c.image.clone())
+                                    .style(Style::default().fg(palette.chart[0])),
+                                Cell::from(s_icon)
+                                    .style(Style::default().fg(s_col).add_modifier(Modifier::BOLD)),
+                                Cell::from(c.ports.clone())
+                                    .style(Style::default().fg(palette.text_muted)),
+                            ])
+                        })
+                        .collect()
                 };
-                let c_table = Table::new(cont_rows, [Constraint::Length(22), Constraint::Length(22), Constraint::Length(14), Constraint::Min(15)])
-                    .header(Row::new(vec!["CONTAINER", "IMAGE", "STATE", "PORTS"]).style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)));
+                let c_table = Table::new(
+                    cont_rows,
+                    [
+                        Constraint::Length(22),
+                        Constraint::Length(22),
+                        Constraint::Length(14),
+                        Constraint::Min(15),
+                    ],
+                )
+                .header(
+                    Row::new(vec!["CONTAINER", "IMAGE", "STATE", "PORTS"]).style(
+                        Style::default()
+                            .fg(palette.warning)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                );
                 f.render_widget(c_table, c_inner);
 
                 // 3. Services Card
                 let svc_block = Block::default()
                     .borders(Borders::ALL)
-                    .title(format!(" ⚙ Running Services & Ports ({}) ", proj.services.len()))
+                    .title(format!(
+                        " ⚙ Running Services & Ports ({}) ",
+                        proj.services.len()
+                    ))
                     .border_style(Style::default().fg(palette.border));
                 let s_inner = svc_block.inner(res_chunks[2]);
                 f.render_widget(svc_block, res_chunks[2]);
 
                 let svc_rows: Vec<Row> = if proj.services.is_empty() {
-                    vec![Row::new(vec![Cell::from("No services or exposed ports mapped").style(Style::default().fg(palette.text_muted))])]
+                    vec![Row::new(vec![Cell::from(
+                        "No services or exposed ports mapped",
+                    )
+                    .style(Style::default().fg(palette.text_muted))])]
                 } else {
-                    proj.services.iter().map(|s| {
-                        let (st_icon, st_col) = match s.state.as_str() {
-                            "up" | "online" => ("● ONLINE", palette.success),
-                            _ => ("✖ DOWN", palette.danger),
-                        };
-                        Row::new(vec![
-                            Cell::from(s.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                            Cell::from(format!("{}:{}", s.host, s.port)).style(Style::default().fg(palette.accent)),
-                            Cell::from(s.protocol.to_uppercase()).style(Style::default().fg(palette.chart[0])),
-                            Cell::from(st_icon).style(Style::default().fg(st_col).add_modifier(Modifier::BOLD)),
-                        ])
-                    }).collect()
+                    proj.services
+                        .iter()
+                        .map(|s| {
+                            let (st_icon, st_col) = match s.state.as_str() {
+                                "up" | "online" => ("● ONLINE", palette.success),
+                                _ => ("✖ DOWN", palette.danger),
+                            };
+                            Row::new(vec![
+                                Cell::from(s.name.clone()).style(
+                                    Style::default()
+                                        .fg(Color::White)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                                Cell::from(format!("{}:{}", s.host, s.port))
+                                    .style(Style::default().fg(palette.accent)),
+                                Cell::from(s.protocol.to_uppercase())
+                                    .style(Style::default().fg(palette.chart[0])),
+                                Cell::from(st_icon).style(
+                                    Style::default().fg(st_col).add_modifier(Modifier::BOLD),
+                                ),
+                            ])
+                        })
+                        .collect()
                 };
-                let s_table = Table::new(svc_rows, [Constraint::Length(22), Constraint::Length(20), Constraint::Length(12), Constraint::Min(12)])
-                    .header(Row::new(vec!["SERVICE", "HOST:PORT", "PROTOCOL", "STATE"]).style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)));
+                let s_table = Table::new(
+                    svc_rows,
+                    [
+                        Constraint::Length(22),
+                        Constraint::Length(20),
+                        Constraint::Length(12),
+                        Constraint::Min(12),
+                    ],
+                )
+                .header(
+                    Row::new(vec!["SERVICE", "HOST:PORT", "PROTOCOL", "STATE"]).style(
+                        Style::default()
+                            .fg(palette.warning)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                );
                 f.render_widget(s_table, s_inner);
 
                 // 4. Databases Card
                 let db_block = Block::default()
                     .borders(Borders::ALL)
-                    .title(format!(" 🗄 Databases (Postgres / MySQL / Redis / SQLite) ({}) ", proj.databases.len()))
+                    .title(format!(
+                        " 🗄 Databases (Postgres / MySQL / Redis / SQLite) ({}) ",
+                        proj.databases.len()
+                    ))
                     .border_style(Style::default().fg(palette.border));
                 let d_inner = db_block.inner(res_chunks[3]);
                 f.render_widget(db_block, res_chunks[3]);
 
                 let db_rows: Vec<Row> = if proj.databases.is_empty() {
-                    vec![Row::new(vec![Cell::from("No database instances or configs detected").style(Style::default().fg(palette.text_muted))])]
+                    vec![Row::new(vec![Cell::from(
+                        "No database instances or configs detected",
+                    )
+                    .style(Style::default().fg(palette.text_muted))])]
                 } else {
-                    proj.databases.iter().map(|d| {
-                        let (db_st, db_col) = match d.state.as_str() {
-                            "up" | "online" => ("● ONLINE", palette.success),
-                            "file" => ("● FILE", palette.chart[0]),
-                            _ => ("✖ STOPPED", palette.danger),
-                        };
-                        let port_str = if d.port > 0 { format!(":{}", d.port) } else { "local".to_string() };
-                        Row::new(vec![
-                            Cell::from(d.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                            Cell::from(d.engine.to_uppercase()).style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
-                            Cell::from(port_str).style(Style::default().fg(palette.accent)),
-                            Cell::from(db_st).style(Style::default().fg(db_col).add_modifier(Modifier::BOLD)),
-                            Cell::from(d.database.clone()).style(Style::default().fg(palette.text_muted)),
-                        ])
-                    }).collect()
+                    proj.databases
+                        .iter()
+                        .map(|d| {
+                            let (db_st, db_col) = match d.state.as_str() {
+                                "up" | "online" => ("● ONLINE", palette.success),
+                                "file" => ("● FILE", palette.chart[0]),
+                                _ => ("✖ STOPPED", palette.danger),
+                            };
+                            let port_str = if d.port > 0 {
+                                format!(":{}", d.port)
+                            } else {
+                                "local".to_string()
+                            };
+                            Row::new(vec![
+                                Cell::from(d.name.clone()).style(
+                                    Style::default()
+                                        .fg(Color::White)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                                Cell::from(d.engine.to_uppercase()).style(
+                                    Style::default()
+                                        .fg(palette.warning)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                                Cell::from(port_str).style(Style::default().fg(palette.accent)),
+                                Cell::from(db_st).style(
+                                    Style::default().fg(db_col).add_modifier(Modifier::BOLD),
+                                ),
+                                Cell::from(d.database.clone())
+                                    .style(Style::default().fg(palette.text_muted)),
+                            ])
+                        })
+                        .collect()
                 };
-                let d_table = Table::new(db_rows, [Constraint::Length(20), Constraint::Length(12), Constraint::Length(10), Constraint::Length(12), Constraint::Min(16)])
-                    .header(Row::new(vec!["DATABASE", "ENGINE", "PORT", "STATUS", "DETAILS"]).style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)));
+                let d_table = Table::new(
+                    db_rows,
+                    [
+                        Constraint::Length(20),
+                        Constraint::Length(12),
+                        Constraint::Length(10),
+                        Constraint::Length(12),
+                        Constraint::Min(16),
+                    ],
+                )
+                .header(
+                    Row::new(vec!["DATABASE", "ENGINE", "PORT", "STATUS", "DETAILS"]).style(
+                        Style::default()
+                            .fg(palette.warning)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                );
                 f.render_widget(d_table, d_inner);
             } else {
                 let empty_block = Block::default()
@@ -8865,7 +10341,10 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ProjectView::Tree => {
             let block = Block::default()
                 .borders(Borders::ALL)
-                .title(format!(" 🌳 Workspace Hierarchy Tree ({}) ", app.latest_snap.tracked_projects.len()))
+                .title(format!(
+                    " 🌳 Workspace Hierarchy Tree ({}) ",
+                    app.latest_snap.tracked_projects.len()
+                ))
                 .border_style(Style::default().fg(palette.border));
             let inner = block.inner(chunks[1]);
             f.render_widget(block, chunks[1]);
@@ -8873,28 +10352,52 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             let mut tree_rows: Vec<Row> = Vec::new();
             for (p_idx, p) in app.latest_snap.tracked_projects.iter().enumerate() {
                 let is_sel = p_idx == app.selected_project;
-                let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
-                let (dirty_badge, dirty_col) = if p.is_dirty { ("● DIRTY", palette.warning) } else { ("● CLEAN", palette.success) };
+                let bg = if is_sel {
+                    palette.row_selected_bg
+                } else {
+                    Color::Reset
+                };
+                let (dirty_badge, dirty_col) = if p.is_dirty {
+                    ("● DIRTY", palette.warning)
+                } else {
+                    ("● CLEAN", palette.success)
+                };
 
                 // Project Header Row
                 tree_rows.push(
                     Row::new(vec![
-                        Cell::from(format!("▼ 📁 [Project] {} ({})", p.name, p.category)).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                        Cell::from(format!("▼ 📁 [Project] {} ({})", p.name, p.category)).style(
+                            Style::default()
+                                .fg(Color::White)
+                                .add_modifier(Modifier::BOLD),
+                        ),
                         Cell::from(p.summary_line()).style(Style::default().fg(palette.chart[0])),
-                        Cell::from(dirty_badge).style(Style::default().fg(dirty_col).add_modifier(Modifier::BOLD)),
+                        Cell::from(dirty_badge)
+                            .style(Style::default().fg(dirty_col).add_modifier(Modifier::BOLD)),
                         Cell::from(p.path.clone()).style(Style::default().fg(palette.text_muted)),
                     ])
-                    .style(Style::default().bg(bg))
+                    .style(Style::default().bg(bg)),
                 );
 
                 // Child Repos
                 for r in &p.repos {
-                    let (rd_icon, rd_col) = if r.is_dirty { ("● DIRTY", palette.warning) } else { ("● CLEAN", palette.success) };
+                    let (rd_icon, rd_col) = if r.is_dirty {
+                        ("● DIRTY", palette.warning)
+                    } else {
+                        ("● CLEAN", palette.success)
+                    };
                     tree_rows.push(Row::new(vec![
-                        Cell::from(format!("  ├── 📦 Repo: {}", r.name)).style(Style::default().fg(palette.chart[0])),
-                        Cell::from(format!("git:{}", r.branch)).style(Style::default().fg(palette.accent)),
+                        Cell::from(format!("  ├── 📦 Repo: {}", r.name))
+                            .style(Style::default().fg(palette.chart[0])),
+                        Cell::from(format!("git:{}", r.branch))
+                            .style(Style::default().fg(palette.accent)),
                         Cell::from(rd_icon).style(Style::default().fg(rd_col)),
-                        Cell::from(if r.path.is_empty() { "root".to_string() } else { r.path.clone() }).style(Style::default().fg(palette.text_muted)),
+                        Cell::from(if r.path.is_empty() {
+                            "root".to_string()
+                        } else {
+                            r.path.clone()
+                        })
+                        .style(Style::default().fg(palette.text_muted)),
                     ]));
                 }
 
@@ -8907,9 +10410,11 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                         _ => ("✖ EXITED", palette.danger),
                     };
                     tree_rows.push(Row::new(vec![
-                        Cell::from(format!("  ├── 🐳 Container: {}", c.name)).style(Style::default().fg(palette.success)),
+                        Cell::from(format!("  ├── 🐳 Container: {}", c.name))
+                            .style(Style::default().fg(palette.success)),
                         Cell::from(c.image.clone()).style(Style::default().fg(palette.text_muted)),
-                        Cell::from(c_st).style(Style::default().fg(c_col).add_modifier(Modifier::BOLD)),
+                        Cell::from(c_st)
+                            .style(Style::default().fg(c_col).add_modifier(Modifier::BOLD)),
                         Cell::from(c.ports.clone()).style(Style::default().fg(palette.text_muted)),
                     ]));
                 }
@@ -8921,10 +10426,14 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                         _ => ("✖ DOWN", palette.danger),
                     };
                     tree_rows.push(Row::new(vec![
-                        Cell::from(format!("  ├── ⚙ Service: {}", s.name)).style(Style::default().fg(palette.warning)),
-                        Cell::from(format!("{}:{}/{}", s.host, s.port, s.protocol)).style(Style::default().fg(palette.accent)),
-                        Cell::from(s_st).style(Style::default().fg(s_col).add_modifier(Modifier::BOLD)),
-                        Cell::from("Active process / listener").style(Style::default().fg(palette.text_muted)),
+                        Cell::from(format!("  ├── ⚙ Service: {}", s.name))
+                            .style(Style::default().fg(palette.warning)),
+                        Cell::from(format!("{}:{}/{}", s.host, s.port, s.protocol))
+                            .style(Style::default().fg(palette.accent)),
+                        Cell::from(s_st)
+                            .style(Style::default().fg(s_col).add_modifier(Modifier::BOLD)),
+                        Cell::from("Active process / listener")
+                            .style(Style::default().fg(palette.text_muted)),
                     ]));
                 }
 
@@ -8935,12 +10444,23 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                         "file" => ("● FILE", palette.chart[0]),
                         _ => ("✖ STOPPED", palette.danger),
                     };
-                    let port_str = if d.port > 0 { format!(":{}", d.port) } else { "local".to_string() };
+                    let port_str = if d.port > 0 {
+                        format!(":{}", d.port)
+                    } else {
+                        "local".to_string()
+                    };
                     tree_rows.push(Row::new(vec![
-                        Cell::from(format!("  └── 🗄 DB: {} ({})", d.name, d.engine.to_uppercase())).style(Style::default().fg(palette.accent)),
+                        Cell::from(format!(
+                            "  └── 🗄 DB: {} ({})",
+                            d.name,
+                            d.engine.to_uppercase()
+                        ))
+                        .style(Style::default().fg(palette.accent)),
                         Cell::from(port_str).style(Style::default().fg(palette.warning)),
-                        Cell::from(d_st).style(Style::default().fg(d_col).add_modifier(Modifier::BOLD)),
-                        Cell::from(d.database.clone()).style(Style::default().fg(palette.text_muted)),
+                        Cell::from(d_st)
+                            .style(Style::default().fg(d_col).add_modifier(Modifier::BOLD)),
+                        Cell::from(d.database.clone())
+                            .style(Style::default().fg(palette.text_muted)),
                     ]));
                 }
             }
@@ -8955,8 +10475,17 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 ],
             )
             .header(
-                Row::new(vec!["WORKSPACE & RESOURCE HIERARCHY", "DETAILS / CONFIG", "STATUS", "LOCATION"])
-                    .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
+                Row::new(vec![
+                    "WORKSPACE & RESOURCE HIERARCHY",
+                    "DETAILS / CONFIG",
+                    "STATUS",
+                    "LOCATION",
+                ])
+                .style(
+                    Style::default()
+                        .fg(palette.warning)
+                        .add_modifier(Modifier::BOLD),
+                ),
             );
             f.render_widget(tree_table, inner);
 
@@ -8977,7 +10506,10 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ProjectView::Containers => {
             let block = Block::default()
                 .borders(Borders::ALL)
-                .title(format!(" 🐳 Docker & Podman Engine Containers ({}) ", app.latest_snap.docker_containers.len()))
+                .title(format!(
+                    " 🐳 Docker & Podman Engine Containers ({}) ",
+                    app.latest_snap.docker_containers.len()
+                ))
                 .border_style(Style::default().fg(palette.border));
             let inner = block.inner(chunks[1]);
             f.render_widget(block, chunks[1]);
@@ -8989,7 +10521,11 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 .enumerate()
                 .map(|(i, c)| {
                     let is_sel = i == app.selected_container;
-                    let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
+                    let bg = if is_sel {
+                        palette.row_selected_bg
+                    } else {
+                        Color::Reset
+                    };
                     let (state_icon, state_col) = match c.state.as_str() {
                         "running" => ("● RUNNING", palette.success),
                         "paused" => ("● PAUSED", palette.warning),
@@ -8997,10 +10533,16 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                     };
 
                     Row::new(vec![
-                        Cell::from(c.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                        Cell::from(c.name.clone()).style(
+                            Style::default()
+                                .fg(Color::White)
+                                .add_modifier(Modifier::BOLD),
+                        ),
                         Cell::from(c.image.clone()).style(Style::default().fg(palette.chart[0])),
-                        Cell::from(state_icon).style(Style::default().fg(state_col).add_modifier(Modifier::BOLD)),
-                        Cell::from(c.status_detail.clone()).style(Style::default().fg(palette.text_muted)),
+                        Cell::from(state_icon)
+                            .style(Style::default().fg(state_col).add_modifier(Modifier::BOLD)),
+                        Cell::from(c.status_detail.clone())
+                            .style(Style::default().fg(palette.text_muted)),
                     ])
                     .style(Style::default().bg(bg))
                 })
@@ -9016,8 +10558,11 @@ fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 ],
             )
             .header(
-                Row::new(vec!["CONTAINER NAME", "IMAGE", "STATE", "STATUS / PORTS"])
-                    .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
+                Row::new(vec!["CONTAINER NAME", "IMAGE", "STATE", "STATUS / PORTS"]).style(
+                    Style::default()
+                        .fg(palette.warning)
+                        .add_modifier(Modifier::BOLD),
+                ),
             );
             f.render_widget(table, inner);
 
@@ -9053,7 +10598,13 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let bar_inner = bar_block.inner(chunks[0]);
     f.render_widget(bar_block, chunks[0]);
 
-    let displayed: Vec<(usize, crate::systat::UptimeMonitor)> = app.latest_snap.uptime_monitors.iter().cloned().enumerate().collect();
+    let displayed: Vec<(usize, crate::systat::UptimeMonitor)> = app
+        .latest_snap
+        .uptime_monitors
+        .iter()
+        .cloned()
+        .enumerate()
+        .collect();
     let count = displayed.len();
     if !displayed.is_empty() && app.selected_monitor >= count {
         app.selected_monitor = count - 1;
@@ -9062,19 +10613,54 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     // ── Toolbar row 1: Core Actions (Add, Probe, Edit, Delete, Group, Sort) ──
     let alert_on = app.cfg.uptime.telegram_alerts_enabled;
     let mut toolbar_spans: Vec<Span> = vec![
-        Span::styled(" [ADD] (m) ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [ADD] (m) ",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("  "),
-        Span::styled(" [PROBE] (p) ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [PROBE] (p) ",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("  "),
-        Span::styled(" [EDIT] (e) ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [EDIT] (e) ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("  "),
-        Span::styled(" [DEL] (x) ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [DEL] (x) ",
+            Style::default()
+                .fg(Color::LightRed)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("  │  "),
-        Span::styled(format!(" [GRP:{}] ", app.uptime_group_filter), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!(" [GRP:{}] ", app.uptime_group_filter),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("  "),
-        Span::styled(format!(" [SRT:{}] ", app.uptime_sort_mode.label_short()), Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!(" [SRT:{}] ", app.uptime_sort_mode.label_short()),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
     ];
-    let up_count = app.latest_snap.uptime_monitors.iter().filter(|m| m.is_up).count();
+    let up_count = app
+        .latest_snap
+        .uptime_monitors
+        .iter()
+        .filter(|m| m.is_up)
+        .count();
     let total_count = app.latest_snap.uptime_monitors.len();
     let pct = if total_count > 0 {
         (up_count as f32 / total_count as f32) * 100.0
@@ -9084,7 +10670,9 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     toolbar_spans.push(Span::raw("  │  "));
     toolbar_spans.push(Span::styled(
         format!("Health: {up_count}/{total_count} Up ({pct:.1}%)"),
-        Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(palette.accent)
+            .add_modifier(Modifier::BOLD),
     ));
     f.render_widget(Paragraph::new(Line::from(toolbar_spans)), bar_inner);
 
@@ -9103,7 +10691,12 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     for (w, act) in widths.iter().zip(actions.iter()) {
         if cur_x + w < bar_inner.x + bar_inner.width {
             app.register_hitbox(
-                Rect { x: cur_x, y: bar_y, width: *w, height: 1 },
+                Rect {
+                    x: cur_x,
+                    y: bar_y,
+                    width: *w,
+                    height: 1,
+                },
                 act.clone(),
             );
         }
@@ -9114,25 +10707,58 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let adv_y = bar_y + 1;
     if adv_y < bar_inner.bottom() {
         let adv_spans: Vec<Span> = vec![
-            Span::styled(" [EXPORT] ", Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
-            Span::raw("  "),
-            Span::styled(" [IMPORT] ", Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
-            Span::raw("  "),
             Span::styled(
-                if alert_on { " [ALERTS:ON] " } else { " [ALERTS:OFF] " },
-                Style::default().fg(if alert_on { Color::Green } else { Color::DarkGray }).add_modifier(Modifier::BOLD),
+                " [EXPORT] ",
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw("  "),
-            Span::styled(" [TEST TG ALERT] ", Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                " [IMPORT] ",
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                if alert_on {
+                    " [ALERTS:ON] "
+                } else {
+                    " [ALERTS:OFF] "
+                },
+                Style::default()
+                    .fg(if alert_on {
+                        Color::Green
+                    } else {
+                        Color::DarkGray
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                " [TEST TG ALERT] ",
+                Style::default()
+                    .fg(Color::LightBlue)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("  │  "),
-            Span::styled(" [V] View Detail (Enter) ", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                " [V] View Detail (Enter) ",
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ];
-        f.render_widget(Paragraph::new(Line::from(adv_spans)), Rect {
-            x: bar_inner.x,
-            y: adv_y,
-            width: bar_inner.width,
-            height: 1,
-        });
+        f.render_widget(
+            Paragraph::new(Line::from(adv_spans)),
+            Rect {
+                x: bar_inner.x,
+                y: adv_y,
+                width: bar_inner.width,
+                height: 1,
+            },
+        );
 
         let mut ax = bar_inner.x + 1;
         for (label_w, act) in [
@@ -9144,7 +10770,12 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ] {
             if ax + label_w < bar_inner.x + bar_inner.width {
                 app.register_hitbox(
-                    Rect { x: ax, y: adv_y, width: label_w, height: 1 },
+                    Rect {
+                        x: ax,
+                        y: adv_y,
+                        width: label_w,
+                        height: 1,
+                    },
                     act,
                 );
             }
@@ -9169,7 +10800,11 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         .enumerate()
         .map(|(i, (_orig_idx, m))| {
             let is_sel = i == app.selected_monitor;
-            let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
+            let bg = if is_sel {
+                palette.row_selected_bg
+            } else {
+                Color::Reset
+            };
             let (status_badge, badge_color) = if m.is_up {
                 (format!("● UP ({:.1}%)", m.uptime_pct), palette.success)
             } else {
@@ -9202,7 +10837,11 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             };
             let code_color = if !m.is_up {
                 palette.danger
-            } else if m.status_code.map(|c| (200..=299).contains(&c)).unwrap_or(false) {
+            } else if m
+                .status_code
+                .map(|c| (200..=299).contains(&c))
+                .unwrap_or(false)
+            {
                 palette.chart[0]
             } else {
                 palette.warning
@@ -9211,12 +10850,19 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             let mut history_spans: Vec<Span> = Vec::with_capacity(20);
             let pad_needed = 20usize.saturating_sub(m.history.len());
             for _ in 0..pad_needed {
-                history_spans.push(Span::styled("█", Style::default().fg(Color::Rgb(60, 60, 60))));
+                history_spans.push(Span::styled(
+                    "█",
+                    Style::default().fg(Color::Rgb(60, 60, 60)),
+                ));
             }
             for &up in m.history.iter().take(20) {
                 let col = if up {
                     if let Some(ms) = m.latency_ms {
-                        if ms > 500 { Color::Yellow } else { Color::Green }
+                        if ms > 500 {
+                            Color::Yellow
+                        } else {
+                            Color::Green
+                        }
                     } else {
                         Color::Green
                     }
@@ -9226,17 +10872,39 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 history_spans.push(Span::styled("█", Style::default().fg(col)));
             }
 
-            let eye_span = Span::styled("[V]", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+            let eye_span = Span::styled(
+                "[V]",
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD),
+            );
 
             Row::new(vec![
-                Cell::from(format!("{i:>3}")).style(Style::default().fg(palette.text_muted).add_modifier(Modifier::BOLD)),
-                Cell::from(m.name.clone()).style(Style::default().fg(if !m.is_up { Color::LightRed } else { Color::White }).add_modifier(Modifier::BOLD)),
+                Cell::from(format!("{i:>3}")).style(
+                    Style::default()
+                        .fg(palette.text_muted)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Cell::from(m.name.clone()).style(
+                    Style::default()
+                        .fg(if !m.is_up {
+                            Color::LightRed
+                        } else {
+                            Color::White
+                        })
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Cell::from(m.target.clone()).style(Style::default().fg(Color::Cyan)),
                 Cell::from(m.group.clone()).style(Style::default().fg(palette.text_muted)),
-                Cell::from(status_badge).style(Style::default().fg(badge_color).add_modifier(Modifier::BOLD)),
+                Cell::from(status_badge).style(
+                    Style::default()
+                        .fg(badge_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Cell::from(latency_str).style(Style::default().fg(palette.accent)),
                 Cell::from(Line::from(history_spans)),
-                Cell::from(code_str).style(Style::default().fg(code_color).add_modifier(Modifier::BOLD)),
+                Cell::from(code_str)
+                    .style(Style::default().fg(code_color).add_modifier(Modifier::BOLD)),
                 Cell::from(Line::from(vec![eye_span])),
             ])
             .style(Style::default().bg(bg))
@@ -9269,7 +10937,11 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             "HTTP / ERR",
             "⊕",
         ])
-        .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
+        .style(
+            Style::default()
+                .fg(palette.warning)
+                .add_modifier(Modifier::BOLD),
+        ),
     );
     f.render_widget(table, inner);
 
@@ -9313,7 +10985,11 @@ fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+        .border_style(
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        );
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
@@ -9332,12 +11008,19 @@ fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let mut history_spans: Vec<Span> = Vec::with_capacity(20);
     let pad_needed = 20usize.saturating_sub(monitor.history.len());
     for _ in 0..pad_needed {
-        history_spans.push(Span::styled("█", Style::default().fg(Color::Rgb(60, 60, 60))));
+        history_spans.push(Span::styled(
+            "█",
+            Style::default().fg(Color::Rgb(60, 60, 60)),
+        ));
     }
     for &up in monitor.history.iter().take(20) {
         let col = if up {
             if let Some(ms) = monitor.latency_ms {
-                if ms > 500 { Color::Yellow } else { Color::Green }
+                if ms > 500 {
+                    Color::Yellow
+                } else {
+                    Color::Green
+                }
             } else {
                 Color::Green
             }
@@ -9348,26 +11031,58 @@ fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     }
 
     let status_label = if monitor.is_up {
-        Span::styled("● UP (Healthy)", Style::default().fg(palette.success).add_modifier(Modifier::BOLD))
+        Span::styled(
+            "● UP (Healthy)",
+            Style::default()
+                .fg(palette.success)
+                .add_modifier(Modifier::BOLD),
+        )
     } else {
-        Span::styled("✖ DOWN (Unreachable)", Style::default().fg(palette.danger).add_modifier(Modifier::BOLD))
+        Span::styled(
+            "✖ DOWN (Unreachable)",
+            Style::default()
+                .fg(palette.danger)
+                .add_modifier(Modifier::BOLD),
+        )
     };
 
     let latency_span = match monitor.latency_ms {
-        Some(l) => Span::styled(format!("{l} ms"), Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        Some(l) => Span::styled(
+            format!("{l} ms"),
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
         None => Span::styled("--".to_string(), Style::default().fg(Color::DarkGray)),
     };
 
     let code_span = match monitor.status_code {
         Some(c) => {
-            let col = if monitor.is_up { palette.success } else { palette.danger };
-            Span::styled(c.to_string(), Style::default().fg(col).add_modifier(Modifier::BOLD))
+            let col = if monitor.is_up {
+                palette.success
+            } else {
+                palette.danger
+            };
+            Span::styled(
+                c.to_string(),
+                Style::default().fg(col).add_modifier(Modifier::BOLD),
+            )
         }
         None => {
             if let Some(ref err) = monitor.error {
-                Span::styled(format!("ERR: {err}"), Style::default().fg(palette.danger).add_modifier(Modifier::BOLD))
+                Span::styled(
+                    format!("ERR: {err}"),
+                    Style::default()
+                        .fg(palette.danger)
+                        .add_modifier(Modifier::BOLD),
+                )
             } else if !monitor.is_up {
-                Span::styled("ERR: Down".to_string(), Style::default().fg(palette.danger).add_modifier(Modifier::BOLD))
+                Span::styled(
+                    "ERR: Down".to_string(),
+                    Style::default()
+                        .fg(palette.danger)
+                        .add_modifier(Modifier::BOLD),
+                )
             } else {
                 Span::styled("--".to_string(), Style::default().fg(Color::DarkGray))
             }
@@ -9375,27 +11090,46 @@ fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     };
 
     let alert_state = if app.cfg.uptime.telegram_alerts_enabled {
-        Span::styled("● ENABLED", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+        Span::styled(
+            "● ENABLED",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
     } else {
         Span::styled("○ DISABLED", Style::default().fg(Color::DarkGray))
     };
 
-    let has_token = !app.cfg.uptime.telegram_bot_token.is_empty() || !app.cfg.daemon.telegram_bot_token.is_empty();
+    let has_token = !app.cfg.uptime.telegram_bot_token.is_empty()
+        || !app.cfg.daemon.telegram_bot_token.is_empty();
     let token_status = if has_token {
         Span::styled(" [✓ Token Configured]", Style::default().fg(Color::Green))
     } else {
-        Span::styled(" [⚠ NO BOT TOKEN SET — open Settings (-) tab]", Style::default().fg(Color::Yellow))
+        Span::styled(
+            " [⚠ NO BOT TOKEN SET — open Settings (-) tab]",
+            Style::default().fg(Color::Yellow),
+        )
     };
 
     let mut lines = vec![
         Line::from(""),
         Line::from(vec![
             Span::styled("Endpoint:     ", Style::default().fg(palette.text_muted)),
-            Span::styled(monitor.name.clone(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                monitor.name.clone(),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Target URL:   ", Style::default().fg(palette.text_muted)),
-            Span::styled(monitor.target.clone(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                monitor.target.clone(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Group:        ", Style::default().fg(palette.text_muted)),
@@ -9416,7 +11150,12 @@ fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if let Some(ref err) = monitor.error {
         if !monitor.is_up {
             lines.push(Line::from(vec![
-                Span::styled("Failure Cause: ", Style::default().fg(palette.danger).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "Failure Cause: ",
+                    Style::default()
+                        .fg(palette.danger)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(format!("ERR: {err}"), Style::default().fg(Color::LightRed)),
             ]));
         }
@@ -9425,21 +11164,35 @@ fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     lines.extend([
         Line::from(vec![
             Span::styled("Uptime Rate:  ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{:.1}%", monitor.uptime_pct), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{:.1}%", monitor.uptime_pct),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("Heartbeats (Last 20 Probes): ", Style::default().fg(palette.text_muted).add_modifier(Modifier::BOLD)),
-        ]),
+        Line::from(vec![Span::styled(
+            "Heartbeats (Last 20 Probes): ",
+            Style::default()
+                .fg(palette.text_muted)
+                .add_modifier(Modifier::BOLD),
+        )]),
         Line::from(history_spans),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Telegram Alerts:  ", Style::default().fg(palette.text_muted)),
+            Span::styled(
+                "Telegram Alerts:  ",
+                Style::default().fg(palette.text_muted),
+            ),
             alert_state,
             token_status,
         ]),
     ]);
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), modal_chunks[0]);
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: true }),
+        modal_chunks[0],
+    );
 
     // Bottom Action Button Toolbar inside modal
     let btn_bar_block = Block::default()
@@ -9449,18 +11202,48 @@ fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     f.render_widget(btn_bar_block, modal_chunks[1]);
 
     let btn_spans = vec![
-        Span::styled(" [ ↻ Probe (p) ] ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-        Span::raw(" "),
         Span::styled(
-            if app.cfg.uptime.telegram_alerts_enabled { " [ 🔔 Alerts: ON (t) ] " } else { " [ 🔕 Alerts: OFF (t) ] " },
-            Style::default().fg(if app.cfg.uptime.telegram_alerts_enabled { Color::Green } else { Color::DarkGray }).add_modifier(Modifier::BOLD),
+            " [ ↻ Probe (p) ] ",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
-        Span::styled(" [ ✏ Edit (e) ] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            if app.cfg.uptime.telegram_alerts_enabled {
+                " [ 🔔 Alerts: ON (t) ] "
+            } else {
+                " [ 🔕 Alerts: OFF (t) ] "
+            },
+            Style::default()
+                .fg(if app.cfg.uptime.telegram_alerts_enabled {
+                    Color::Green
+                } else {
+                    Color::DarkGray
+                })
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [ 🗑 Delete (x) ] ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [ ✏ Edit (e) ] ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [ ✖ Close (Esc) ] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [ 🗑 Delete (x) ] ",
+            Style::default()
+                .fg(Color::LightRed)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            " [ ✖ Close (Esc) ] ",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
     ];
     f.render_widget(Paragraph::new(Line::from(btn_spans)), btn_bar_inner);
 
@@ -9475,7 +11258,12 @@ fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     ] {
         if bx + bw <= btn_bar_inner.right() {
             app.register_hitbox(
-                Rect { x: bx, y: btn_y, width: bw, height: 1 },
+                Rect {
+                    x: bx,
+                    y: btn_y,
+                    width: bw,
+                    height: 1,
+                },
                 act,
             );
         }
@@ -9502,12 +11290,10 @@ fn draw_topology_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let content = chunks[1];
 
     if app.server_probe_results.is_empty() {
-        let placeholder = Paragraph::new(vec![
-            Line::from(Span::styled(
-                "Press 'r' to probe infrastructure topology...",
-                Style::default().fg(palette.text_muted),
-            )),
-        ])
+        let placeholder = Paragraph::new(vec![Line::from(Span::styled(
+            "Press 'r' to probe infrastructure topology...",
+            Style::default().fg(palette.text_muted),
+        ))])
         .alignment(ratatui::layout::Alignment::Center);
         f.render_widget(placeholder, content);
         return;
@@ -9541,12 +11327,18 @@ fn draw_topology_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     // Server Tier
     map_lines.push(Line::from(Span::styled(
         "SERVER TIER:",
-        Style::default().fg(palette.warning).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(palette.warning)
+            .add_modifier(Modifier::BOLD),
     )));
     for (i, (node, lat)) in app.server_probe_results.iter().enumerate() {
         let (status, color) = node_status(*lat);
         let is_selected = i == app.selected_topology_node && app.topology_focus_tier == 0;
-        let style = Style::default().fg(color).add_modifier(if is_selected { Modifier::BOLD } else { Modifier::empty() });
+        let style = Style::default().fg(color).add_modifier(if is_selected {
+            Modifier::BOLD
+        } else {
+            Modifier::empty()
+        });
         let prefix = if is_selected { "▶ " } else { "  " };
         map_lines.push(Line::from(vec![
             Span::styled(format!("{}⬢ {}", prefix, node), style),
@@ -9561,16 +11353,28 @@ fn draw_topology_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     // App Tier
     map_lines.push(Line::from(Span::styled(
         "APPLICATIONS TIER:",
-        Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(palette.accent)
+            .add_modifier(Modifier::BOLD),
     )));
     let app_count = snap.tracked_projects.len().max(5);
     for i in 0..app_count.min(app.apps.len()) {
-        let is_selected = (app.selected_topology_node.saturating_sub(app.server_probe_results.len())) == i
+        let is_selected = (app
+            .selected_topology_node
+            .saturating_sub(app.server_probe_results.len()))
+            == i
             && app.topology_focus_tier == 1;
         let prefix = if is_selected { "▶ " } else { "  " };
-        let name = app.apps.get(i).map(|a| a.name.clone()).unwrap_or_else(|| "App-Instance".to_string());
+        let name = app
+            .apps
+            .get(i)
+            .map(|a| a.name.clone())
+            .unwrap_or_else(|| "App-Instance".to_string());
         map_lines.push(Line::from(vec![
-            Span::styled(format!("{}◆ {}", prefix, name), Style::default().fg(Color::White)),
+            Span::styled(
+                format!("{}◆ {}", prefix, name),
+                Style::default().fg(Color::White),
+            ),
             Span::styled(" ● RUNNING", Style::default().fg(Color::Green)),
         ]));
     }
@@ -9578,11 +11382,16 @@ fn draw_topology_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     // Database & Infra Tier
     map_lines.push(Line::from(Span::styled(
         "DATABASES & INFRA TIER:",
-        Style::default().fg(palette.success).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(palette.success)
+            .add_modifier(Modifier::BOLD),
     )));
     let container_count = snap.docker_containers.len().max(3);
     for i in 0..container_count {
-        let is_selected = (app.selected_topology_node.saturating_sub(app.server_probe_results.len() + app_count.min(app.apps.len()))) == i
+        let is_selected = (app
+            .selected_topology_node
+            .saturating_sub(app.server_probe_results.len() + app_count.min(app.apps.len())))
+            == i
             && app.topology_focus_tier == 2;
         let prefix = if is_selected { "▶ " } else { "  " };
         let container = snap
@@ -9590,15 +11399,20 @@ fn draw_topology_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             .get(i)
             .map(|c| c.name.clone())
             .unwrap_or_else(|| "DB / Infra".to_string());
-        let state = snap.docker_containers.get(i).map(|c| c.state.clone()).unwrap_or_default();
+        let state = snap
+            .docker_containers
+            .get(i)
+            .map(|c| c.state.clone())
+            .unwrap_or_default();
         let (icon, col) = if state == "running" {
             ("■", Color::Green)
         } else {
             ("■", Color::Red)
         };
-        map_lines.push(Line::from(vec![
-            Span::styled(format!("{}{} {}", prefix, icon, container), Style::default().fg(col)),
-        ]));
+        map_lines.push(Line::from(vec![Span::styled(
+            format!("{}{} {}", prefix, icon, container),
+            Style::default().fg(col),
+        )]));
     }
 
     f.render_widget(Paragraph::new(map_lines), left_inner);
@@ -9619,7 +11433,12 @@ fn draw_topology_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         let (status, color) = node_status(*lat);
         detail_lines.push(Line::from(vec![
             Span::styled(format!("Node: "), Style::default().fg(palette.text_muted)),
-            Span::styled(name.clone(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                name.clone(),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]));
         detail_lines.push(Line::from(vec![
             Span::styled("Status: ", Style::default().fg(palette.text_muted)),
@@ -9652,7 +11471,9 @@ fn draw_topology_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     detail_lines.push(Line::from(""));
     detail_lines.push(Line::from(Span::styled(
         "Actions: [r] Probe  [p] Ping  [↑/↓] Navigate  [←/→] Tier Focus",
-        Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(palette.accent)
+            .add_modifier(Modifier::BOLD),
     )));
 
     f.render_widget(Paragraph::new(detail_lines), right_inner);
@@ -9683,38 +11504,142 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let mut cur_x = bar_inner.x + 1;
     let y = bar_inner.y;
 
-    app.register_hitbox(Rect { x: cur_x, y, width: btn_add_w, height: 1 }, HitboxAction::AddServer);
+    app.register_hitbox(
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_add_w,
+            height: 1,
+        },
+        HitboxAction::AddServer,
+    );
     cur_x += btn_add_w + 1;
-    app.register_hitbox(Rect { x: cur_x, y, width: btn_edit_w, height: 1 }, HitboxAction::EditServer);
+    app.register_hitbox(
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_edit_w,
+            height: 1,
+        },
+        HitboxAction::EditServer,
+    );
     cur_x += btn_edit_w + 1;
-    app.register_hitbox(Rect { x: cur_x, y, width: btn_clone_w, height: 1 }, HitboxAction::CloneServer);
+    app.register_hitbox(
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_clone_w,
+            height: 1,
+        },
+        HitboxAction::CloneServer,
+    );
     cur_x += btn_clone_w + 1;
-    app.register_hitbox(Rect { x: cur_x, y, width: btn_active_w, height: 1 }, HitboxAction::ToggleServerActive);
+    app.register_hitbox(
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_active_w,
+            height: 1,
+        },
+        HitboxAction::ToggleServerActive,
+    );
     cur_x += btn_active_w + 1;
-    app.register_hitbox(Rect { x: cur_x, y, width: btn_ssh_w, height: 1 }, HitboxAction::TestServerSsh);
+    app.register_hitbox(
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_ssh_w,
+            height: 1,
+        },
+        HitboxAction::TestServerSsh,
+    );
     cur_x += btn_ssh_w + 1;
-    app.register_hitbox(Rect { x: cur_x, y, width: btn_probe_w, height: 1 }, HitboxAction::ProbeServers);
+    app.register_hitbox(
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_probe_w,
+            height: 1,
+        },
+        HitboxAction::ProbeServers,
+    );
     cur_x += btn_probe_w + 1;
-    app.register_hitbox(Rect { x: cur_x, y, width: btn_disk_w, height: 1 }, HitboxAction::OpenDiskHealth);
+    app.register_hitbox(
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_disk_w,
+            height: 1,
+        },
+        HitboxAction::OpenDiskHealth,
+    );
     cur_x += btn_disk_w + 1;
-    app.register_hitbox(Rect { x: cur_x, y, width: btn_del_w, height: 1 }, HitboxAction::RemoveServer);
+    app.register_hitbox(
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_del_w,
+            height: 1,
+        },
+        HitboxAction::RemoveServer,
+    );
 
     let bar_spans = vec![
-        Span::styled(" [+ Add] (a) ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [+ Add] (a) ",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [✎ Edit] (e) ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [✎ Edit] (e) ",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [❐ Clone] (c) ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [❐ Clone] (c) ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [⏸ Active] (v) ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [⏸ Active] (v) ",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [⚡ SSH] (t) ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [⚡ SSH] (t) ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [🔍 Probe] (p) ", Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [🔍 Probe] (p) ",
+            Style::default()
+                .fg(Color::LightCyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [💽 Health] (d) ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [💽 Health] (d) ",
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [🗑 Del] (x) ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [🗑 Del] (x) ",
+            Style::default()
+                .fg(Color::LightRed)
+                .add_modifier(Modifier::BOLD),
+        ),
     ];
     f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
 
@@ -9733,8 +11658,18 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let mut rows = Vec::new();
     for (i, (node_name, lat)) in app.server_probe_results.iter().enumerate() {
         let is_sel = i == app.selected_server;
-        let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
-        let is_active = app.cfg.daemon.nodes.get(node_name).map(|n| n.active).unwrap_or(true);
+        let bg = if is_sel {
+            palette.row_selected_bg
+        } else {
+            Color::Reset
+        };
+        let is_active = app
+            .cfg
+            .daemon
+            .nodes
+            .get(node_name)
+            .map(|n| n.active)
+            .unwrap_or(true);
 
         let (lat_str, status_str, status_col) = if !is_active {
             ("--".to_string(), "◌ INACTIVE", palette.text_muted)
@@ -9746,8 +11681,17 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         };
         rows.push(
             Row::new(vec![
-                Cell::from(node_name.clone()).style(Style::default().fg(if is_active { Color::White } else { palette.text_muted }).add_modifier(Modifier::BOLD)),
-                Cell::from(status_str).style(Style::default().fg(status_col).add_modifier(Modifier::BOLD)),
+                Cell::from(node_name.clone()).style(
+                    Style::default()
+                        .fg(if is_active {
+                            Color::White
+                        } else {
+                            palette.text_muted
+                        })
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Cell::from(status_str)
+                    .style(Style::default().fg(status_col).add_modifier(Modifier::BOLD)),
                 Cell::from(lat_str).style(Style::default().fg(palette.accent)),
             ])
             .style(Style::default().bg(bg)),
@@ -9763,8 +11707,11 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ],
     )
     .header(
-        Row::new(vec!["SERVER NODE", "STATUS", "RTT LATENCY"])
-            .style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
+        Row::new(vec!["SERVER NODE", "STATUS", "RTT LATENCY"]).style(
+            Style::default()
+                .fg(palette.warning)
+                .add_modifier(Modifier::BOLD),
+        ),
     );
     f.render_widget(table, list_inner);
 
@@ -9782,7 +11729,11 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         }
     }
 
-    let sel_name = app.server_probe_results.get(app.selected_server).map(|(n, _)| n.as_str()).unwrap_or("ThinkPad X1");
+    let sel_name = app
+        .server_probe_results
+        .get(app.selected_server)
+        .map(|(n, _)| n.as_str())
+        .unwrap_or("ThinkPad X1");
     let detail_block = Block::default()
         .borders(Borders::ALL)
         .title(format!(" Node Resources — {} ", sel_name))
@@ -9795,28 +11746,51 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if sel_name.contains("X1") || sel_name.contains("Local") {
         details.push(Line::from(vec![
             Span::styled("Hardware:     ", Style::default().fg(palette.text_muted)),
-            Span::styled("ThinkPad X1 Carbon (Intel 8-Core / Btrfs NVMe)", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "ThinkPad X1 Carbon (Intel 8-Core / Btrfs NVMe)",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]));
         details.push(Line::from(vec![
             Span::styled("CPU Cores:    ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{} cores │ Usage: {:.1}% │ Temp: {:.1}°C", snap.cpus.len(), snap.cpu_pct, snap.cpu_temp_c), Style::default().fg(palette.accent)),
+            Span::styled(
+                format!(
+                    "{} cores │ Usage: {:.1}% │ Temp: {:.1}°C",
+                    snap.cpus.len(),
+                    snap.cpu_pct,
+                    snap.cpu_temp_c
+                ),
+                Style::default().fg(palette.accent),
+            ),
         ]));
         details.push(Line::from(vec![
             Span::styled("Memory (RAM): ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{}/{} MB (Cached: {} MB, Free: {} MB)", snap.ram_used_mb, snap.ram_total_mb, snap.ram_cached_mb, snap.ram_available_mb), Style::default().fg(palette.chart[0])),
+            Span::styled(
+                format!(
+                    "{}/{} MB (Cached: {} MB, Free: {} MB)",
+                    snap.ram_used_mb, snap.ram_total_mb, snap.ram_cached_mb, snap.ram_available_mb
+                ),
+                Style::default().fg(palette.chart[0]),
+            ),
         ]));
         details.push(Line::from(vec![
             Span::styled("Storage/NVMe: ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("Root /: {}G / {}G", snap.disk_used_gb, snap.disk_total_gb), Style::default().fg(palette.success)),
+            Span::styled(
+                format!("Root /: {}G / {}G", snap.disk_used_gb, snap.disk_total_gb),
+                Style::default().fg(palette.success),
+            ),
         ]));
         if let Some(disk) = snap.disk_health.first() {
-            let health_color = if disk.health_status.contains("HEALTHY") || disk.health_status.contains("GOOD") {
-                palette.success
-            } else if disk.health_status.contains("WARN") {
-                palette.warning
-            } else {
-                palette.danger
-            };
+            let health_color =
+                if disk.health_status.contains("HEALTHY") || disk.health_status.contains("GOOD") {
+                    palette.success
+                } else if disk.health_status.contains("WARN") {
+                    palette.warning
+                } else {
+                    palette.danger
+                };
             let temp_color = if disk.temperature_c > 75.0 {
                 palette.danger
             } else if disk.temperature_c > 60.0 {
@@ -9826,17 +11800,47 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             };
             details.push(Line::from(vec![
                 Span::styled("SSD SMART:    ", Style::default().fg(palette.text_muted)),
-                Span::styled(format!("[● {}] ", disk.health_status), Style::default().fg(health_color).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("[● {:.0}°C NORMAL] ", disk.temperature_c), Style::default().fg(temp_color)),
-                Span::styled(format!("TBW: {:.2} TB (Wear: {}%)", disk.written_bytes_tb, disk.wear_level_pct), Style::default().fg(palette.accent)),
+                Span::styled(
+                    format!("[● {}] ", disk.health_status),
+                    Style::default()
+                        .fg(health_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("[● {:.0}°C NORMAL] ", disk.temperature_c),
+                    Style::default().fg(temp_color),
+                ),
+                Span::styled(
+                    format!(
+                        "TBW: {:.2} TB (Wear: {}%)",
+                        disk.written_bytes_tb, disk.wear_level_pct
+                    ),
+                    Style::default().fg(palette.accent),
+                ),
             ]));
         }
         details.push(Line::from(vec![
             Span::styled("Thermal State:", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{:.1}°C (Fan: {})", snap.cpu_temp_c, snap.fan_speed.as_deref().unwrap_or("Dynamic")), Style::default().fg(if snap.cpu_temp_c > 85.0 { palette.danger } else { palette.success })),
+            Span::styled(
+                format!(
+                    "{:.1}°C (Fan: {})",
+                    snap.cpu_temp_c,
+                    snap.fan_speed.as_deref().unwrap_or("Dynamic")
+                ),
+                Style::default().fg(if snap.cpu_temp_c > 85.0 {
+                    palette.danger
+                } else {
+                    palette.success
+                }),
+            ),
         ]));
         details.push(Line::from(""));
-        details.push(Line::from(Span::styled("Per-Core Telemetry Grid:", Style::default().fg(palette.warning).add_modifier(Modifier::BOLD))));
+        details.push(Line::from(Span::styled(
+            "Per-Core Telemetry Grid:",
+            Style::default()
+                .fg(palette.warning)
+                .add_modifier(Modifier::BOLD),
+        )));
         for row in 0..4 {
             let left_spans = format_core_span(snap.cpus.get(row), row, 6);
             let right_spans = format_core_span(snap.cpus.get(row + 4), row + 4, 6);
@@ -9847,14 +11851,29 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         }
     } else {
         let node_cfg = app.cfg.daemon.nodes.get(sel_name);
-        let ip = node_cfg.map(|n| n.ip.as_str()).unwrap_or("100.x.y.z (Tailscale Mesh)");
+        let ip = node_cfg
+            .map(|n| n.ip.as_str())
+            .unwrap_or("100.x.y.z (Tailscale Mesh)");
         let user = node_cfg.map(|n| n.user.as_str()).unwrap_or("root");
-        let svcs = node_cfg.map(|n| n.services.iter().map(|s| format!("{}:{}", s.name, s.port)).collect::<Vec<_>>().join(", ")).unwrap_or_else(|| "ssh:22, http:80".to_string());
+        let svcs = node_cfg
+            .map(|n| {
+                n.services
+                    .iter()
+                    .map(|s| format!("{}:{}", s.name, s.port))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_else(|| "ssh:22, http:80".to_string());
         let active_state = node_cfg.map(|n| n.active).unwrap_or(true);
 
         details.push(Line::from(vec![
             Span::styled("Node ID:       ", Style::default().fg(palette.text_muted)),
-            Span::styled(sel_name, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                sel_name,
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]));
         details.push(Line::from(vec![
             Span::styled("Tailscale IP:  ", Style::default().fg(palette.text_muted)),
@@ -9871,8 +11890,18 @@ fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         details.push(Line::from(vec![
             Span::styled("Node State:    ", Style::default().fg(palette.text_muted)),
             Span::styled(
-                if active_state { "● ACTIVE (Probing & Armada Enabled)" } else { "◌ INACTIVE (Probes Disabled)" },
-                Style::default().fg(if active_state { palette.success } else { palette.text_muted }).add_modifier(Modifier::BOLD),
+                if active_state {
+                    "● ACTIVE (Probing & Armada Enabled)"
+                } else {
+                    "◌ INACTIVE (Probes Disabled)"
+                },
+                Style::default()
+                    .fg(if active_state {
+                        palette.success
+                    } else {
+                        palette.text_muted
+                    })
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
         details.push(Line::from(""));
@@ -9909,48 +11938,112 @@ fn draw_log_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let y = bar_inner.y;
 
     app.register_hitbox(
-        Rect { x: cur_x, y, width: btn_j_w, height: 1 },
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_j_w,
+            height: 1,
+        },
         HitboxAction::SelectLogSource(LogSource::Journal),
     );
     cur_x += btn_j_w + 1;
 
     app.register_hitbox(
-        Rect { x: cur_x, y, width: btn_d_w, height: 1 },
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_d_w,
+            height: 1,
+        },
         HitboxAction::SelectLogSource(LogSource::Docker),
     );
     cur_x += btn_d_w + 1;
 
     app.register_hitbox(
-        Rect { x: cur_x, y, width: btn_a_w, height: 1 },
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_a_w,
+            height: 1,
+        },
         HitboxAction::SelectLogSource(LogSource::Agents),
     );
     cur_x += btn_a_w + 2;
 
     app.register_hitbox(
-        Rect { x: cur_x, y, width: btn_refresh_w, height: 1 },
+        Rect {
+            x: cur_x,
+            y,
+            width: btn_refresh_w,
+            height: 1,
+        },
         HitboxAction::RefreshLogs,
     );
 
-    let (j_bg, j_fg) = if app.log_source == LogSource::Journal { (palette.highlight_bg, palette.highlight_fg) } else { (Color::Reset, palette.text_muted) };
-    let (d_bg, d_fg) = if app.log_source == LogSource::Docker { (palette.highlight_bg, palette.highlight_fg) } else { (Color::Reset, palette.text_muted) };
-    let (a_bg, a_fg) = if app.log_source == LogSource::Agents { (palette.highlight_bg, palette.highlight_fg) } else { (Color::Reset, palette.text_muted) };
+    let (j_bg, j_fg) = if app.log_source == LogSource::Journal {
+        (palette.highlight_bg, palette.highlight_fg)
+    } else {
+        (Color::Reset, palette.text_muted)
+    };
+    let (d_bg, d_fg) = if app.log_source == LogSource::Docker {
+        (palette.highlight_bg, palette.highlight_fg)
+    } else {
+        (Color::Reset, palette.text_muted)
+    };
+    let (a_bg, a_fg) = if app.log_source == LogSource::Agents {
+        (palette.highlight_bg, palette.highlight_fg)
+    } else {
+        (Color::Reset, palette.text_muted)
+    };
 
     let bar_spans = vec![
-        Span::styled(" [journalctl] ", Style::default().fg(j_fg).bg(j_bg).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [journalctl] ",
+            Style::default()
+                .fg(j_fg)
+                .bg(j_bg)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [docker logs] ", Style::default().fg(d_fg).bg(d_bg).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [docker logs] ",
+            Style::default()
+                .fg(d_fg)
+                .bg(d_bg)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [agent logs] ", Style::default().fg(a_fg).bg(a_bg).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [agent logs] ",
+            Style::default()
+                .fg(a_fg)
+                .bg(a_bg)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" │ "),
-        Span::styled(" [↺ Refresh] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [↺ Refresh] ",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("  Filter: "),
-        Span::styled(format!(" [{}] (Press 'l') ", app.log_level.label()), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!(" [{}] (Press 'l') ", app.log_level.label()),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
     ];
     f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" Log Stream Viewer — Source: {} (Filtered: {}) ", app.log_source.label(), app.log_level.label()))
+        .title(format!(
+            " Log Stream Viewer — Source: {} (Filtered: {}) ",
+            app.log_source.label(),
+            app.log_level.label()
+        ))
         .border_style(Style::default().fg(palette.border));
     let inner = block.inner(chunks[1]);
     f.render_widget(block, chunks[1]);
@@ -9958,13 +12051,11 @@ fn draw_log_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let filtered: Vec<&(String, String, String)> = app
         .log_buffer
         .iter()
-        .filter(|(lvl, _, _)| {
-            match app.log_level {
-                LogLevelFilter::All => true,
-                LogLevelFilter::Error => lvl == "ERROR",
-                LogLevelFilter::Warn => lvl == "WARN" || lvl == "ERROR",
-                LogLevelFilter::Info => true,
-            }
+        .filter(|(lvl, _, _)| match app.log_level {
+            LogLevelFilter::All => true,
+            LogLevelFilter::Error => lvl == "ERROR",
+            LogLevelFilter::Warn => lvl == "WARN" || lvl == "ERROR",
+            LogLevelFilter::Info => true,
         })
         .collect();
 
@@ -9978,14 +12069,23 @@ fn draw_log_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 _ => ("● INFO ", palette.success),
             };
             Line::from(vec![
-                Span::styled(format!("{:<8} ", badge), Style::default().fg(col).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("[{:<12}] ", src), Style::default().fg(palette.accent)),
+                Span::styled(
+                    format!("{:<8} ", badge),
+                    Style::default().fg(col).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("[{:<12}] ", src),
+                    Style::default().fg(palette.accent),
+                ),
                 Span::styled(msg.clone(), Style::default().fg(Color::White)),
             ])
         })
         .collect();
 
-    f.render_widget(Paragraph::new(display_lines).wrap(Wrap { trim: false }), inner);
+    f.render_widget(
+        Paragraph::new(display_lines).wrap(Wrap { trim: false }),
+        inner,
+    );
 }
 
 // ── Tab 8: Terminal (Embedded Terminal / Command Execution Runner Pane) ───────
@@ -9994,7 +12094,11 @@ fn draw_terminal_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let palette = cockpit_theme(&app.cfg.output.theme);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(8), Constraint::Length(3)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(8),
+            Constraint::Length(3),
+        ])
         .split(area);
 
     let bar_block = Block::default()
@@ -10009,7 +12113,12 @@ fn draw_terminal_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     };
 
     let bar_spans = vec![
-        Span::styled(format!(" Target: [{target_label}] (Press 'r') "), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!(" Target: [{target_label}] (Press 'r') "),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" │ Quick Presets: "),
         Span::styled(" [cas doctor] ", Style::default().fg(palette.accent)),
         Span::raw(" "),
@@ -10043,7 +12152,10 @@ fn draw_terminal_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             Line::from(Span::styled(l.clone(), Style::default().fg(col)))
         })
         .collect();
-    f.render_widget(Paragraph::new(out_lines).wrap(Wrap { trim: false }), out_inner);
+    f.render_widget(
+        Paragraph::new(out_lines).wrap(Wrap { trim: false }),
+        out_inner,
+    );
 
     let in_block = Block::default()
         .borders(Borders::ALL)
@@ -10053,9 +12165,24 @@ fn draw_terminal_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     f.render_widget(in_block, chunks[2]);
 
     let prompt_line = Line::from(vec![
-        Span::styled("$ > ", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(&app.term_input, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-        Span::styled("█", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "$ > ",
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            &app.term_input,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "█",
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
     ]);
     f.render_widget(Paragraph::new(prompt_line), in_inner);
 }
@@ -10066,20 +12193,52 @@ fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let palette = cockpit_theme(&app.cfg.output.theme);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(8), Constraint::Length(3)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(8),
+            Constraint::Length(3),
+        ])
         .split(area);
 
     let telem = crate::pet::MascotTelemetry {
         cpu_pct: app.latest_snap.cpu_pct,
         cpu_temp_c: app.latest_snap.cpu_temp_c,
-        ram_pct: ((app.latest_snap.ram_used_mb as f64) / (app.latest_snap.ram_total_mb.max(1) as f64) * 100.0) as u8,
-        swap_pct: ((app.latest_snap.swap_used_mb as f64) / (app.latest_snap.swap_total_mb.max(1) as f64) * 100.0) as u8,
-        containers_down: app.latest_snap.docker_containers.iter().filter(|c| c.state != "running").count(),
-        fleet_nodes_down: app.server_probe_results.iter().filter(|(_, lat)| lat.is_none()).count(),
-        uptime_monitors_down: app.latest_snap.uptime_monitors.iter().filter(|m| !m.is_up).count(),
-        git_dirty_count: app.latest_snap.tracked_projects.iter().filter(|p| p.is_dirty).count(),
-        turbo_active: app.turbo_profile_active != "ECO_BALANCED" && !app.turbo_profile_active.is_empty(),
-        transient_action: if app.is_chat_processing { Some(crate::pet::PetActionState::Run) } else { None },
+        ram_pct: ((app.latest_snap.ram_used_mb as f64)
+            / (app.latest_snap.ram_total_mb.max(1) as f64)
+            * 100.0) as u8,
+        swap_pct: ((app.latest_snap.swap_used_mb as f64)
+            / (app.latest_snap.swap_total_mb.max(1) as f64)
+            * 100.0) as u8,
+        containers_down: app
+            .latest_snap
+            .docker_containers
+            .iter()
+            .filter(|c| c.state != "running")
+            .count(),
+        fleet_nodes_down: app
+            .server_probe_results
+            .iter()
+            .filter(|(_, lat)| lat.is_none())
+            .count(),
+        uptime_monitors_down: app
+            .latest_snap
+            .uptime_monitors
+            .iter()
+            .filter(|m| !m.is_up)
+            .count(),
+        git_dirty_count: app
+            .latest_snap
+            .tracked_projects
+            .iter()
+            .filter(|p| p.is_dirty)
+            .count(),
+        turbo_active: app.turbo_profile_active != "ECO_BALANCED"
+            && !app.turbo_profile_active.is_empty(),
+        transient_action: if app.is_chat_processing {
+            Some(crate::pet::PetActionState::Run)
+        } else {
+            None
+        },
         xp_level: 3,
         tick: app.pet_tick,
         speed: app.cfg.mascot.speed.clone(),
@@ -10103,28 +12262,53 @@ fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let btn_clear_w = 16u16;
 
     app.register_hitbox(
-        Rect { x: bar_inner.x + 1, y: bar_inner.y, width: btn_model_w, height: 1 },
+        Rect {
+            x: bar_inner.x + 1,
+            y: bar_inner.y,
+            width: btn_model_w,
+            height: 1,
+        },
         HitboxAction::CycleAiModel,
     );
     app.register_hitbox(
-        Rect { x: bar_inner.x + btn_model_w + 3, y: bar_inner.y, width: btn_clear_w, height: 1 },
+        Rect {
+            x: bar_inner.x + btn_model_w + 3,
+            y: bar_inner.y,
+            width: btn_clear_w,
+            height: 1,
+        },
         HitboxAction::ClearAiChat,
     );
 
     let mut bar_spans = vec![
-        Span::styled(format!(" [🤖 Model: {active_model} (m)] "), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!(" [🤖 Model: {active_model} (m)] "),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("  "),
-        Span::styled(" [🗑 Clear Chat] ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [🗑 Clear Chat] ",
+            Style::default()
+                .fg(Color::LightRed)
+                .add_modifier(Modifier::BOLD),
+        ),
     ];
     if app.cfg.mascot.chat_avatar_enabled {
         bar_spans.push(Span::raw("  "));
         bar_spans.push(Span::styled(
             format!(" [🪙 #{:02} {}] ", expr.id, expr.label),
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         ));
     }
     bar_spans.push(Span::raw("  │  Gateway: "));
-    bar_spans.push(Span::styled("OmniRoute / 9router (localhost:20128 / :3007)", Style::default().fg(palette.accent)));
+    bar_spans.push(Span::styled(
+        "OmniRoute / 9router (localhost:20128 / :3007)",
+        Style::default().fg(palette.accent),
+    ));
     f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
 
     // Split middle area horizontally if wide enough and mascot in chat is enabled
@@ -10140,7 +12324,10 @@ fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let hist_block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" Workspace AI Chat — Persona: {} ({}) ", app.cfg.persona.user_name, app.cfg.persona.assistant_role))
+        .title(format!(
+            " Workspace AI Chat — Persona: {} ({}) ",
+            app.cfg.persona.user_name, app.cfg.persona.assistant_role
+        ))
         .border_style(Style::default().fg(palette.border));
     let hist_inner = hist_block.inner(chat_area);
     f.render_widget(hist_block, chat_area);
@@ -10152,20 +12339,40 @@ fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         .map(|l| {
             let (display_text, style) = if l.starts_with("User:") {
                 let text = if chat_avatar_on {
-                    format!("👤 {}: {}", app.cfg.persona.user_name, l.strip_prefix("User:").unwrap_or(l).trim_start())
+                    format!(
+                        "👤 {}: {}",
+                        app.cfg.persona.user_name,
+                        l.strip_prefix("User:").unwrap_or(l).trim_start()
+                    )
                 } else {
                     l.clone()
                 };
-                (text, Style::default().fg(palette.accent).add_modifier(Modifier::BOLD))
+                (
+                    text,
+                    Style::default()
+                        .fg(palette.accent)
+                        .add_modifier(Modifier::BOLD),
+                )
             } else if l.starts_with("AI:") {
                 let text = if chat_avatar_on {
-                    format!("🪙 [#{:02} {}] {}: {}", expr.id, expr.label, app.cfg.persona.assistant_role, l.strip_prefix("AI:").unwrap_or(l).trim_start())
+                    format!(
+                        "🪙 [#{:02} {}] {}: {}",
+                        expr.id,
+                        expr.label,
+                        app.cfg.persona.assistant_role,
+                        l.strip_prefix("AI:").unwrap_or(l).trim_start()
+                    )
                 } else {
                     l.clone()
                 };
                 (text, Style::default().fg(Color::White))
             } else if l.starts_with("Error:") {
-                (l.clone(), Style::default().fg(palette.danger).add_modifier(Modifier::BOLD))
+                (
+                    l.clone(),
+                    Style::default()
+                        .fg(palette.danger)
+                        .add_modifier(Modifier::BOLD),
+                )
             } else {
                 (l.clone(), Style::default().fg(palette.text_muted))
             };
@@ -10182,8 +12389,15 @@ fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if let Some(m_area) = mascot_area {
         let m_block = Block::default()
             .borders(Borders::ALL)
-            .title(format!(" 🪙 Companion Reactor [#{:02} {}] ", expr.id, expr.label))
-            .border_style(Style::default().fg(Color::Rgb(57, 255, 20)).add_modifier(Modifier::BOLD));
+            .title(format!(
+                " 🪙 Companion Reactor [#{:02} {}] ",
+                expr.id, expr.label
+            ))
+            .border_style(
+                Style::default()
+                    .fg(Color::Rgb(57, 255, 20))
+                    .add_modifier(Modifier::BOLD),
+            );
         let m_inner = m_block.inner(m_area);
         f.render_widget(m_block, m_area);
 
@@ -10202,10 +12416,17 @@ fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         };
         all_widget_lines.push(Line::from(Span::styled(
             reaction_msg,
-            Style::default().fg(if app.is_chat_processing { Color::Yellow } else { palette.text_muted }),
+            Style::default().fg(if app.is_chat_processing {
+                Color::Yellow
+            } else {
+                palette.text_muted
+            }),
         )));
 
-        f.render_widget(Paragraph::new(all_widget_lines).alignment(Alignment::Center), m_inner);
+        f.render_widget(
+            Paragraph::new(all_widget_lines).alignment(Alignment::Center),
+            m_inner,
+        );
     }
 
     let in_block = Block::default()
@@ -10224,9 +12445,24 @@ fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     f.render_widget(in_block, chunks[2]);
 
     let prompt_line = Line::from(vec![
-        Span::styled("$ > ", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(&app.chat_input, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-        Span::styled("█", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "$ > ",
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            &app.chat_input,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "█",
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
     ]);
     f.render_widget(Paragraph::new(prompt_line), in_inner);
 }
@@ -10243,7 +12479,13 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         crate::pet::PetMood::Overheated => Color::LightRed,
         crate::pet::PetMood::Sick => Color::Magenta,
         crate::pet::PetMood::Sprint => Color::Yellow,
-        crate::pet::PetMood::Idle => if app.pet_is_stopped { Color::DarkGray } else { palette.accent },
+        crate::pet::PetMood::Idle => {
+            if app.pet_is_stopped {
+                Color::DarkGray
+            } else {
+                palette.accent
+            }
+        }
     };
 
     let pet_opt = if let Some(ref d) = app.db {
@@ -10304,14 +12546,44 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let telem = crate::pet::MascotTelemetry {
         cpu_pct: app.latest_snap.cpu_pct,
         cpu_temp_c: app.latest_snap.cpu_temp_c,
-        ram_pct: ((app.latest_snap.ram_used_mb as f64) / (app.latest_snap.ram_total_mb.max(1) as f64) * 100.0) as u8,
-        swap_pct: ((app.latest_snap.swap_used_mb as f64) / (app.latest_snap.swap_total_mb.max(1) as f64) * 100.0) as u8,
-        containers_down: app.latest_snap.docker_containers.iter().filter(|c| c.state != "running").count(),
-        fleet_nodes_down: app.server_probe_results.iter().filter(|(_, lat)| lat.is_none()).count(),
-        uptime_monitors_down: app.latest_snap.uptime_monitors.iter().filter(|m| !m.is_up).count(),
-        git_dirty_count: app.latest_snap.tracked_projects.iter().filter(|p| p.is_dirty).count(),
-        turbo_active: app.turbo_profile_active != "ECO_BALANCED" && !app.turbo_profile_active.is_empty(),
-        transient_action: if app.pet_is_stopped { Some(crate::pet::PetActionState::Death) } else if let Some((st, _)) = app.pet_transient_action { Some(st) } else { None },
+        ram_pct: ((app.latest_snap.ram_used_mb as f64)
+            / (app.latest_snap.ram_total_mb.max(1) as f64)
+            * 100.0) as u8,
+        swap_pct: ((app.latest_snap.swap_used_mb as f64)
+            / (app.latest_snap.swap_total_mb.max(1) as f64)
+            * 100.0) as u8,
+        containers_down: app
+            .latest_snap
+            .docker_containers
+            .iter()
+            .filter(|c| c.state != "running")
+            .count(),
+        fleet_nodes_down: app
+            .server_probe_results
+            .iter()
+            .filter(|(_, lat)| lat.is_none())
+            .count(),
+        uptime_monitors_down: app
+            .latest_snap
+            .uptime_monitors
+            .iter()
+            .filter(|m| !m.is_up)
+            .count(),
+        git_dirty_count: app
+            .latest_snap
+            .tracked_projects
+            .iter()
+            .filter(|p| p.is_dirty)
+            .count(),
+        turbo_active: app.turbo_profile_active != "ECO_BALANCED"
+            && !app.turbo_profile_active.is_empty(),
+        transient_action: if app.pet_is_stopped {
+            Some(crate::pet::PetActionState::Death)
+        } else if let Some((st, _)) = app.pet_transient_action {
+            Some(st)
+        } else {
+            None
+        },
         xp_level: level as usize,
         tick: app.pet_tick,
         speed: app.cfg.mascot.speed.clone(),
@@ -10331,7 +12603,10 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     };
 
     let title = if area.width >= 36 {
-        format!(" ■ SOVEREIGN TOKEN [ {} · Lv.{} · {} | {} ] ", pet_name_display, level, state_badge, mood_short)
+        format!(
+            " ■ SOVEREIGN TOKEN [ {} · Lv.{} · {} | {} ] ",
+            pet_name_display, level, state_badge, mood_short
+        )
     } else {
         format!(" ■ SOVEREIGN [ {} · Lv.{} ] ", pet_name_display, level)
     };
@@ -10351,8 +12626,16 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if app.show_pet_history {
         let mut lines = vec![
             Line::from(vec![
-                Span::styled(" ■ ACTIVITY LOG ", Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD)),
-                Span::styled(" [X Close (h/Esc)] ", Style::default().fg(palette.text_muted)),
+                Span::styled(
+                    " ■ ACTIVITY LOG ",
+                    Style::default()
+                        .fg(palette.highlight_fg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    " [X Close (h/Esc)] ",
+                    Style::default().fg(palette.text_muted),
+                ),
             ]),
             Line::from(Span::raw("─".repeat(inner.width as usize))),
         ];
@@ -10367,9 +12650,20 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 let time_str = log.timestamp.split('T').nth(1).unwrap_or(&log.timestamp);
                 let time_short: String = time_str.chars().take(8).collect();
                 lines.push(Line::from(vec![
-                    Span::styled(format!("{:<8}", time_short), Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!("[{}]", log.action_type), Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
-                    Span::styled(format!(" {}", log.detail), Style::default().fg(Color::White)),
+                    Span::styled(
+                        format!("{:<8}", time_short),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled(
+                        format!("[{}]", log.action_type),
+                        Style::default()
+                            .fg(palette.accent)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!(" {}", log.detail),
+                        Style::default().fg(Color::White),
+                    ),
                 ]));
             }
         }
@@ -10397,17 +12691,44 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         &telem,
         app.cfg.output.matrix_rain,
     );
-    f.render_widget(Paragraph::new(token_lines).alignment(ratatui::layout::Alignment::Center), screen);
+    f.render_widget(
+        Paragraph::new(token_lines).alignment(ratatui::layout::Alignment::Center),
+        screen,
+    );
 
     // 2. Navigation Bar (Compact layout for smaller column)
     let nav_spans = vec![
-        Span::styled(" [▲] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [▲] ",
+            Style::default()
+                .fg(Color::Rgb(0, 0, 0))
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [▼] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [▼] ",
+            Style::default()
+                .fg(Color::Rgb(0, 0, 0))
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [OK] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [OK] ",
+            Style::default()
+                .fg(Color::Rgb(0, 0, 0))
+                .bg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [X] ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Red).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [X] ",
+            Style::default()
+                .fg(Color::Rgb(0, 0, 0))
+                .bg(Color::Red)
+                .add_modifier(Modifier::BOLD),
+        ),
     ];
     f.render_widget(Paragraph::new(Line::from(nav_spans)), chunks[1]);
 
@@ -10418,44 +12739,60 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let ok_w = 6u16;
     let cancel_w = 5u16;
     app.register_hitbox(
-        Rect { x: nav_x, y: chunks[1].y, width: up_w, height: 1 },
+        Rect {
+            x: nav_x,
+            y: chunks[1].y,
+            width: up_w,
+            height: 1,
+        },
         HitboxAction::PetActionUp,
     );
     let mut x2 = nav_x + up_w + 1;
     app.register_hitbox(
-        Rect { x: x2, y: chunks[1].y, width: down_w, height: 1 },
+        Rect {
+            x: x2,
+            y: chunks[1].y,
+            width: down_w,
+            height: 1,
+        },
         HitboxAction::PetActionDown,
     );
     x2 += down_w + 1;
     app.register_hitbox(
-        Rect { x: x2, y: chunks[1].y, width: ok_w, height: 1 },
+        Rect {
+            x: x2,
+            y: chunks[1].y,
+            width: ok_w,
+            height: 1,
+        },
         HitboxAction::PetOk,
     );
     x2 += ok_w + 1;
     app.register_hitbox(
-        Rect { x: x2, y: chunks[1].y, width: cancel_w, height: 1 },
+        Rect {
+            x: x2,
+            y: chunks[1].y,
+            width: cancel_w,
+            height: 1,
+        },
         HitboxAction::PetCancel,
     );
 
     // 3. Action Buttons with active selection highlight & Stop Button (Sovereign themed)
-    let stop_label = if app.pet_is_stopped { "▶Spin(p)" } else { "■Stop(p)" };
-    let stop_label_short = if app.pet_is_stopped { "▶(p)" } else { "■(p)" };
-    let actions: &[&str] = if inner.width >= 36 {
-        &[
-            "Overclock(f)",
-            "Audit(t)",
-            "Purge(s)",
-            stop_label,
-            "Log(h)",
-        ]
+    let stop_label = if app.pet_is_stopped {
+        "▶Spin(p)"
     } else {
-        &[
-            "(f)",
-            "(t)",
-            "(s)",
-            stop_label_short,
-            "(h)",
-        ]
+        "■Stop(p)"
+    };
+    let stop_label_short = if app.pet_is_stopped {
+        "▶(p)"
+    } else {
+        "■(p)"
+    };
+    let actions: &[&str] = if inner.width >= 36 {
+        &["Overclock(f)", "Audit(t)", "Purge(s)", stop_label, "Log(h)"]
+    } else {
+        &["(f)", "(t)", "(s)", stop_label_short, "(h)"]
     };
 
     let mut action_spans = Vec::new();
@@ -10466,13 +12803,13 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         if i == app.pet_selected_action {
             action_spans.push(Span::styled(
                 label,
-                Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Rgb(0, 0, 0))
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             ));
         } else {
-            action_spans.push(Span::styled(
-                label,
-                Style::default().fg(palette.text_muted),
-            ));
+            action_spans.push(Span::styled(label, Style::default().fg(palette.text_muted)));
         }
         action_spans.push(Span::raw(" "));
 
@@ -10486,7 +12823,12 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             _ => HitboxAction::PetFeed,
         };
         app.register_hitbox(
-            Rect { x: act_x, y: chunks[2].y, width: btn_w, height: 1 },
+            Rect {
+                x: act_x,
+                y: chunks[2].y,
+                width: btn_w,
+                height: 1,
+            },
             action_hb,
         );
         act_x += btn_w + 1;
@@ -10504,12 +12846,20 @@ fn draw_pet_switch_confirm_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect
     let block = Block::default()
         .title(" 🌀 Sovereign System Purge & Cache Flush ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD));
+        .border_style(
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        );
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
     let current_name = if let Some(ref d) = app.db {
-        d.get_active_pet().ok().flatten().map(|p| p.name).unwrap_or_else(|| "Sovereign".to_string())
+        d.get_active_pet()
+            .ok()
+            .flatten()
+            .map(|p| p.name)
+            .unwrap_or_else(|| "Sovereign".to_string())
     } else {
         "Sovereign".to_string()
     };
@@ -10518,25 +12868,43 @@ fn draw_pet_switch_confirm_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect
         Line::from(""),
         Line::from(Span::styled(
             " Trigger Sovereign Cache Flush & +5 XP Proof of Work? ",
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         Line::from(vec![
             Span::styled(" Mascot: ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("🪙 {current_name}"), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("🪙 {current_name}"),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("  ➔  ", Style::default().fg(palette.text_muted)),
-            Span::styled("🌀 Purge Buffers & Refresh Telemetry", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "🌀 Purge Buffers & Refresh Telemetry",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(""),
         Line::from(vec![
             Span::styled(
                 " [Y] Yes, Purge ",
-                Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Rgb(0, 0, 0))
+                    .bg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw("    "),
             Span::styled(
                 " [N / Esc] Cancel & Keep ",
-                Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Red).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Rgb(0, 0, 0))
+                    .bg(Color::Red)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]),
     ];
@@ -10546,20 +12914,28 @@ fn draw_pet_switch_confirm_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect
     // Register hitboxes for [Yes] and [Cancel]
     let btn_y = inner.y + 5;
     app.register_hitbox(
-        Rect { x: inner.x + 4, y: btn_y, width: 17, height: 1 },
+        Rect {
+            x: inner.x + 4,
+            y: btn_y,
+            width: 17,
+            height: 1,
+        },
         HitboxAction::ConfirmSwitchPet,
     );
     app.register_hitbox(
-        Rect { x: inner.x + 25, y: btn_y, width: 25, height: 1 },
+        Rect {
+            x: inner.x + 25,
+            y: btn_y,
+            width: 25,
+            height: 1,
+        },
         HitboxAction::CancelSwitchPet,
     );
 }
 
 // ── Uptime Kuma Style Endpoint Monitors Panel ───────────────────────────────
 
-
 // ── Tab 2: Services / Apps (Dokploy-style) ───────────────────────────────────
-
 
 // ── App Inspector Modal ─────────────────────────────────────────────────────
 
@@ -10575,7 +12951,11 @@ fn draw_app_inspector_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(format!(" App Inspector — {} ", card.name))
-        .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+        .border_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
@@ -10589,7 +12969,12 @@ fn draw_app_inspector_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let lines = vec![
         Line::from(vec![
             Span::styled("Application ID:    ", Style::default().fg(Color::DarkGray)),
-            Span::styled(&card.id, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                &card.id,
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Category:          ", Style::default().fg(Color::DarkGray)),
@@ -10602,18 +12987,25 @@ fn draw_app_inspector_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         Line::from(vec![
             Span::styled("Binding Port:      ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                card.port.map(|p| p.to_string()).unwrap_or_else(|| "Dynamic / None".to_string()),
+                card.port
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "Dynamic / None".to_string()),
                 Style::default().fg(Color::Yellow),
             ),
         ]),
         Line::from(vec![
             Span::styled("Health Status:     ", Style::default().fg(Color::DarkGray)),
-            Span::styled(status_text, Style::default().fg(status_col).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                status_text,
+                Style::default().fg(status_col).add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Latency (RTT):     ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                card.latency_ms.map(|ms| format!("{ms} ms")).unwrap_or_else(|| "N/A".to_string()),
+                card.latency_ms
+                    .map(|ms| format!("{ms} ms"))
+                    .unwrap_or_else(|| "N/A".to_string()),
                 Style::default().fg(Color::White),
             ),
         ]),
@@ -10623,7 +13015,10 @@ fn draw_app_inspector_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             Span::styled(&card.details, Style::default().fg(Color::White)),
         ]),
         Line::from(""),
-        Line::from(Span::styled("Press 'Esc' or click [Close] to dismiss this inspector.", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled(
+            "Press 'Esc' or click [Close] to dismiss this inspector.",
+            Style::default().fg(Color::DarkGray),
+        )),
     ];
 
     let content_layout = Layout::default()
@@ -10631,7 +13026,10 @@ fn draw_app_inspector_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         .constraints([Constraint::Min(6), Constraint::Length(2)])
         .split(inner);
 
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), content_layout[0]);
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }),
+        content_layout[0],
+    );
 
     let close_btn_rect = Rect {
         x: content_layout[1].x + 1,
@@ -10642,7 +13040,9 @@ fn draw_app_inspector_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     app.register_hitbox(close_btn_rect, HitboxAction::CloseInspector);
     let close_span = Span::styled(
         " [ Close (Esc) ] ",
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
     );
     f.render_widget(Paragraph::new(Line::from(close_span)), content_layout[1]);
 }
@@ -10679,17 +13079,46 @@ fn draw_analytics_detail_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let x0 = bar_inner.x;
     let y0 = bar_inner.y;
     let h = bar_inner.height.min(1);
-    app.register_hitbox(Rect { x: x0 + 1, y: y0, width: btn_back_w, height: h }, HitboxAction::CloseAnalyticsDetail);
+    app.register_hitbox(
+        Rect {
+            x: x0 + 1,
+            y: y0,
+            width: btn_back_w,
+            height: h,
+        },
+        HitboxAction::CloseAnalyticsDetail,
+    );
     let x1 = x0 + btn_back_w + 3;
-    app.register_hitbox(Rect { x: x1, y: y0, width: btn_refresh_w, height: h }, HitboxAction::RefreshAnalytics);
+    app.register_hitbox(
+        Rect {
+            x: x1,
+            y: y0,
+            width: btn_refresh_w,
+            height: h,
+        },
+        HitboxAction::RefreshAnalytics,
+    );
 
     let back_label = " [ ← Back to Sites (b/Esc) ] ";
     let bar_spans = vec![
-        Span::styled(back_label, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            back_label,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("  "),
-        Span::styled(" [ Refresh (r) ] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [ Refresh (r) ] ",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("  │  "),
-        Span::styled("Press 'b' or Esc to return to Overview table", Style::default().fg(palette.text_muted)),
+        Span::styled(
+            "Press 'b' or Esc to return to Overview table",
+            Style::default().fg(palette.text_muted),
+        ),
     ];
     f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
 
@@ -10698,7 +13127,11 @@ fn draw_analytics_detail_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let site_name = match app.analytics_selected_site {
         0 => "All Sovereign Apps (Aggregated)".to_string(),
-        idx => app.analytic_sites().get(idx).map(|s| s.name.clone()).unwrap_or_else(|| "All Sites".to_string()),
+        idx => app
+            .analytic_sites()
+            .get(idx)
+            .map(|s| s.name.clone())
+            .unwrap_or_else(|| "All Sites".to_string()),
     };
 
     let main_block = Block::default()
@@ -10732,7 +13165,7 @@ fn draw_analytics_detail_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Length(34), // KPIs
-            Constraint::Min(20),   // Pulse Chart
+            Constraint::Min(20),    // Pulse Chart
         ])
         .split(detail_rows[0]);
 
@@ -10742,23 +13175,44 @@ fn draw_analytics_detail_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let kpi_lines = vec![
         Line::from(vec![
             Span::styled("Pageviews:   ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{:<10}", analytics.pageviews), Style::default().fg(Color::Rgb(255, 255, 255)).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{:<10}", analytics.pageviews),
+                Style::default()
+                    .fg(Color::Rgb(255, 255, 255))
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Uniq Visit:  ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{:<10}", analytics.unique_visitors), Style::default().fg(Color::Rgb(255, 255, 255)).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{:<10}", analytics.unique_visitors),
+                Style::default()
+                    .fg(Color::Rgb(255, 255, 255))
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Live Now:    ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{:<10}", analytics.active_visitors), Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{:<10}", analytics.active_visitors),
+                Style::default()
+                    .fg(Color::LightGreen)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Bounce Rate: ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{:.1}%", analytics.bounce_rate), Style::default().fg(Color::LightYellow)),
+            Span::styled(
+                format!("{:.1}%", analytics.bounce_rate),
+                Style::default().fg(Color::LightYellow),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Avg Session: ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!(" {}m {}s", avg_min, avg_sec), Style::default().fg(Color::Rgb(255, 255, 255))),
+            Span::styled(
+                format!(" {}m {}s", avg_min, avg_sec),
+                Style::default().fg(Color::Rgb(255, 255, 255)),
+            ),
         ]),
     ];
 
@@ -10780,17 +13234,32 @@ fn draw_analytics_detail_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let mut chart_lines = Vec::new();
     if analytics.daily_traffic.is_empty() {
         chart_lines.push(Line::from(" No Traffic Events Recorded Yet. "));
-        chart_lines.push(Line::from(Span::styled(" Tip: Send test hits with 'p' or embed tracker.js snippet. ", Style::default().fg(palette.text_muted))));
+        chart_lines.push(Line::from(Span::styled(
+            " Tip: Send test hits with 'p' or embed tracker.js snippet. ",
+            Style::default().fg(palette.text_muted),
+        )));
     } else {
-        let max_pvs = analytics.daily_traffic.iter().map(|(_, c)| *c).max().unwrap_or(1).max(1);
+        let max_pvs = analytics
+            .daily_traffic
+            .iter()
+            .map(|(_, c)| *c)
+            .max()
+            .unwrap_or(1)
+            .max(1);
         for (day, count) in &analytics.daily_traffic {
             let ratio = *count as f32 / max_pvs as f32;
             let bar_len = (ratio * 22.0).min(22.0) as usize;
             let bar_str = "█".repeat(bar_len.max(1));
             chart_lines.push(Line::from(vec![
                 Span::styled(format!("{day}: "), Style::default().fg(palette.text_muted)),
-                Span::styled(format!(" {bar_str:<22}"), Style::default().fg(palette.accent)),
-                Span::styled(format!(" {count} views"), Style::default().fg(Color::Rgb(255, 255, 255))),
+                Span::styled(
+                    format!(" {bar_str:<22}"),
+                    Style::default().fg(palette.accent),
+                ),
+                Span::styled(
+                    format!(" {count} views"),
+                    Style::default().fg(Color::Rgb(255, 255, 255)),
+                ),
             ]));
         }
     }
@@ -10799,41 +13268,80 @@ fn draw_analytics_detail_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     // Section 2: Breakdown Table
     let content_rows = vec![
         Row::new(vec![
-            Cell::from("BROWSERS").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
-            Cell::from("OS / SYSTEMS").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
-            Cell::from("DEVICES").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
-            Cell::from("COUNTRIES").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+            Cell::from("BROWSERS").style(
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from("OS / SYSTEMS").style(
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from("DEVICES").style(
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Cell::from("COUNTRIES").style(
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Row::new(vec![
-            Cell::from(
-                if analytics.browser_breakdown.is_empty() { "Chrome: 80%\nFirefox: 20%".to_string() } else {
-                    analytics.browser_breakdown.iter().map(|b| format!("{}: {:.0}%", b.label, b.pct)).collect::<Vec<_>>().join("\n")
-                }
-            ),
-            Cell::from(
-                if analytics.os_breakdown.is_empty() { "Linux: 75%\nWindows: 25%".to_string() } else {
-                    analytics.os_breakdown.iter().map(|b| format!("{}: {:.0}%", b.label, b.pct)).collect::<Vec<_>>().join("\n")
-                }
-            ),
-            Cell::from(
-                if analytics.device_breakdown.is_empty() { "Desktop: 90%\nMobile: 10%".to_string() } else {
-                    analytics.device_breakdown.iter().map(|b| format!("{}: {:.0}%", b.label, b.pct)).collect::<Vec<_>>().join("\n")
-                }
-            ),
-            Cell::from(
-                if analytics.country_breakdown.is_empty() { "ID: 95%\nUS: 5%".to_string() } else {
-                    analytics.country_breakdown.iter().map(|b| format!("{}: {:.0}%", b.label, b.pct)).collect::<Vec<_>>().join("\n")
-                }
-            ),
+            Cell::from(if analytics.browser_breakdown.is_empty() {
+                "Chrome: 80%\nFirefox: 20%".to_string()
+            } else {
+                analytics
+                    .browser_breakdown
+                    .iter()
+                    .map(|b| format!("{}: {:.0}%", b.label, b.pct))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }),
+            Cell::from(if analytics.os_breakdown.is_empty() {
+                "Linux: 75%\nWindows: 25%".to_string()
+            } else {
+                analytics
+                    .os_breakdown
+                    .iter()
+                    .map(|b| format!("{}: {:.0}%", b.label, b.pct))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }),
+            Cell::from(if analytics.device_breakdown.is_empty() {
+                "Desktop: 90%\nMobile: 10%".to_string()
+            } else {
+                analytics
+                    .device_breakdown
+                    .iter()
+                    .map(|b| format!("{}: {:.0}%", b.label, b.pct))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }),
+            Cell::from(if analytics.country_breakdown.is_empty() {
+                "ID: 95%\nUS: 5%".to_string()
+            } else {
+                analytics
+                    .country_breakdown
+                    .iter()
+                    .map(|b| format!("{}: {:.0}%", b.label, b.pct))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }),
         ]),
     ];
 
-    let breakdown_table = Table::new(content_rows, [
-        Constraint::Percentage(25),
-        Constraint::Percentage(25),
-        Constraint::Percentage(25),
-        Constraint::Percentage(25),
-    ])
+    let breakdown_table = Table::new(
+        content_rows,
+        [
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+        ],
+    )
     .style(Style::default().fg(palette.text_muted))
     .block(
         Block::default()
@@ -10846,47 +13354,78 @@ fn draw_analytics_detail_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     // Section 3: Top Pages & Top Referrers
     let row3_cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
-        ])
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(detail_rows[2]);
 
     let total_views = analytics.pageviews.max(1);
     let top_pages_lines: Vec<Line> = if analytics.top_pages.is_empty() {
         vec![
-            Line::from(vec![Span::styled(" /  (Landing Page)", Style::default().fg(Color::White)), Span::styled(" — 14 views", Style::default().fg(palette.text_muted))]),
-            Line::from(vec![Span::styled(" /docs  (Documentation)", Style::default().fg(Color::White)), Span::styled(" — 9 views", Style::default().fg(palette.text_muted))]),
+            Line::from(vec![
+                Span::styled(" /  (Landing Page)", Style::default().fg(Color::White)),
+                Span::styled(" — 14 views", Style::default().fg(palette.text_muted)),
+            ]),
+            Line::from(vec![
+                Span::styled(" /docs  (Documentation)", Style::default().fg(Color::White)),
+                Span::styled(" — 9 views", Style::default().fg(palette.text_muted)),
+            ]),
         ]
     } else {
-        analytics.top_pages.iter().take(5).map(|(page, count)| {
-            let ratio = *count as f32 / total_views as f32;
-            let bar_len = (ratio * 14.0).min(14.0) as usize;
-            let bar_str = "■".repeat(bar_len.max(1));
-            Line::from(vec![
-                Span::styled(format!("{:<24} ", page), Style::default().fg(Color::Rgb(255, 255, 255))),
-                Span::styled(format!("{bar_str:<14}"), Style::default().fg(palette.accent)),
-                Span::styled(format!(" {count}"), Style::default().fg(palette.text_muted)),
-            ])
-        }).collect()
+        analytics
+            .top_pages
+            .iter()
+            .take(5)
+            .map(|(page, count)| {
+                let ratio = *count as f32 / total_views as f32;
+                let bar_len = (ratio * 14.0).min(14.0) as usize;
+                let bar_str = "■".repeat(bar_len.max(1));
+                Line::from(vec![
+                    Span::styled(
+                        format!("{:<24} ", page),
+                        Style::default().fg(Color::Rgb(255, 255, 255)),
+                    ),
+                    Span::styled(
+                        format!("{bar_str:<14}"),
+                        Style::default().fg(palette.accent),
+                    ),
+                    Span::styled(format!(" {count}"), Style::default().fg(palette.text_muted)),
+                ])
+            })
+            .collect()
     };
 
     let ref_lines: Vec<Line> = if analytics.top_referrers.is_empty() {
         vec![
-            Line::from(vec![Span::styled(" Direct / Bookmark", Style::default().fg(Color::White)), Span::styled(" — 18 visitors", Style::default().fg(palette.text_muted))]),
-            Line::from(vec![Span::styled(" https://google.com", Style::default().fg(Color::White)), Span::styled(" — 5 visitors", Style::default().fg(palette.text_muted))]),
+            Line::from(vec![
+                Span::styled(" Direct / Bookmark", Style::default().fg(Color::White)),
+                Span::styled(" — 18 visitors", Style::default().fg(palette.text_muted)),
+            ]),
+            Line::from(vec![
+                Span::styled(" https://google.com", Style::default().fg(Color::White)),
+                Span::styled(" — 5 visitors", Style::default().fg(palette.text_muted)),
+            ]),
         ]
     } else {
-        analytics.top_referrers.iter().take(5).map(|(refr, count)| {
-            let ratio = *count as f32 / total_views as f32;
-            let bar_len = (ratio * 14.0).min(14.0) as usize;
-            let bar_str = "▸".repeat(bar_len.max(1));
-            Line::from(vec![
-                Span::styled(format!("{:<24} ", refr), Style::default().fg(Color::Rgb(255, 255, 255))),
-                Span::styled(format!("{bar_str:<14}"), Style::default().fg(palette.accent)),
-                Span::styled(format!(" {count}"), Style::default().fg(palette.text_muted)),
-            ])
-        }).collect()
+        analytics
+            .top_referrers
+            .iter()
+            .take(5)
+            .map(|(refr, count)| {
+                let ratio = *count as f32 / total_views as f32;
+                let bar_len = (ratio * 14.0).min(14.0) as usize;
+                let bar_str = "▸".repeat(bar_len.max(1));
+                Line::from(vec![
+                    Span::styled(
+                        format!("{:<24} ", refr),
+                        Style::default().fg(Color::Rgb(255, 255, 255)),
+                    ),
+                    Span::styled(
+                        format!("{bar_str:<14}"),
+                        Style::default().fg(palette.accent),
+                    ),
+                    Span::styled(format!(" {count}"), Style::default().fg(palette.text_muted)),
+                ])
+            })
+            .collect()
     };
 
     let pages_block = Block::default()
@@ -10939,30 +13478,108 @@ fn draw_analytics_list_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let x0 = bar_inner.x;
     let y0 = bar_inner.y;
     let h = bar_inner.height.min(1);
-    app.register_hitbox(Rect { x: x0 + 1, y: y0, width: btn_add_w, height: h }, HitboxAction::ShowSiteWizard);
+    app.register_hitbox(
+        Rect {
+            x: x0 + 1,
+            y: y0,
+            width: btn_add_w,
+            height: h,
+        },
+        HitboxAction::ShowSiteWizard,
+    );
     let x1 = x0 + btn_add_w + 3;
-    app.register_hitbox(Rect { x: x1, y: y0, width: btn_import_w, height: h }, HitboxAction::ImportAnalyticsSites);
+    app.register_hitbox(
+        Rect {
+            x: x1,
+            y: y0,
+            width: btn_import_w,
+            height: h,
+        },
+        HitboxAction::ImportAnalyticsSites,
+    );
     let x2 = x1 + btn_import_w + 1;
-    app.register_hitbox(Rect { x: x2, y: y0, width: btn_refresh_w, height: h }, HitboxAction::RefreshAnalytics);
+    app.register_hitbox(
+        Rect {
+            x: x2,
+            y: y0,
+            width: btn_refresh_w,
+            height: h,
+        },
+        HitboxAction::RefreshAnalytics,
+    );
     let x3 = x2 + btn_refresh_w + 1;
-    app.register_hitbox(Rect { x: x3, y: y0, width: btn_script_w, height: h }, HitboxAction::ShowAnalyticsScript);
+    app.register_hitbox(
+        Rect {
+            x: x3,
+            y: y0,
+            width: btn_script_w,
+            height: h,
+        },
+        HitboxAction::ShowAnalyticsScript,
+    );
     let x4 = x3 + btn_script_w + 1;
-    app.register_hitbox(Rect { x: x4, y: y0, width: btn_export_w, height: h }, HitboxAction::ExportAnalyticsJson);
+    app.register_hitbox(
+        Rect {
+            x: x4,
+            y: y0,
+            width: btn_export_w,
+            height: h,
+        },
+        HitboxAction::ExportAnalyticsJson,
+    );
     let x5 = x4 + btn_export_w + 1;
-    app.register_hitbox(Rect { x: x5, y: y0, width: btn_del_w, height: h }, HitboxAction::ClearAnalyticsData);
+    app.register_hitbox(
+        Rect {
+            x: x5,
+            y: y0,
+            width: btn_del_w,
+            height: h,
+        },
+        HitboxAction::ClearAnalyticsData,
+    );
 
     let bar_spans = vec![
-        Span::styled(" [ Add Site (a) ] ", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [ Add Site (a) ] ",
+            Style::default()
+                .fg(Color::LightMagenta)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [ Import (i) ] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [ Import (i) ] ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [ Refresh (r) ] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [ Refresh (r) ] ",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [ Script (s) ] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [ Script (s) ] ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [ Export (e) ] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [ Export (e) ] ",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
-        Span::styled(" [ Wipe/Del (x) ] ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [ Wipe/Del (x) ] ",
+            Style::default()
+                .fg(Color::LightRed)
+                .add_modifier(Modifier::BOLD),
+        ),
     ];
     f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
 
@@ -10980,17 +13597,50 @@ fn draw_analytics_list_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     // Render Sites List Table
     let sites = app.analytic_sites();
-    let site_products: Vec<crate::systat::ProductAnalyticsSummary> = analytics.product_analytics.clone();
+    let site_products: Vec<crate::systat::ProductAnalyticsSummary> =
+        analytics.product_analytics.clone();
 
     let header_cells = vec![
-        Cell::from("#").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
-        Cell::from("SITE / PRODUCT").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
-        Cell::from("DOMAIN").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
-        Cell::from("STATUS").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
-        Cell::from("PAGEVIEWS").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
-        Cell::from("VISITORS").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
-        Cell::from("LIVE NOW").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
-        Cell::from("BOUNCE %").style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        Cell::from("#").style(
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Cell::from("SITE / PRODUCT").style(
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Cell::from("DOMAIN").style(
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Cell::from("STATUS").style(
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Cell::from("PAGEVIEWS").style(
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Cell::from("VISITORS").style(
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Cell::from("LIVE NOW").style(
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Cell::from("BOUNCE %").style(
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
     ];
 
     let mut rows: Vec<Row> = Vec::new();
@@ -11002,7 +13652,10 @@ fn draw_analytics_list_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     for i in start_idx..end_idx {
         let site = &sites[i];
-        let is_selected = i == app.analytics_selected_site.min(total_sites.saturating_sub(1));
+        let is_selected = i
+            == app
+                .analytics_selected_site
+                .min(total_sites.saturating_sub(1));
         let prod_summary = site_products.iter().find(|p| p.product_id == site.id);
 
         let pvs = prod_summary.map(|p| p.pageviews).unwrap_or(0);
@@ -11010,7 +13663,13 @@ fn draw_analytics_list_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         let live = prod_summary.map(|p| p.active_now).unwrap_or(0);
         let bounce = prod_summary.map(|p| p.bounce_rate).unwrap_or(0.0);
         let status = prod_summary.map(|p| p.status.clone()).unwrap_or_else(|| {
-            if live > 0 { "ACTIVE".to_string() } else if pvs > 0 { "IDLE".to_string() } else { "EMPTY".to_string() }
+            if live > 0 {
+                "ACTIVE".to_string()
+            } else if pvs > 0 {
+                "IDLE".to_string()
+            } else {
+                "EMPTY".to_string()
+            }
         });
 
         let status_style = if status == "ACTIVE" {
@@ -11022,7 +13681,10 @@ fn draw_analytics_list_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         };
 
         let row_style = if is_selected {
-            Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.success).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Rgb(0, 0, 0))
+                .bg(palette.success)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::Rgb(255, 255, 255))
         };
@@ -11040,7 +13702,8 @@ fn draw_analytics_list_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
         rows.push(Row::new(row_cells));
 
-        let row_y = main_inner.y + (i as u16 - start_idx as u16 + 2).min(main_inner.height.saturating_sub(1));
+        let row_y = main_inner.y
+            + (i as u16 - start_idx as u16 + 2).min(main_inner.height.saturating_sub(1));
         let row_w = main_inner.width.saturating_sub(4);
         app.register_hitbox(
             Rect {
@@ -11053,17 +13716,26 @@ fn draw_analytics_list_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         );
     }
 
-    let sites_table = Table::new(rows, [
-        Constraint::Length(4),
-        Constraint::Percentage(22),
-        Constraint::Percentage(24),
-        Constraint::Length(10),
-        Constraint::Length(10),
-        Constraint::Length(10),
-        Constraint::Length(10),
-        Constraint::Min(8),
-    ])
-    .header(Row::new(header_cells).style(Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)))
+    let sites_table = Table::new(
+        rows,
+        [
+            Constraint::Length(4),
+            Constraint::Percentage(22),
+            Constraint::Percentage(24),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Min(8),
+        ],
+    )
+    .header(
+        Row::new(header_cells).style(
+            Style::default()
+                .fg(palette.warning)
+                .add_modifier(Modifier::BOLD),
+        ),
+    )
     .style(Style::default().fg(palette.text_muted));
 
     f.render_widget(sites_table, main_inner);
@@ -11085,7 +13757,11 @@ fn draw_site_import_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let block = Block::default()
         .title(" 🌐 Add Website / Landing Page to Sovereign Analytics ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+        .border_style(
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        );
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
@@ -11094,8 +13770,16 @@ fn draw_site_import_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     }
 
     let fields = [
-        ("Site Name:", app.site_import_name.clone(), "e.g. CATerm Terminal"),
-        ("Domain:", app.site_import_domain.clone(), "e.g. caterm.fathforce.com"),
+        (
+            "Site Name:",
+            app.site_import_name.clone(),
+            "e.g. CATerm Terminal",
+        ),
+        (
+            "Domain:",
+            app.site_import_domain.clone(),
+            "e.g. caterm.fathforce.com",
+        ),
     ];
 
     let mut lines = Vec::new();
@@ -11118,16 +13802,34 @@ fn draw_site_import_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             )
         } else {
-            let display_val = if val.is_empty() { *placeholder } else { val.as_str() };
+            let display_val = if val.is_empty() {
+                *placeholder
+            } else {
+                val.as_str()
+            };
             Span::styled(
                 format!(" [ {} ] ", display_val),
-                Style::default().fg(if val.is_empty() { Color::DarkGray } else { Color::White }),
+                Style::default().fg(if val.is_empty() {
+                    Color::DarkGray
+                } else {
+                    Color::White
+                }),
             )
         };
 
         lines.push(Line::from(vec![
-            Span::styled(prefix, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{:<14}", label), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                prefix,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{:<14}", label),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
             val_span,
         ]));
         lines.push(Line::from(""));
@@ -11150,26 +13852,53 @@ fn draw_site_import_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let btn_y = inner.bottom().saturating_sub(2);
     let submit_span = Span::styled(
         " [ Submit (Enter) ] ",
-        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
     );
     let cancel_span = Span::styled(
         " [ Cancel (Esc) ] ",
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
     );
 
     app.register_hitbox(
-        Rect { x: inner.x + 2, y: btn_y, width: 20, height: 1 },
+        Rect {
+            x: inner.x + 2,
+            y: btn_y,
+            width: 20,
+            height: 1,
+        },
         HitboxAction::SubmitSiteImport,
     );
     app.register_hitbox(
-        Rect { x: inner.x + 24, y: btn_y, width: 18, height: 1 },
+        Rect {
+            x: inner.x + 24,
+            y: btn_y,
+            width: 18,
+            height: 1,
+        },
         HitboxAction::CancelSiteImport,
     );
 
-    f.render_widget(Paragraph::new(lines), Rect { x: inner.x + 1, y: inner.y + 1, width: inner.width.saturating_sub(2), height: inner.height.saturating_sub(3) });
+    f.render_widget(
+        Paragraph::new(lines),
+        Rect {
+            x: inner.x + 1,
+            y: inner.y + 1,
+            width: inner.width.saturating_sub(2),
+            height: inner.height.saturating_sub(3),
+        },
+    );
     f.render_widget(
         Paragraph::new(Line::from(vec![submit_span, Span::raw("  "), cancel_span])),
-        Rect { x: inner.x + 2, y: btn_y, width: inner.width.saturating_sub(4), height: 1 },
+        Rect {
+            x: inner.x + 2,
+            y: btn_y,
+            width: inner.width.saturating_sub(4),
+            height: 1,
+        },
     );
 }
 
@@ -11221,7 +13950,8 @@ fn draw_pro_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_secs() as i64)
                         .unwrap_or(0);
-                    let rem_days = (c.session_expires_unix.saturating_sub(now) as f64 / 86400.0).ceil() as i64;
+                    let rem_days =
+                        (c.session_expires_unix.saturating_sub(now) as f64 / 86400.0).ceil() as i64;
                     format!("{rem_days} days")
                 } else {
                     "Perpetual".to_string()
@@ -11262,13 +13992,27 @@ fn draw_pro_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         };
         Span::styled(
             format!(" [ {} ] ", display),
-            Style::default().fg(if app.pro_wizard_email_buf.is_empty() { Color::DarkGray } else { Color::White }),
+            Style::default().fg(if app.pro_wizard_email_buf.is_empty() {
+                Color::DarkGray
+            } else {
+                Color::White
+            }),
         )
     };
 
     lines.push(Line::from(vec![
-        Span::styled(prefix0, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        Span::styled("Pro Account Email: ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            prefix0,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "Pro Account Email: ",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         email_val,
     ]));
 
@@ -11291,13 +14035,27 @@ fn draw_pro_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         };
         Span::styled(
             format!(" [ {} ] ", display),
-            Style::default().fg(if app.pro_wizard_token_buf.is_empty() { Color::DarkGray } else { Color::White }),
+            Style::default().fg(if app.pro_wizard_token_buf.is_empty() {
+                Color::DarkGray
+            } else {
+                Color::White
+            }),
         )
     };
 
     lines.push(Line::from(vec![
-        Span::styled(prefix1, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        Span::styled("License Key (e.g. CASH99-FOUNDR-3): ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            prefix1,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "License Key (e.g. CASH99-FOUNDR-3): ",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         token_val,
     ]));
 
@@ -11307,53 +14065,92 @@ fn draw_pro_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if let Some(msg) = err_msg {
         lines.push(Line::from(Span::styled(
             msg,
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(""));
     }
 
-    let btn_sync_label = if app.is_syncing_gcc { "Syncing…" } else { "Sync GCC" };
+    let btn_sync_label = if app.is_syncing_gcc {
+        "Syncing…"
+    } else {
+        "Sync GCC"
+    };
     let btn_sync = Span::styled(
         format!(" [☁ {btn_sync_label}] (y) "),
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
     );
     let btn_trial = Span::styled(
         " [★ 7-Day Trial] (t) ",
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
     );
     let btn_login = Span::styled(
         " [🔐 Sign In] (Enter) ",
-        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
     );
-    let btn_close = Span::styled(
-        " [✖ Cancel] (Esc) ",
-        Style::default().fg(Color::DarkGray),
-    );
+    let btn_close = Span::styled(" [✖ Cancel] (Esc) ", Style::default().fg(Color::DarkGray));
 
     let btn_y = inner.bottom().saturating_sub(3);
 
     app.register_hitbox(
-        Rect { x: inner.x + 2, y: inner.y + 2, width: inner.width.saturating_sub(4), height: 1 },
+        Rect {
+            x: inner.x + 2,
+            y: inner.y + 2,
+            width: inner.width.saturating_sub(4),
+            height: 1,
+        },
         HitboxAction::FocusProField(0),
     );
     app.register_hitbox(
-        Rect { x: inner.x + 2, y: inner.y + 3, width: inner.width.saturating_sub(4), height: 1 },
+        Rect {
+            x: inner.x + 2,
+            y: inner.y + 3,
+            width: inner.width.saturating_sub(4),
+            height: 1,
+        },
         HitboxAction::FocusProField(1),
     );
     app.register_hitbox(
-        Rect { x: inner.x + 2, y: btn_y, width: 18, height: 1 },
+        Rect {
+            x: inner.x + 2,
+            y: btn_y,
+            width: 18,
+            height: 1,
+        },
         HitboxAction::SyncGcc,
     );
     app.register_hitbox(
-        Rect { x: inner.x + 21, y: btn_y, width: 22, height: 1 },
+        Rect {
+            x: inner.x + 21,
+            y: btn_y,
+            width: 22,
+            height: 1,
+        },
         HitboxAction::ActivateProTrial,
     );
     app.register_hitbox(
-        Rect { x: inner.x + 44, y: btn_y, width: 20, height: 1 },
+        Rect {
+            x: inner.x + 44,
+            y: btn_y,
+            width: 20,
+            height: 1,
+        },
         HitboxAction::SubmitProLogin,
     );
     app.register_hitbox(
-        Rect { x: inner.x + 2, y: btn_y + 1, width: 18, height: 1 },
+        Rect {
+            x: inner.x + 2,
+            y: btn_y + 1,
+            width: 18,
+            height: 1,
+        },
         HitboxAction::CloseProWizard,
     );
 
@@ -11389,14 +14186,21 @@ fn draw_analytics_script_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) 
     let modal_height = 24.min(area.height.saturating_sub(2));
     let x = (area.width.saturating_sub(modal_width)) / 2;
     let y = (area.height.saturating_sub(modal_height)) / 2;
-    let modal_area = Rect { x, y, width: modal_width, height: modal_height };
+    let modal_area = Rect {
+        x,
+        y,
+        width: modal_width,
+        height: modal_height,
+    };
 
     f.render_widget(Clear, modal_area);
 
     let active_site = app.analytics_site_filter.as_deref().unwrap_or("caterm");
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" 📋 Sovereign Web Analytics · Tracker Templates (Site ID: '{active_site}') "))
+        .title(format!(
+            " 📋 Sovereign Web Analytics · Tracker Templates (Site ID: '{active_site}') "
+        ))
         .title_alignment(Alignment::Center)
         .border_style(Style::default().fg(palette.success));
 
@@ -11443,7 +14247,7 @@ fn draw_analytics_script_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) 
         )),
         Line::from(""),
         Line::from(Span::styled("📌 Note: Auto-tracks Scroll Depth (25/50/75/90/100%), Clicks (% coords), Rage Clicks (>3/sec), and Dwell Time.", Style::default().fg(palette.text_muted))),
-        Line::from(Span::styled("📌 Replace 'http://127.0.0.1:8090' with your public domain or CF Tunnel (e.g. 'https://cashell.cecepazhar.com').", Style::default().fg(palette.text_muted))),
+        Line::from(Span::styled("📌 Replace 'http://127.0.0.1:8090' with your public domain or CF Tunnel (e.g. 'https://analytics.example.com').", Style::default().fg(palette.text_muted))),
         Line::from(""),
         Line::from(Span::styled(" [ Press Esc to Close ] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))),
     ];
@@ -11485,11 +14289,15 @@ fn draw_audit_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let btn_audit = Span::styled(
         " [⚡ Turbo Audit] ",
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
     );
     let btn_fix = Span::styled(
         " [🔧 Run Fix] ",
-        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
     );
 
     let status_text = app
@@ -11502,7 +14310,10 @@ fn draw_audit_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             btn_audit,
             Span::raw(" "),
             btn_fix,
-            Span::styled(format!("  {status_text}"), Style::default().fg(Color::Yellow)),
+            Span::styled(
+                format!("  {status_text}"),
+                Style::default().fg(Color::Yellow),
+            ),
         ])),
         bar_inner,
     );
@@ -11516,7 +14327,10 @@ fn draw_audit_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     // Reports List
     let list_block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" Recent Audit Reports ({}) ", app.audit_reports.len()))
+        .title(format!(
+            " Recent Audit Reports ({}) ",
+            app.audit_reports.len()
+        ))
         .border_style(Style::default().fg(Color::Cyan));
     let list_inner = list_block.inner(content_chunks[0]);
     f.render_widget(list_block, content_chunks[0]);
@@ -11533,9 +14347,20 @@ fn draw_audit_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 Color::Reset
             };
             let line = Line::from(vec![
-                Span::styled(format!(" {:<20} ", r.filename), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("{} KB ", r.size_bytes / 1024), Style::default().fg(Color::DarkGray)),
-                Span::styled(format!("({} findings)", r.findings_count), Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!(" {:<20} ", r.filename),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{} KB ", r.size_bytes / 1024),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    format!("({} findings)", r.findings_count),
+                    Style::default().fg(Color::Yellow),
+                ),
             ]);
             ListItem::new(line).style(Style::default().bg(bg))
         })
@@ -11578,9 +14403,13 @@ fn draw_audit_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             .skip(app.report_scroll)
             .map(|l| {
                 let style = if l.starts_with("# ") {
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
                 } else if l.starts_with("## ") || l.starts_with("### ") {
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
                 } else if l.contains("CRITICAL") {
                     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
                 } else if l.contains("HIGH") {
@@ -11592,11 +14421,16 @@ fn draw_audit_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             })
             .collect();
 
-        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), preview_inner);
+        f.render_widget(
+            Paragraph::new(lines).wrap(Wrap { trim: false }),
+            preview_inner,
+        );
     } else {
         f.render_widget(
-            Paragraph::new("No audit reports found in audit/. Click [⚡ Turbo Audit] to generate one.")
-                .style(Style::default().fg(Color::DarkGray)),
+            Paragraph::new(
+                "No audit reports found in audit/. Click [⚡ Turbo Audit] to generate one.",
+            )
+            .style(Style::default().fg(Color::DarkGray)),
             preview_inner,
         );
     }
@@ -11664,19 +14498,31 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let btn_save = Span::styled(
         " [💾 Save] ",
-        Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.success).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Rgb(0, 0, 0))
+            .bg(palette.success)
+            .add_modifier(Modifier::BOLD),
     );
     let btn_reload = Span::styled(
         " [↺ Reload] ",
-        Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.warning).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Rgb(0, 0, 0))
+            .bg(palette.warning)
+            .add_modifier(Modifier::BOLD),
     );
     let btn_clear = Span::styled(
         " [🗑 Clear Chat] ",
-        Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.danger).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Rgb(0, 0, 0))
+            .bg(palette.danger)
+            .add_modifier(Modifier::BOLD),
     );
     let btn_vacuum = Span::styled(
         " [🧹 Vacuum DB] ",
-        Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.accent).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Rgb(0, 0, 0))
+            .bg(palette.accent)
+            .add_modifier(Modifier::BOLD),
     );
     let btn_sync_gcc = Span::styled(
         " [☁ Sync GCC] ",
@@ -11690,7 +14536,11 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         " [★ Pro Account] ",
         Style::default()
             .fg(Color::Rgb(0, 0, 0))
-            .bg(if is_pro { Color::Rgb(0, 255, 120) } else { Color::Rgb(255, 200, 0) })
+            .bg(if is_pro {
+                Color::Rgb(0, 255, 120)
+            } else {
+                Color::Rgb(255, 200, 0)
+            })
             .add_modifier(Modifier::BOLD),
     );
 
@@ -11752,7 +14602,11 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let retention_str = format!(
         "{} days (auto_prune: {})",
         app.cfg.database.retention_days,
-        if app.cfg.database.auto_prune { "on" } else { "off" }
+        if app.cfg.database.auto_prune {
+            "on"
+        } else {
+            "off"
+        }
     );
     let target_host = &app.cfg.doctor.target_addr;
     let target_port = app.cfg.doctor.target_port.to_string();
@@ -11799,12 +14653,24 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         "[Not Configured]"
     };
     let coolify_token = if let Some(ref c) = app.cfg.deploy.coolify {
-        if c.api_token.is_empty() { "[None]" } else { "••••••••" }
+        if c.api_token.is_empty() {
+            "[None]"
+        } else {
+            "••••••••"
+        }
     } else {
         "[Not Configured]"
     };
-    let auto_prune_str = if app.cfg.database.auto_prune { "Enabled" } else { "Disabled" };
-    let matrix_rain_str = if app.cfg.output.matrix_rain { "Enabled (Matrix Rain Background)" } else { "Disabled (Clean Background)" };
+    let auto_prune_str = if app.cfg.database.auto_prune {
+        "Enabled"
+    } else {
+        "Disabled"
+    };
+    let matrix_rain_str = if app.cfg.output.matrix_rain {
+        "Enabled (Matrix Rain Background)"
+    } else {
+        "Disabled (Clean Background)"
+    };
     let matrix_speed_str = app.cfg.mascot.matrix_speed.as_str();
     let mascot_speed_str = match app.cfg.mascot.speed.as_str() {
         "Fast" => "Fast (2s interval)",
@@ -11817,12 +14683,23 @@ fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         "Calm" => "Calm (>90°C / >92% Load)",
         _ => "Balanced (>80°C / >85% Load)",
     };
-    let mascot_track_str = if app.cfg.mascot.condition_tracking { "Enabled (Reflects CPU/RAM/Outage)" } else { "Disabled (Neutral)" };
+    let mascot_track_str = if app.cfg.mascot.condition_tracking {
+        "Enabled (Reflects CPU/RAM/Outage)"
+    } else {
+        "Disabled (Neutral)"
+    };
     let mascot_color_str = app.cfg.mascot.color_scheme.as_str();
     let mascot_anim_str = app.cfg.mascot.animation_style.as_str();
     let mascot_scale_str = app.cfg.mascot.render_scale.as_str();
-    let mascot_chat_str = if app.cfg.mascot.chat_avatar_enabled { "Enabled (Live Reactor & Avatars)" } else { "Disabled" };
-    let audit_limit_str = format!("{} KB ({} tokens)", app.cfg.ai.audit_max_context_kb, app.cfg.ai.audit_context_limit_tokens);
+    let mascot_chat_str = if app.cfg.mascot.chat_avatar_enabled {
+        "Enabled (Live Reactor & Avatars)"
+    } else {
+        "Disabled"
+    };
+    let audit_limit_str = format!(
+        "{} KB ({} tokens)",
+        app.cfg.ai.audit_max_context_kb, app.cfg.ai.audit_context_limit_tokens
+    );
 
     let values: [&str; 32] = [
         provider.as_str(),
@@ -11950,25 +14827,59 @@ fn draw_turbo_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let hud_block = Block::default()
         .borders(Borders::ALL)
         .title(" ⚡ SOVEREIGN HARDWARE & KERNEL STATUS HUD ")
-        .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+        .border_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
     let hud_inner = hud_block.inner(chunks[0]);
     f.render_widget(hud_block, chunks[0]);
 
-    let gov_color = if app.turbo_profile_active == "MAX_TURBO" { Color::Green } else { Color::Cyan };
-    let temp_color = if snap.cpu_temp_c > 80.0 { Color::LightRed } else if snap.cpu_temp_c > 65.0 { Color::Yellow } else { Color::Green };
+    let gov_color = if app.turbo_profile_active == "MAX_TURBO" {
+        Color::Green
+    } else {
+        Color::Cyan
+    };
+    let temp_color = if snap.cpu_temp_c > 80.0 {
+        Color::LightRed
+    } else if snap.cpu_temp_c > 65.0 {
+        Color::Yellow
+    } else {
+        Color::Green
+    };
 
     let hud_line1 = Line::from(vec![
         Span::styled(" Profile: ", Style::default().fg(palette.text_muted)),
-        Span::styled(format!("[ {} ]", app.turbo_profile_active), Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("[ {} ]", app.turbo_profile_active),
+            Style::default()
+                .fg(Color::Rgb(0, 0, 0))
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("   "),
         Span::styled("Governor: ", Style::default().fg(palette.text_muted)),
-        Span::styled("PERFORMANCE (All Cores)", Style::default().fg(gov_color).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "PERFORMANCE (All Cores)",
+            Style::default().fg(gov_color).add_modifier(Modifier::BOLD),
+        ),
         Span::raw("   "),
-        Span::styled("Intel Turbo Boost: ", Style::default().fg(palette.text_muted)),
-        Span::styled("ACTIVE (Up to 4.20 GHz)", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Intel Turbo Boost: ",
+            Style::default().fg(palette.text_muted),
+        ),
+        Span::styled(
+            "ACTIVE (Up to 4.20 GHz)",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("   "),
         Span::styled("Package Temp: ", Style::default().fg(palette.text_muted)),
-        Span::styled(format!("{:.1}°C", snap.cpu_temp_c), Style::default().fg(temp_color).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("{:.1}°C", snap.cpu_temp_c),
+            Style::default().fg(temp_color).add_modifier(Modifier::BOLD),
+        ),
     ]);
 
     let ram_used = snap.ram_used_mb;
@@ -11978,13 +14889,29 @@ fn draw_turbo_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let hud_line2 = Line::from(vec![
         Span::styled(" Memory: ", Style::default().fg(palette.text_muted)),
-        Span::styled(format!("{ram_used}/{ram_tot} MB"), Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("{ram_used}/{ram_tot} MB"),
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("   "),
         Span::styled("ZRAM Swap: ", Style::default().fg(palette.text_muted)),
-        Span::styled(format!("{swap_used}/{swap_tot} MB"), Style::default().fg(Color::White)),
+        Span::styled(
+            format!("{swap_used}/{swap_tot} MB"),
+            Style::default().fg(Color::White),
+        ),
         Span::raw("   "),
-        Span::styled("Docker Reclaimable: ", Style::default().fg(palette.text_muted)),
-        Span::styled("~68.7 GB (BuildKit + Images)", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Docker Reclaimable: ",
+            Style::default().fg(palette.text_muted),
+        ),
+        Span::styled(
+            "~68.7 GB (BuildKit + Images)",
+            Style::default()
+                .fg(Color::LightMagenta)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("   "),
         Span::styled("TCP Congestion: ", Style::default().fg(palette.text_muted)),
         Span::styled("BBR / Low Latency Mesh", Style::default().fg(Color::Green)),
@@ -12010,10 +14937,26 @@ fn draw_turbo_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     f.render_widget(profiles_block, body_cols[0]);
 
     let profiles = [
-        ("⚡ [t] MAX SOVEREIGN TURBO", "Lock max 4.2GHz, EPP Performance, Renice CA daemons (-10), TCP BBR", 0),
-        ("🛠 [b] DEV BUILD ACCELERATOR", "Cargo 8 jobs, I/O Best-Effort high priority, Memory defrag", 1),
-        ("🧹 [p] DEEP STORAGE & RAM PURGE", "Flush Linux VFS caches, trim SSD, prune Docker 68GB build cache", 2),
-        ("🍃 [e] THERMAL SAFE / ECO", "Restore governor to powersave, EPP balance-power, quiet fan", 3),
+        (
+            "⚡ [t] MAX SOVEREIGN TURBO",
+            "Lock max 4.2GHz, EPP Performance, Renice CA daemons (-10), TCP BBR",
+            0,
+        ),
+        (
+            "🛠 [b] DEV BUILD ACCELERATOR",
+            "Cargo 8 jobs, I/O Best-Effort high priority, Memory defrag",
+            1,
+        ),
+        (
+            "🧹 [p] DEEP STORAGE & RAM PURGE",
+            "Flush Linux VFS caches, trim SSD, prune Docker 68GB build cache",
+            2,
+        ),
+        (
+            "🍃 [e] THERMAL SAFE / ECO",
+            "Restore governor to powersave, EPP balance-power, quiet fan",
+            3,
+        ),
     ];
 
     let mut prof_lines = Vec::new();
@@ -12025,21 +14968,33 @@ fn draw_turbo_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             || (app.turbo_profile_active == "ECO_BALANCED" && *idx == 3);
 
         let title_style = if is_active {
-            Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Rgb(0, 0, 0))
+                .bg(Color::Green)
+                .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
         };
 
-        prof_lines.push(Line::from(vec![
-            Span::styled(format!(" {name} "), title_style),
-        ]));
-        prof_lines.push(Line::from(vec![
-            Span::styled(format!("   {desc}"), Style::default().fg(palette.text_muted)),
-        ]));
+        prof_lines.push(Line::from(vec![Span::styled(
+            format!(" {name} "),
+            title_style,
+        )]));
+        prof_lines.push(Line::from(vec![Span::styled(
+            format!("   {desc}"),
+            Style::default().fg(palette.text_muted),
+        )]));
         prof_lines.push(Line::from(""));
 
         app.register_hitbox(
-            Rect { x: prof_inner.x, y: current_py, width: prof_inner.width, height: 2 },
+            Rect {
+                x: prof_inner.x,
+                y: current_py,
+                width: prof_inner.width,
+                height: 2,
+            },
             HitboxAction::TurboProfile(*idx),
         );
         current_py = current_py.saturating_add(3);
@@ -12055,14 +15010,46 @@ fn draw_turbo_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     f.render_widget(actions_block, body_cols[1]);
 
     let opt_actions = [
-        ("Drop Linux VFS Page Caches", "Flushes pagecache, dentries & inodes to instantly reclaim inactive RAM", "echo 3 > /proc/sys/vm/drop_caches"),
-        ("Compact Linux Memory Pages", "Defragments continuous memory blocks for faster large Rustc allocs", "echo 1 > /proc/sys/vm/compact_memory"),
-        ("Prune Docker BuildKit Cache", "Safely purges dangling build cache layers (~56 GB reclaimable)", "docker builder prune -f"),
-        ("Prune Dangling Docker Images", "Removes untagged & orphaned container image layers", "docker image prune -f"),
-        ("Elevate CA Fleet Daemons", "Prioritizes cashell, caorch & 9router to nice -10 (Best-effort high)", "renice -n -10"),
-        ("Trim SSD NVMe Flash Blocks", "Sends discard requests to flash controller for optimal NVMe write IOPS", "fstrim -v /"),
-        ("Verify TCP BBR Congestion", "Ensures bottleneck bandwidth BBR algorithm active for fleet RPC", "sysctl net.ipv4.tcp_congestion_control"),
-        ("Vacuum & WAL Checkpoint DB", "Shrinks ~/.config/cashell/cashell.db via PRAGMA wal_checkpoint", "PRAGMA wal_checkpoint(TRUNCATE)"),
+        (
+            "Drop Linux VFS Page Caches",
+            "Flushes pagecache, dentries & inodes to instantly reclaim inactive RAM",
+            "echo 3 > /proc/sys/vm/drop_caches",
+        ),
+        (
+            "Compact Linux Memory Pages",
+            "Defragments continuous memory blocks for faster large Rustc allocs",
+            "echo 1 > /proc/sys/vm/compact_memory",
+        ),
+        (
+            "Prune Docker BuildKit Cache",
+            "Safely purges dangling build cache layers (~56 GB reclaimable)",
+            "docker builder prune -f",
+        ),
+        (
+            "Prune Dangling Docker Images",
+            "Removes untagged & orphaned container image layers",
+            "docker image prune -f",
+        ),
+        (
+            "Elevate CA Fleet Daemons",
+            "Prioritizes cashell, caorch & 9router to nice -10 (Best-effort high)",
+            "renice -n -10",
+        ),
+        (
+            "Trim SSD NVMe Flash Blocks",
+            "Sends discard requests to flash controller for optimal NVMe write IOPS",
+            "fstrim -v /",
+        ),
+        (
+            "Verify TCP BBR Congestion",
+            "Ensures bottleneck bandwidth BBR algorithm active for fleet RPC",
+            "sysctl net.ipv4.tcp_congestion_control",
+        ),
+        (
+            "Vacuum & WAL Checkpoint DB",
+            "Shrinks ~/.config/cashell/cashell.db via PRAGMA wal_checkpoint",
+            "PRAGMA wal_checkpoint(TRUNCATE)",
+        ),
     ];
 
     let items: Vec<ListItem> = opt_actions
@@ -12070,21 +15057,23 @@ fn draw_turbo_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         .enumerate()
         .map(|(i, (name, desc, cmd))| {
             let is_sel = i == app.turbo_selected_action;
-            let bg = if is_sel { palette.row_selected_bg } else { Color::Reset };
+            let bg = if is_sel {
+                palette.row_selected_bg
+            } else {
+                Color::Reset
+            };
             let prefix = if is_sel { "▶ " } else { "  " };
 
             let title_span = Span::styled(
                 format!("{:<28}", name),
-                Style::default().fg(if is_sel { palette.accent } else { palette.text }).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(if is_sel { palette.accent } else { palette.text })
+                    .add_modifier(Modifier::BOLD),
             );
-            let cmd_span = Span::styled(
-                format!(" [{cmd}]"),
-                Style::default().fg(palette.text_muted),
-            );
-            let desc_span = Span::styled(
-                format!(" — {desc}"),
-                Style::default().fg(Color::DarkGray),
-            );
+            let cmd_span =
+                Span::styled(format!(" [{cmd}]"), Style::default().fg(palette.text_muted));
+            let desc_span =
+                Span::styled(format!(" — {desc}"), Style::default().fg(Color::DarkGray));
 
             let line = Line::from(vec![
                 Span::styled(prefix, Style::default().fg(palette.accent)),
@@ -12146,17 +15135,19 @@ fn draw_turbo_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
 // ── Tab 5: AI Chat (Hana AI chat interface) ──────────────────────────────────
 
-
 // ── Footer & Compact Fallback ────────────────────────────────────────────────
 
 fn draw_footer(f: &mut Frame, app: &CockpitApp, area: Rect) {
     let palette = cockpit_theme(&app.cfg.output.theme);
-    let toast = app.notification.as_ref().map(|(msg, created)| catui::widgets::Toast {
-        message: msg.clone(),
-        status: catui::Status::Warning,
-        created: *created,
-        ttl: Duration::from_secs(4),
-    });
+    let toast = app
+        .notification
+        .as_ref()
+        .map(|(msg, created)| catui::widgets::Toast {
+            message: msg.clone(),
+            status: catui::Status::Warning,
+            created: *created,
+            ttl: Duration::from_secs(4),
+        });
     f.render_widget(
         catui::widgets::Footer::new(&palette)
             .toast(toast.as_ref())
@@ -12293,11 +15284,15 @@ fn draw_help_modal(f: &mut Frame, app: &CockpitApp, area: Rect) {
             Row::new(vec![
                 Cell::from(Span::styled(
                     "Shortcut",
-                    Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(palette.accent)
+                        .add_modifier(Modifier::BOLD),
                 )),
                 Cell::from(Span::styled(
                     "Action",
-                    Style::default().fg(palette.text).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(palette.text)
+                        .add_modifier(Modifier::BOLD),
                 )),
             ])
             .bottom_margin(1),
@@ -12306,7 +15301,6 @@ fn draw_help_modal(f: &mut Frame, app: &CockpitApp, area: Rect) {
 
     f.render_widget(table, inner);
 }
-
 
 // ── Cron & Scheduled Jobs View ─────────────────────────────────────────────
 
@@ -12327,11 +15321,26 @@ fn draw_cron_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     app.register_hitbox(new_job_btn_rect, HitboxAction::NewCronWizard);
 
     let top_bar = Paragraph::new(Line::from(vec![
-        Span::styled(" [6] CRON & SCHEDULED JOBS ", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [6] CRON & SCHEDULED JOBS ",
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" │ Manage user crontab, systemd timers & managed CAShell jobs  "),
-        Span::styled("[+ New Cron Job] (Press 'n')", Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[+ New Cron Job] (Press 'n')",
+            Style::default()
+                .fg(Color::Rgb(0, 0, 0))
+                .bg(palette.highlight_bg)
+                .add_modifier(Modifier::BOLD),
+        ),
     ]))
-    .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(palette.border)));
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(palette.border)),
+    );
     f.render_widget(top_bar, chunks[0]);
 
     // Read crontab + db jobs
@@ -12339,8 +15348,16 @@ fn draw_cron_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if let Ok(user_jobs) = crate::cron::CronEntry::read_user_crontab() {
         for j in user_jobs {
             items.push(ListItem::new(Line::from(vec![
-                Span::styled(format!("{:<15} ", j.schedule), Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("{:<30} ", j.command), Style::default().fg(Color::White)),
+                Span::styled(
+                    format!("{:<15} ", j.schedule),
+                    Style::default()
+                        .fg(palette.highlight_fg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{:<30} ", j.command),
+                    Style::default().fg(Color::White),
+                ),
                 Span::styled("[User Crontab] ", Style::default().fg(palette.text_muted)),
                 Span::styled("● ACTIVE", Style::default().fg(palette.success)),
             ])));
@@ -12351,9 +15368,20 @@ fn draw_cron_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         if let Ok(db_jobs) = d.get_cron_jobs() {
             for j in db_jobs {
                 items.push(ListItem::new(Line::from(vec![
-                    Span::styled(format!("{:<15} ", j.schedule), Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD)),
-                    Span::styled(format!("{:<30} ", j.command), Style::default().fg(Color::White)),
-                    Span::styled(format!("[{}] ", j.description), Style::default().fg(palette.accent)),
+                    Span::styled(
+                        format!("{:<15} ", j.schedule),
+                        Style::default()
+                            .fg(palette.highlight_fg)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("{:<30} ", j.command),
+                        Style::default().fg(Color::White),
+                    ),
+                    Span::styled(
+                        format!("[{}] ", j.description),
+                        Style::default().fg(palette.accent),
+                    ),
                     Span::styled("● MANAGED", Style::default().fg(palette.success)),
                 ])));
             }
@@ -12361,18 +15389,18 @@ fn draw_cron_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     }
 
     if items.is_empty() {
-        items.push(ListItem::new(Line::from(vec![
-            Span::styled("No scheduled cron jobs found. Press 'n' to create one.", Style::default().fg(palette.text_muted)),
-        ])));
+        items.push(ListItem::new(Line::from(vec![Span::styled(
+            "No scheduled cron jobs found. Press 'n' to create one.",
+            Style::default().fg(palette.text_muted),
+        )])));
     }
 
-    let list_widget = List::new(items)
-        .block(
-            Block::default()
-                .title(" Active Scheduled Jobs (User Crontab & CAShell Managed Jobs) ")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(palette.border)),
-        );
+    let list_widget = List::new(items).block(
+        Block::default()
+            .title(" Active Scheduled Jobs (User Crontab & CAShell Managed Jobs) ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(palette.border)),
+    );
     f.render_widget(list_widget, chunks[1]);
 }
 
@@ -12386,7 +15414,11 @@ fn draw_pet_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let block = Block::default()
         .title(" 🐾 Virtual Pet (Tamagotchi Work Companion) ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+        .border_style(
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        );
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
@@ -12404,29 +15436,50 @@ fn draw_pet_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             };
 
             lines.push(Line::from(""));
-            let active_action = app.pet_transient_action.map(|(state, _)| state).unwrap_or(match app.pet_mood {
-                crate::pet::PetMood::Idle => crate::pet::PetActionState::Idle,
-                crate::pet::PetMood::Sprint => crate::pet::PetActionState::Run,
-                crate::pet::PetMood::Overheated => crate::pet::PetActionState::Hit,
-                crate::pet::PetMood::Sick => crate::pet::PetActionState::Death,
-            });
+            let active_action =
+                app.pet_transient_action
+                    .map(|(state, _)| state)
+                    .unwrap_or(match app.pet_mood {
+                        crate::pet::PetMood::Idle => crate::pet::PetActionState::Idle,
+                        crate::pet::PetMood::Sprint => crate::pet::PetActionState::Run,
+                        crate::pet::PetMood::Overheated => crate::pet::PetActionState::Hit,
+                        crate::pet::PetMood::Sick => crate::pet::PetActionState::Death,
+                    });
             let frame = status.build_frame(active_action, app.pet_tick, app.pet_is_stopped);
             let mascot_disp = format!("       {} {}       ", frame.core, frame.particles);
-            lines.push(Line::from(Span::styled(mascot_disp, Style::default().fg(palette.highlight_fg).add_modifier(Modifier::BOLD))));
+            lines.push(Line::from(Span::styled(
+                mascot_disp,
+                Style::default()
+                    .fg(palette.highlight_fg)
+                    .add_modifier(Modifier::BOLD),
+            )));
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
                 Span::styled("Name: ", Style::default().fg(palette.text_muted)),
-                Span::styled(pet.name.clone(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    pet.name.clone(),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("  │  "),
                 Span::styled("Species: ", Style::default().fg(palette.text_muted)),
                 Span::styled(species.display_name(), Style::default().fg(palette.accent)),
             ]));
             lines.push(Line::from(vec![
                 Span::styled("Tahap: ", Style::default().fg(palette.text_muted)),
-                Span::styled(stage.display_name(), Style::default().fg(palette.success).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    stage.display_name(),
+                    Style::default()
+                        .fg(palette.success)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("  │  "),
                 Span::styled("XP: ", Style::default().fg(palette.text_muted)),
-                Span::styled(format!("{}/{}", pet.xp, stage.next_threshold()), Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{}/{}", pet.xp, stage.next_threshold()),
+                    Style::default().fg(Color::Yellow),
+                ),
             ]));
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
@@ -12435,24 +15488,41 @@ fn draw_pet_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             ]));
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("[Feed Pet (+10 XP)] (Press 'f')", Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.success).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[Feed Pet (+10 XP)] (Press 'f')",
+                    Style::default()
+                        .fg(Color::Rgb(0, 0, 0))
+                        .bg(palette.success)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("  "),
-                Span::styled("[New Pet] (Press 'n')", Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.highlight_bg)),
+                Span::styled(
+                    "[New Pet] (Press 'n')",
+                    Style::default()
+                        .fg(Color::Rgb(0, 0, 0))
+                        .bg(palette.highlight_bg),
+                ),
                 Span::raw("  "),
                 Span::styled("[Close] (Esc)", Style::default().fg(palette.text_muted)),
             ]));
         } else {
             lines.push(Line::from(""));
             lines.push(Line::from("No active pet companion."));
-            lines.push(Line::from("Choose a workspace companion to join your terminal sessions!"));
+            lines.push(Line::from(
+                "Choose a workspace companion to join your terminal sessions!",
+            ));
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
                 Span::styled("Options: Chicken (Ayam), Lion (Singa), Bird (Burung), Snake (Ular), Bear (Beruang)", Style::default().fg(palette.accent)),
             ]));
             lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled("[Adopt Companion: Ciko the Chicken] (Press 'c')", Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.highlight_bg).add_modifier(Modifier::BOLD)),
-            ]));
+            lines.push(Line::from(vec![Span::styled(
+                "[Adopt Companion: Ciko the Chicken] (Press 'c')",
+                Style::default()
+                    .fg(Color::Rgb(0, 0, 0))
+                    .bg(palette.highlight_bg)
+                    .add_modifier(Modifier::BOLD),
+            )]));
         }
     }
 
@@ -12469,7 +15539,11 @@ fn draw_cron_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let block = Block::default()
         .title(" ⏰ Create New Scheduled Job ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+        .border_style(
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        );
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
@@ -12477,7 +15551,12 @@ fn draw_cron_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         Line::from(""),
         Line::from(vec![
             Span::styled("Schedule: ", Style::default().fg(palette.text_muted)),
-            Span::styled(&app.cron_schedule_buffer, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                &app.cron_schedule_buffer,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Command:  ", Style::default().fg(palette.text_muted)),
@@ -12485,7 +15564,13 @@ fn draw_cron_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("[Save Job] (Enter)", Style::default().fg(Color::Rgb(0, 0, 0)).bg(palette.success).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[Save Job] (Enter)",
+                Style::default()
+                    .fg(Color::Rgb(0, 0, 0))
+                    .bg(palette.success)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("  "),
             Span::styled("[Cancel] (Esc)", Style::default().fg(palette.text_muted)),
         ]),
@@ -12511,7 +15596,15 @@ fn draw_server_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let block = Block::default()
         .title(wizard_title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(if is_edit { palette.warning } else { palette.accent }).add_modifier(Modifier::BOLD));
+        .border_style(
+            Style::default()
+                .fg(if is_edit {
+                    palette.warning
+                } else {
+                    palette.accent
+                })
+                .add_modifier(Modifier::BOLD),
+        );
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
@@ -12520,10 +15613,26 @@ fn draw_server_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     }
 
     let fields = [
-        ("Server Name:", app.server_name_buf.clone(), "e.g. vps-sg, worker-1"),
-        ("Host / IP Address:", app.server_ip_buf.clone(), "e.g. 100.127.232.32"),
-        ("SSH Username:", app.server_user_buf.clone(), "e.g. root, cecep"),
-        ("Services (CSV):", app.server_services_buf.clone(), "e.g. http:80,ssh:22"),
+        (
+            "Server Name:",
+            app.server_name_buf.clone(),
+            "e.g. vps-sg, worker-1",
+        ),
+        (
+            "Host / IP Address:",
+            app.server_ip_buf.clone(),
+            "e.g. 100.127.232.32",
+        ),
+        (
+            "SSH Username:",
+            app.server_user_buf.clone(),
+            "e.g. root, cecep",
+        ),
+        (
+            "Services (CSV):",
+            app.server_services_buf.clone(),
+            "e.g. http:80,ssh:22",
+        ),
     ];
 
     let mut lines = Vec::new();
@@ -12550,16 +15659,34 @@ fn draw_server_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             )
         } else {
-            let display_val = if val.is_empty() { *placeholder } else { val.as_str() };
+            let display_val = if val.is_empty() {
+                *placeholder
+            } else {
+                val.as_str()
+            };
             Span::styled(
                 format!(" [ {} ] ", display_val),
-                Style::default().fg(if val.is_empty() { Color::DarkGray } else { Color::White }),
+                Style::default().fg(if val.is_empty() {
+                    Color::DarkGray
+                } else {
+                    Color::White
+                }),
             )
         };
 
         lines.push(Line::from(vec![
-            Span::styled(prefix, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{:<20}", label), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                prefix,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{:<20}", label),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
             val_span,
         ]));
 
@@ -12661,7 +15788,11 @@ fn draw_project_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let block = Block::default()
         .title(" 📁 Add Tracked Project — Directory Wizard ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+        .border_style(
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        );
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
@@ -12670,9 +15801,21 @@ fn draw_project_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     }
 
     let fields = [
-        ("Folder Path:", app.project_path_buf.clone(), "e.g. ~/Product/cashell or /home/..."),
-        ("Project Name:", app.project_name_buf.clone(), "Optional (auto-extracted from folder)"),
-        ("Category:", app.project_category_buf.clone(), "Product or Project"),
+        (
+            "Folder Path:",
+            app.project_path_buf.clone(),
+            "e.g. ~/Product/cashell or /home/...",
+        ),
+        (
+            "Project Name:",
+            app.project_name_buf.clone(),
+            "Optional (auto-extracted from folder)",
+        ),
+        (
+            "Category:",
+            app.project_category_buf.clone(),
+            "Product or Project",
+        ),
     ];
 
     let mut lines = Vec::new();
@@ -12695,16 +15838,34 @@ fn draw_project_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             )
         } else {
-            let display_val = if val.is_empty() { *placeholder } else { val.as_str() };
+            let display_val = if val.is_empty() {
+                *placeholder
+            } else {
+                val.as_str()
+            };
             Span::styled(
                 format!(" [ {} ] ", display_val),
-                Style::default().fg(if val.is_empty() { Color::DarkGray } else { Color::White }),
+                Style::default().fg(if val.is_empty() {
+                    Color::DarkGray
+                } else {
+                    Color::White
+                }),
             )
         };
 
         lines.push(Line::from(vec![
-            Span::styled(prefix, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{:<18}", label), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                prefix,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{:<18}", label),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
             val_span,
         ]));
 
@@ -12778,7 +15939,11 @@ fn draw_container_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let block = Block::default()
         .title(" 🐳 Add Docker Container — Run Wizard ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+        .border_style(
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        );
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
@@ -12787,10 +15952,26 @@ fn draw_container_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     }
 
     let fields = [
-        ("Container Name:", app.container_name_buf.clone(), "e.g. my-nginx, redis-db"),
-        ("Docker Image:", app.container_image_buf.clone(), "e.g. nginx:alpine, redis:7"),
-        ("Port Mapping:", app.container_port_buf.clone(), "e.g. 8080:80 (optional)"),
-        ("Environment:", app.container_env_buf.clone(), "e.g. FOO=bar,PORT=80 (optional)"),
+        (
+            "Container Name:",
+            app.container_name_buf.clone(),
+            "e.g. my-nginx, redis-db",
+        ),
+        (
+            "Docker Image:",
+            app.container_image_buf.clone(),
+            "e.g. nginx:alpine, redis:7",
+        ),
+        (
+            "Port Mapping:",
+            app.container_port_buf.clone(),
+            "e.g. 8080:80 (optional)",
+        ),
+        (
+            "Environment:",
+            app.container_env_buf.clone(),
+            "e.g. FOO=bar,PORT=80 (optional)",
+        ),
     ];
 
     let mut lines = Vec::new();
@@ -12813,16 +15994,34 @@ fn draw_container_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             )
         } else {
-            let display_val = if val.is_empty() { *placeholder } else { val.as_str() };
+            let display_val = if val.is_empty() {
+                *placeholder
+            } else {
+                val.as_str()
+            };
             Span::styled(
                 format!(" [ {} ] ", display_val),
-                Style::default().fg(if val.is_empty() { Color::DarkGray } else { Color::White }),
+                Style::default().fg(if val.is_empty() {
+                    Color::DarkGray
+                } else {
+                    Color::White
+                }),
             )
         };
 
         lines.push(Line::from(vec![
-            Span::styled(prefix, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{:<18}", label), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                prefix,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{:<18}", label),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
             val_span,
         ]));
 
@@ -12896,7 +16095,11 @@ fn draw_monitor_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let block = Block::default()
         .title(" 🌐 Add Uptime Monitor — Endpoint Wizard ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+        .border_style(
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        );
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
@@ -12905,9 +16108,21 @@ fn draw_monitor_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     }
 
     let fields = [
-        ("Monitor Name:", app.monitor_name_buf.clone(), "e.g. Payment Gateway"),
-        ("Target URL:", app.monitor_url_buf.clone(), "e.g. https://api.fathforce.com/health"),
-        ("Group:", app.monitor_group_buf.clone(), "e.g. CA Ecosystem, Production, Custom"),
+        (
+            "Monitor Name:",
+            app.monitor_name_buf.clone(),
+            "e.g. Payment Gateway",
+        ),
+        (
+            "Target URL:",
+            app.monitor_url_buf.clone(),
+            "e.g. https://api.fathforce.com/health",
+        ),
+        (
+            "Group:",
+            app.monitor_group_buf.clone(),
+            "e.g. CA Ecosystem, Production, Custom",
+        ),
     ];
 
     let mut lines = Vec::new();
@@ -12930,16 +16145,34 @@ fn draw_monitor_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             )
         } else {
-            let display_val = if val.is_empty() { *placeholder } else { val.as_str() };
+            let display_val = if val.is_empty() {
+                *placeholder
+            } else {
+                val.as_str()
+            };
             Span::styled(
                 format!(" [ {} ] ", display_val),
-                Style::default().fg(if val.is_empty() { Color::DarkGray } else { Color::White }),
+                Style::default().fg(if val.is_empty() {
+                    Color::DarkGray
+                } else {
+                    Color::White
+                }),
             )
         };
 
         lines.push(Line::from(vec![
-            Span::styled(prefix, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{:<18}", label), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                prefix,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{:<18}", label),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
             val_span,
         ]));
 
@@ -13123,9 +16356,17 @@ fn draw_disk_health_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     };
 
     let block = Block::default()
-        .title(format!(" 💽 CrystalDisk SSD / NVMe SMART Health Diagnostic [{}/{}] ", disk_idx + 1, disks.len()))
+        .title(format!(
+            " 💽 CrystalDisk SSD / NVMe SMART Health Diagnostic [{}/{}] ",
+            disk_idx + 1,
+            disks.len()
+        ))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(health_color).add_modifier(Modifier::BOLD));
+        .border_style(
+            Style::default()
+                .fg(health_color)
+                .add_modifier(Modifier::BOLD),
+        );
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
@@ -13154,7 +16395,9 @@ fn draw_disk_health_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         if is_cur {
             drive_spans.push(Span::styled(
                 format!("{prefix}[{short_dev}] "),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ));
         } else {
             drive_spans.push(Span::styled(
@@ -13166,7 +16409,9 @@ fn draw_disk_health_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     drive_spans.push(Span::styled(" │ ", Style::default().fg(palette.text_muted)));
     drive_spans.push(Span::styled(
         format!("{} ({})", d.model, d.device),
-        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
     ));
     f.render_widget(Paragraph::new(Line::from(drive_spans)), chunks[0]);
 
@@ -13187,19 +16432,36 @@ fn draw_disk_health_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let health_text = vec![
         Line::from(vec![
-            Span::styled("  [● ", Style::default().fg(health_color).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "  [● ",
+                Style::default()
+                    .fg(health_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(
                 format!("{}% ", life_pct),
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 format!("{}]", d.health_status),
-                Style::default().fg(health_color).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(health_color)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(Span::styled(
-            if d.critical_warnings > 0 { "  CRITICAL SMART WARNINGS" } else { "  Nominal S.M.A.R.T. Endurance" },
-            Style::default().fg(if d.critical_warnings > 0 { palette.danger } else { palette.text_muted }),
+            if d.critical_warnings > 0 {
+                "  CRITICAL SMART WARNINGS"
+            } else {
+                "  Nominal S.M.A.R.T. Endurance"
+            },
+            Style::default().fg(if d.critical_warnings > 0 {
+                palette.danger
+            } else {
+                palette.text_muted
+            }),
         )),
     ];
     f.render_widget(Paragraph::new(health_text), hb_inner);
@@ -13221,10 +16483,15 @@ fn draw_disk_health_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     };
     let temp_text = vec![
         Line::from(vec![
-            Span::styled("  [● ", Style::default().fg(temp_color).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "  [● ",
+                Style::default().fg(temp_color).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(
                 format!("{:.1}°C ", d.temperature_c),
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 format!("{}]", temp_status_str),
@@ -13246,11 +16513,21 @@ fn draw_disk_health_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     );
     let wear_gauge = Gauge::default()
         .block(Block::default().borders(Borders::NONE))
-        .gauge_style(Style::default().fg(if d.wear_level_pct > 80 { palette.danger } else { palette.accent }).bg(Color::DarkGray))
+        .gauge_style(
+            Style::default()
+                .fg(if d.wear_level_pct > 80 {
+                    palette.danger
+                } else {
+                    palette.accent
+                })
+                .bg(Color::DarkGray),
+        )
         .ratio(wear_ratio)
         .label(Span::styled(
             wear_label,
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ));
     f.render_widget(wear_gauge, chunks[2]);
 
@@ -13260,27 +16537,80 @@ fn draw_disk_health_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let p_days = d.power_on_hours / 24;
     let metrics_lines = vec![
         Line::from(vec![
-            Span::styled(" Total Bytes Written (TBW): ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{:.3} TB ", d.written_bytes_tb), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("(Rated: {:.0} TBW · {:.1}% Lifetime Written)", rated_tbw, tbw_pct), Style::default().fg(palette.accent)),
+            Span::styled(
+                " Total Bytes Written (TBW): ",
+                Style::default().fg(palette.text_muted),
+            ),
+            Span::styled(
+                format!("{:.3} TB ", d.written_bytes_tb),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(
+                    "(Rated: {:.0} TBW · {:.1}% Lifetime Written)",
+                    rated_tbw, tbw_pct
+                ),
+                Style::default().fg(palette.accent),
+            ),
         ]),
         Line::from(vec![
-            Span::styled(" Total Bytes Read (TBR):    ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{:.3} TB", d.read_bytes_tb), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                " Total Bytes Read (TBR):    ",
+                Style::default().fg(palette.text_muted),
+            ),
+            Span::styled(
+                format!("{:.3} TB", d.read_bytes_tb),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
-            Span::styled(" Power On Hours:             ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{} Hours (~{} Days)", d.power_on_hours, p_days), Style::default().fg(Color::White)),
-            Span::styled("  │  Power Cycles: ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{} Count", d.power_cycles), Style::default().fg(Color::White)),
+            Span::styled(
+                " Power On Hours:             ",
+                Style::default().fg(palette.text_muted),
+            ),
+            Span::styled(
+                format!("{} Hours (~{} Days)", d.power_on_hours, p_days),
+                Style::default().fg(Color::White),
+            ),
+            Span::styled(
+                "  │  Power Cycles: ",
+                Style::default().fg(palette.text_muted),
+            ),
+            Span::styled(
+                format!("{} Count", d.power_cycles),
+                Style::default().fg(Color::White),
+            ),
         ]),
         Line::from(vec![
-            Span::styled(" Unsafe Shutdowns:           ", Style::default().fg(palette.text_muted)),
-            Span::styled(format!("{}", d.unsafe_shutdowns), Style::default().fg(if d.unsafe_shutdowns > 50 { palette.warning } else { Color::White })),
-            Span::styled("  │  Critical Warnings: ", Style::default().fg(palette.text_muted)),
+            Span::styled(
+                " Unsafe Shutdowns:           ",
+                Style::default().fg(palette.text_muted),
+            ),
+            Span::styled(
+                format!("{}", d.unsafe_shutdowns),
+                Style::default().fg(if d.unsafe_shutdowns > 50 {
+                    palette.warning
+                } else {
+                    Color::White
+                }),
+            ),
+            Span::styled(
+                "  │  Critical Warnings: ",
+                Style::default().fg(palette.text_muted),
+            ),
             Span::styled(
                 format!("{}", d.critical_warnings),
-                Style::default().fg(if d.critical_warnings > 0 { palette.danger } else { palette.success }).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(if d.critical_warnings > 0 {
+                        palette.danger
+                    } else {
+                        palette.success
+                    })
+                    .add_modifier(Modifier::BOLD),
             ),
         ]),
     ];
@@ -13298,15 +16628,68 @@ fn draw_disk_health_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let unsafe_str = format!("{} events", d.unsafe_shutdowns);
 
     let rows = vec![
-        Row::new(vec!["01", "Critical Warnings", crit_warn_str.as_str(), if d.critical_warnings == 0 { "Normal" } else { "ALERT" }]),
-        Row::new(vec!["02", "Composite Temperature", temp_str.as_str(), temp_status_str]),
-        Row::new(vec!["03", "Available Spare Endurance", spare_str.as_str(), "Optimal"]),
-        Row::new(vec!["04", "Percentage Used (Wear Level)", wear_str.as_str(), if d.wear_level_pct > 80 { "Warn" } else { "Nominal" }]),
-        Row::new(vec!["05", "Total Data Units Read (TBR)", read_str.as_str(), "Verified"]),
-        Row::new(vec!["06", "Total Data Units Written (TBW)", write_str.as_str(), "Verified"]),
-        Row::new(vec!["07", "Power-On Hours Count", hrs_str.as_str(), "Logged"]),
-        Row::new(vec!["08", "Power Cycle Counter", cycles_str.as_str(), "Logged"]),
-        Row::new(vec!["09", "Unsafe Shutdown Counter", unsafe_str.as_str(), "Monitored"]),
+        Row::new(vec![
+            "01",
+            "Critical Warnings",
+            crit_warn_str.as_str(),
+            if d.critical_warnings == 0 {
+                "Normal"
+            } else {
+                "ALERT"
+            },
+        ]),
+        Row::new(vec![
+            "02",
+            "Composite Temperature",
+            temp_str.as_str(),
+            temp_status_str,
+        ]),
+        Row::new(vec![
+            "03",
+            "Available Spare Endurance",
+            spare_str.as_str(),
+            "Optimal",
+        ]),
+        Row::new(vec![
+            "04",
+            "Percentage Used (Wear Level)",
+            wear_str.as_str(),
+            if d.wear_level_pct > 80 {
+                "Warn"
+            } else {
+                "Nominal"
+            },
+        ]),
+        Row::new(vec![
+            "05",
+            "Total Data Units Read (TBR)",
+            read_str.as_str(),
+            "Verified",
+        ]),
+        Row::new(vec![
+            "06",
+            "Total Data Units Written (TBW)",
+            write_str.as_str(),
+            "Verified",
+        ]),
+        Row::new(vec![
+            "07",
+            "Power-On Hours Count",
+            hrs_str.as_str(),
+            "Logged",
+        ]),
+        Row::new(vec![
+            "08",
+            "Power Cycle Counter",
+            cycles_str.as_str(),
+            "Logged",
+        ]),
+        Row::new(vec![
+            "09",
+            "Unsafe Shutdown Counter",
+            unsafe_str.as_str(),
+            "Monitored",
+        ]),
     ];
 
     let smart_table = Table::new(
@@ -13319,30 +16702,90 @@ fn draw_disk_health_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ],
     )
     .header(
-        Row::new(vec!["ID", "ATTRIBUTE / SENSOR DESCRIPTION", "CURRENT VALUE", "STATUS"])
-            .style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)),
+        Row::new(vec![
+            "ID",
+            "ATTRIBUTE / SENSOR DESCRIPTION",
+            "CURRENT VALUE",
+            "STATUS",
+        ])
+        .style(
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
     )
-    .block(Block::default().borders(Borders::ALL).title(" S.M.A.R.T. Diagnostic Registers "));
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" S.M.A.R.T. Diagnostic Registers "),
+    );
     f.render_widget(smart_table, chunks[4]);
 
     // ── 6. Footer Controls ──
     let footer_line = Line::from(vec![
-        Span::styled(" [r] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [r] ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Refresh   "),
-        Span::styled(" [←/h] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [←/h] ",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Prev Drive   "),
-        Span::styled(" [→/l] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [→/l] ",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Next Drive   "),
-        Span::styled(" [Esc/q/Enter] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [Esc/q/Enter] ",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Close"),
     ]);
-    f.render_widget(Paragraph::new(footer_line).alignment(ratatui::layout::Alignment::Center), chunks[5]);
+    f.render_widget(
+        Paragraph::new(footer_line).alignment(ratatui::layout::Alignment::Center),
+        chunks[5],
+    );
 
     // Register click hitboxes
     let footer_y = chunks[5].y;
-    app.register_hitbox(Rect { x: chunks[5].x + 15, y: footer_y, width: 15, height: 1 }, HitboxAction::PrevDisk);
-    app.register_hitbox(Rect { x: chunks[5].x + 32, y: footer_y, width: 15, height: 1 }, HitboxAction::NextDisk);
-    app.register_hitbox(Rect { x: chunks[5].x + 49, y: footer_y, width: 20, height: 1 }, HitboxAction::CloseDiskHealth);
+    app.register_hitbox(
+        Rect {
+            x: chunks[5].x + 15,
+            y: footer_y,
+            width: 15,
+            height: 1,
+        },
+        HitboxAction::PrevDisk,
+    );
+    app.register_hitbox(
+        Rect {
+            x: chunks[5].x + 32,
+            y: footer_y,
+            width: 15,
+            height: 1,
+        },
+        HitboxAction::NextDisk,
+    );
+    app.register_hitbox(
+        Rect {
+            x: chunks[5].x + 49,
+            y: footer_y,
+            width: 20,
+            height: 1,
+        },
+        HitboxAction::CloseDiskHealth,
+    );
 }
 
 // ── Master Password Lock Screen ──────────────────────────────────────────────
@@ -13355,7 +16798,11 @@ fn draw_lock_screen(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let block = Block::default()
         .title(" 🔒 CASHELL SOVEREIGN COCKPIT — AUTHENTICATION REQUIRED ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+        .border_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
@@ -13373,13 +16820,19 @@ fn draw_lock_screen(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         }
     };
 
-    let eye_icon = if app.lock_mask_visible { "👁 View" } else { "🔒 Masked" };
+    let eye_icon = if app.lock_mask_visible {
+        "👁 View"
+    } else {
+        "🔒 Masked"
+    };
 
     let mut lines = vec![
         Line::from(""),
         Line::from(Span::styled(
             " Master Password Filter Active ",
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
             " Unauthorized terminal access is restricted on this workstation. ",
@@ -13387,32 +16840,59 @@ fn draw_lock_screen(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled(" Password: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                " Password: ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(
                 format!(" [ {}█ ] ", masked_pw),
                 Style::default()
                     .fg(Color::Rgb(0, 0, 0))
-                    .bg(if app.lock_password_buf.is_empty() { Color::DarkGray } else { palette.highlight_bg })
+                    .bg(if app.lock_password_buf.is_empty() {
+                        Color::DarkGray
+                    } else {
+                        palette.highlight_bg
+                    })
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(format!(" [{}]", eye_icon), Style::default().fg(palette.text_muted)),
+            Span::styled(
+                format!(" [{}]", eye_icon),
+                Style::default().fg(palette.text_muted),
+            ),
         ]),
         Line::from(""),
     ];
 
     if let Some(ref err) = app.lock_error_msg {
-        lines.push(Line::from(Span::styled(err.clone(), Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))));
+        lines.push(Line::from(Span::styled(
+            err.clone(),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )));
     } else if !app.cfg.security.hint.is_empty() {
-        lines.push(Line::from(Span::styled(format!("Hint: {}", app.cfg.security.hint), Style::default().fg(Color::Yellow))));
+        lines.push(Line::from(Span::styled(
+            format!("Hint: {}", app.cfg.security.hint),
+            Style::default().fg(Color::Yellow),
+        )));
     } else {
         lines.push(Line::from(""));
     }
 
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled(" [Enter] Unlock ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [Enter] Unlock ",
+            Style::default()
+                .fg(Color::Rgb(0, 0, 0))
+                .bg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("    "),
-        Span::styled(" [Ctrl+E] Toggle View ", Style::default().fg(palette.accent)),
+        Span::styled(
+            " [Ctrl+E] Toggle View ",
+            Style::default().fg(palette.accent),
+        ),
         Span::raw("    "),
         Span::styled(" [Esc/q] Exit ", Style::default().fg(palette.text_muted)),
     ]));
@@ -13433,7 +16913,11 @@ fn draw_set_password_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let block = Block::default()
         .title(" 🔑 Set / Change Master Password ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(palette.accent).add_modifier(Modifier::BOLD));
+        .border_style(
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        );
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
@@ -13444,7 +16928,9 @@ fn draw_set_password_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         Line::from(""),
         Line::from(Span::styled(
             " Protect CAShell Cockpit with Master Authentication ",
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
             " Anyone launching 'cas' will be prompted to enter this password. ",
@@ -13452,27 +16938,108 @@ fn draw_set_password_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled(if app.set_password_field == 0 { "▶ " } else { "  " }, Style::default().fg(palette.accent)),
-            Span::styled("New Password:     ", Style::default().fg(if app.set_password_field == 0 { palette.accent } else { Color::White })),
             Span::styled(
-                format!(" [ {}█ ]", if app.new_password_buf.is_empty() { "Enter new password" } else { &p1_mask }),
-                Style::default().fg(palette.highlight_fg).bg(if app.set_password_field == 0 { palette.highlight_bg } else { Color::Reset }),
+                if app.set_password_field == 0 {
+                    "▶ "
+                } else {
+                    "  "
+                },
+                Style::default().fg(palette.accent),
+            ),
+            Span::styled(
+                "New Password:     ",
+                Style::default().fg(if app.set_password_field == 0 {
+                    palette.accent
+                } else {
+                    Color::White
+                }),
+            ),
+            Span::styled(
+                format!(
+                    " [ {}█ ]",
+                    if app.new_password_buf.is_empty() {
+                        "Enter new password"
+                    } else {
+                        &p1_mask
+                    }
+                ),
+                Style::default()
+                    .fg(palette.highlight_fg)
+                    .bg(if app.set_password_field == 0 {
+                        palette.highlight_bg
+                    } else {
+                        Color::Reset
+                    }),
             ),
         ]),
         Line::from(vec![
-            Span::styled(if app.set_password_field == 1 { "▶ " } else { "  " }, Style::default().fg(palette.accent)),
-            Span::styled("Confirm Password: ", Style::default().fg(if app.set_password_field == 1 { palette.accent } else { Color::White })),
             Span::styled(
-                format!(" [ {}█ ]", if app.confirm_password_buf.is_empty() { "Re-enter password" } else { &p2_mask }),
-                Style::default().fg(palette.highlight_fg).bg(if app.set_password_field == 1 { palette.highlight_bg } else { Color::Reset }),
+                if app.set_password_field == 1 {
+                    "▶ "
+                } else {
+                    "  "
+                },
+                Style::default().fg(palette.accent),
+            ),
+            Span::styled(
+                "Confirm Password: ",
+                Style::default().fg(if app.set_password_field == 1 {
+                    palette.accent
+                } else {
+                    Color::White
+                }),
+            ),
+            Span::styled(
+                format!(
+                    " [ {}█ ]",
+                    if app.confirm_password_buf.is_empty() {
+                        "Re-enter password"
+                    } else {
+                        &p2_mask
+                    }
+                ),
+                Style::default()
+                    .fg(palette.highlight_fg)
+                    .bg(if app.set_password_field == 1 {
+                        palette.highlight_bg
+                    } else {
+                        Color::Reset
+                    }),
             ),
         ]),
         Line::from(vec![
-            Span::styled(if app.set_password_field == 2 { "▶ " } else { "  " }, Style::default().fg(palette.accent)),
-            Span::styled("Password Hint:    ", Style::default().fg(if app.set_password_field == 2 { palette.accent } else { Color::White })),
             Span::styled(
-                format!(" [ {}█ ]", if app.password_hint_buf.is_empty() { "Optional reminder hint" } else { &app.password_hint_buf }),
-                Style::default().fg(palette.text).bg(if app.set_password_field == 2 { palette.highlight_bg } else { Color::Reset }),
+                if app.set_password_field == 2 {
+                    "▶ "
+                } else {
+                    "  "
+                },
+                Style::default().fg(palette.accent),
+            ),
+            Span::styled(
+                "Password Hint:    ",
+                Style::default().fg(if app.set_password_field == 2 {
+                    palette.accent
+                } else {
+                    Color::White
+                }),
+            ),
+            Span::styled(
+                format!(
+                    " [ {}█ ]",
+                    if app.password_hint_buf.is_empty() {
+                        "Optional reminder hint"
+                    } else {
+                        &app.password_hint_buf
+                    }
+                ),
+                Style::default()
+                    .fg(palette.text)
+                    .bg(if app.set_password_field == 2 {
+                        palette.highlight_bg
+                    } else {
+                        Color::Reset
+                    }),
             ),
         ]),
         Line::from(""),
@@ -13480,14 +17047,26 @@ fn draw_set_password_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let mut body_lines = lines;
     if let Some(ref err) = app.set_password_error {
-        body_lines.push(Line::from(Span::styled(err.clone(), Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))));
+        body_lines.push(Line::from(Span::styled(
+            err.clone(),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )));
     } else {
-        body_lines.push(Line::from(Span::styled("Use Tab/Shift+Tab to switch fields. Press Enter to Save.", Style::default().fg(palette.text_muted))));
+        body_lines.push(Line::from(Span::styled(
+            "Use Tab/Shift+Tab to switch fields. Press Enter to Save.",
+            Style::default().fg(palette.text_muted),
+        )));
     }
 
     body_lines.push(Line::from(""));
     body_lines.push(Line::from(vec![
-        Span::styled(" [Enter] Save & Enable ", Style::default().fg(Color::Rgb(0, 0, 0)).bg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " [Enter] Save & Enable ",
+            Style::default()
+                .fg(Color::Rgb(0, 0, 0))
+                .bg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("    "),
         Span::styled(" [Esc] Cancel ", Style::default().fg(palette.text_muted)),
     ]));
@@ -13505,7 +17084,9 @@ mod tests {
     fn test_theme_palette_contrast_rules() {
         fn luminance(c: Color) -> f32 {
             match c {
-                Color::Rgb(r, g, b) => (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32) / 255.0,
+                Color::Rgb(r, g, b) => {
+                    (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32) / 255.0
+                }
                 Color::Black => 0.0,
                 other => panic!("unexpected non-RGB highlight_fg {other:?}"),
             }
@@ -13513,10 +17094,17 @@ mod tests {
         for &name in THEME_OPTIONS {
             // Unadapted preset (independent of the test runner's terminal colour depth).
             let p = catui::Theme::from_name_or(name, catui::ThemePreset::CaClassic);
-            assert_eq!(catui::ThemePreset::parse(name), Some(p.preset), "{name} must be a CATUI preset id");
+            assert_eq!(
+                catui::ThemePreset::parse(name),
+                Some(p.preset),
+                "{name} must be a CATUI preset id"
+            );
             // Contrast rule 1: active-tab text must be dark on dark themes (was: exactly black).
             if p.mode == catui::Mode::Dark {
-                assert!(luminance(p.highlight_fg) < 0.1, "{name}: highlight_fg too light");
+                assert!(
+                    luminance(p.highlight_fg) < 0.1,
+                    "{name}: highlight_fg too light"
+                );
             }
             // Contrast rule 2: Never identical text and background
             assert_ne!(p.highlight_fg, p.highlight_bg);
@@ -13609,7 +17197,10 @@ mod tests {
         app.term_input = "echo 'cashell cockpit'".to_string();
         app.run_terminal_command();
         assert!(app.term_input.is_empty());
-        assert!(app.term_output.iter().any(|line| line.contains("cashell cockpit")));
+        assert!(app
+            .term_output
+            .iter()
+            .any(|line| line.contains("cashell cockpit")));
     }
 
     #[test]
@@ -13682,13 +17273,17 @@ mod tests {
     fn test_settings_cycle_field_value() {
         let mut app = CockpitApp::new(&Config::default());
         app.selected_field = 0; // AI Provider
+                                // H-09: default_provider is now empty (""), which is PROVIDER_OPTIONS[0]
         let initial = app.cfg.ai.default_provider.clone();
+        assert_eq!(initial, "");
 
         app.cycle_field_value(true);
-        assert_ne!(app.cfg.ai.default_provider, initial);
+        // forward from index 0 → index 1 ("openai")
+        assert_eq!(app.cfg.ai.default_provider, "openai");
 
         app.cycle_field_value(false);
-        assert_eq!(app.cfg.ai.default_provider, initial);
+        // backward from index 1 → index 0 ("")
+        assert_eq!(app.cfg.ai.default_provider, "");
     }
 
     #[test]
@@ -13773,9 +17368,17 @@ mod tests {
         app.submit_project_wizard();
 
         assert!(!app.show_project_wizard);
-        assert!(app.cfg.workspace.custom_projects.contains(&"/tmp/my-test-proj".to_string()));
+        assert!(app
+            .cfg
+            .workspace
+            .custom_projects
+            .contains(&"/tmp/my-test-proj".to_string()));
         assert_eq!(app.latest_snap.tracked_projects.len(), initial_count + 1);
-        assert!(app.latest_snap.tracked_projects.iter().any(|p| p.name == "MyTestProj"));
+        assert!(app
+            .latest_snap
+            .tracked_projects
+            .iter()
+            .any(|p| p.name == "MyTestProj"));
     }
 
     #[test]
@@ -13792,7 +17395,11 @@ mod tests {
         assert!(!app.show_container_wizard);
         // Container added to snapshot
         assert_eq!(app.latest_snap.docker_containers.len(), initial_count + 1);
-        assert!(app.latest_snap.docker_containers.iter().any(|c| c.name == "test-redis"));
+        assert!(app
+            .latest_snap
+            .docker_containers
+            .iter()
+            .any(|c| c.name == "test-redis"));
     }
 
     #[test]
@@ -13805,10 +17412,22 @@ mod tests {
         app.submit_monitor_wizard();
 
         assert!(!app.show_monitor_wizard);
-        assert!(app.cfg.uptime.custom_monitors.iter().any(|m| m.name == "Test API"));
-        assert!(app.latest_snap.uptime_monitors.iter().any(|m| m.name == "Test API"));
+        assert!(app
+            .cfg
+            .uptime
+            .custom_monitors
+            .iter()
+            .any(|m| m.name == "Test API"));
+        assert!(app
+            .latest_snap
+            .uptime_monitors
+            .iter()
+            .any(|m| m.name == "Test API"));
         let count = app.latest_snap.uptime_monitors.len();
-        assert!(count == initial_count + 1 || count == initial_count, "snapshot should add or preserve monitor count, got {count} vs {initial_count}");
+        assert!(
+            count == initial_count + 1 || count == initial_count,
+            "snapshot should add or preserve monitor count, got {count} vs {initial_count}"
+        );
     }
 
     #[test]
@@ -13818,19 +17437,31 @@ mod tests {
         app.server_wizard_field = 0;
 
         // Down advances
-        handle_server_wizard_key(event::KeyEvent::new(KeyCode::Down, KeyModifiers::empty()), &mut app);
+        handle_server_wizard_key(
+            event::KeyEvent::new(KeyCode::Down, KeyModifiers::empty()),
+            &mut app,
+        );
         assert_eq!(app.server_wizard_field, 1);
 
         // Tab advances
-        handle_server_wizard_key(event::KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()), &mut app);
+        handle_server_wizard_key(
+            event::KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()),
+            &mut app,
+        );
         assert_eq!(app.server_wizard_field, 2);
 
         // Up moves back
-        handle_server_wizard_key(event::KeyEvent::new(KeyCode::Up, KeyModifiers::empty()), &mut app);
+        handle_server_wizard_key(
+            event::KeyEvent::new(KeyCode::Up, KeyModifiers::empty()),
+            &mut app,
+        );
         assert_eq!(app.server_wizard_field, 1);
 
         // Esc closes
-        handle_server_wizard_key(event::KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()), &mut app);
+        handle_server_wizard_key(
+            event::KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()),
+            &mut app,
+        );
         assert!(!app.show_server_wizard);
     }
 
@@ -13841,7 +17472,10 @@ mod tests {
         assert!(!hash.is_empty());
         assert_ne!(pass, hash);
         assert!(crate::config::verify_master_password(pass, &hash));
-        assert!(!crate::config::verify_master_password("WrongPassword", &hash));
+        assert!(!crate::config::verify_master_password(
+            "WrongPassword",
+            &hash
+        ));
     }
 
     #[test]
@@ -13903,15 +17537,18 @@ mod tests {
         let app = CockpitApp::new(&Config::default());
         // Verify the local node is present
         let nodes = &app.latest_snap.fleet_nodes;
-        assert!(nodes.iter().any(|n| n.name.contains("ThinkPad X1") || n.name.contains("Local")));
+        assert!(nodes
+            .iter()
+            .any(|n| n.name.contains("ThinkPad X1") || n.name.contains("Local")));
 
         // Verify core daemons present
         let daemons = &app.latest_snap.service_health;
         assert!(daemons.iter().any(|d| d.name == "tailscaled"));
         assert!(daemons.iter().any(|d| d.name == "cloudflared"));
-        assert!(daemons.iter().any(|d| d.name == "9router / omniroute"));
         assert!(daemons.iter().any(|d| d.name == "docker / podman"));
         assert!(daemons.iter().any(|d| d.name == "hermes agent gateway"));
+        // H-09: no private gateway entries (9router/omniroute) in service_health
+        assert!(!daemons.iter().any(|d| d.name.contains("9router")));
     }
 
     #[test]
@@ -13921,10 +17558,12 @@ mod tests {
         let mut terminal = Terminal::new(backend).expect("terminal");
 
         // 1. Render in large terminal (>= 38 height)
-        terminal.draw(|f| {
-            let area = f.area();
-            draw_dashboard_tab(f, &mut app, area);
-        }).expect("draw full");
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                draw_dashboard_tab(f, &mut app, area);
+            })
+            .expect("draw full");
 
         // Hitboxes should be registered
         assert!(!app.hitboxes.is_empty());
@@ -13933,10 +17572,12 @@ mod tests {
         app.overview_proc_scroll = 1;
         let backend_compact = ratatui::backend::TestBackend::new(100, 30);
         let mut terminal_compact = Terminal::new(backend_compact).expect("terminal compact");
-        terminal_compact.draw(|f| {
-            let area = f.area();
-            draw_dashboard_tab(f, &mut app, area);
-        }).expect("draw compact");
+        terminal_compact
+            .draw(|f| {
+                let area = f.area();
+                draw_dashboard_tab(f, &mut app, area);
+            })
+            .expect("draw compact");
     }
 
     #[test]
@@ -13972,8 +17613,12 @@ mod tests {
             services: vec![],
             active: true,
         };
-        app.cfg.daemon.nodes.insert("my-custom-server".to_string(), node_cfg);
-        app.server_probe_results.push(("my-custom-server".to_string(), Some(45u128)));
+        app.cfg
+            .daemon
+            .nodes
+            .insert("my-custom-server".to_string(), node_cfg);
+        app.server_probe_results
+            .push(("my-custom-server".to_string(), Some(45u128)));
         app.selected_server = app.server_probe_results.len() - 1;
 
         // 1. Test Toggle Active / Inactive
@@ -13982,7 +17627,10 @@ mod tests {
         let is_active_now = app.cfg.daemon.nodes.get("my-custom-server").unwrap().active;
         assert_ne!(was_active, is_active_now);
         app.toggle_server_active();
-        assert_eq!(was_active, app.cfg.daemon.nodes.get("my-custom-server").unwrap().active);
+        assert_eq!(
+            was_active,
+            app.cfg.daemon.nodes.get("my-custom-server").unwrap().active
+        );
 
         // 2. Test Clone
         app.clone_selected_server();
@@ -14025,12 +17673,15 @@ mod tests {
         // 1. Server delete confirmation
         app.server_probe_results = vec![("node-1".to_string(), Some(10u128))];
         app.selected_server = 0;
-        app.cfg.daemon.nodes.insert("node-1".to_string(), crate::config::NodeConfig {
-            ip: "10.0.0.1".to_string(),
-            user: "root".to_string(),
-            services: vec![],
-            active: true,
-        });
+        app.cfg.daemon.nodes.insert(
+            "node-1".to_string(),
+            crate::config::NodeConfig {
+                ip: "10.0.0.1".to_string(),
+                user: "root".to_string(),
+                services: vec![],
+                active: true,
+            },
+        );
         app.remove_selected_server();
         assert!(app.show_delete_confirm);
         assert_eq!(app.pending_delete_target, DeleteTarget::Server);
@@ -14044,44 +17695,56 @@ mod tests {
         assert!(!app.cfg.daemon.nodes.contains_key("node-1"));
 
         // 2. Project delete confirmation
-        app.latest_snap.tracked_projects.push(crate::systat::TrackedProject {
-            path: "/tmp/fake-proj".to_string(),
-            name: "FakeProj".to_string(),
-            category: "Product".to_string(),
-            branch: "main".to_string(),
-            repos: vec![],
-            services: vec![],
-            containers: vec![],
-            databases: vec![],
-            is_dirty: false,
-        });
+        app.latest_snap
+            .tracked_projects
+            .push(crate::systat::TrackedProject {
+                path: "/tmp/fake-proj".to_string(),
+                name: "FakeProj".to_string(),
+                category: "Product".to_string(),
+                branch: "main".to_string(),
+                repos: vec![],
+                services: vec![],
+                containers: vec![],
+                databases: vec![],
+                is_dirty: false,
+            });
         app.selected_project = app.latest_snap.tracked_projects.len() - 1;
         app.remove_selected_project();
         assert!(app.show_delete_confirm);
         assert_eq!(app.pending_delete_target, DeleteTarget::Project);
         app.execute_pending_deletion();
         assert!(!app.show_delete_confirm);
-        assert!(!app.latest_snap.tracked_projects.iter().any(|p| p.path == "/tmp/fake-proj"));
+        assert!(!app
+            .latest_snap
+            .tracked_projects
+            .iter()
+            .any(|p| p.path == "/tmp/fake-proj"));
 
         // 3. Monitor delete confirmation
-        app.latest_snap.uptime_monitors.push(crate::systat::UptimeMonitor {
-            name: "fake-mon".to_string(),
-            target: "http://fake".to_string(),
-            is_up: true,
-            latency_ms: Some(10),
-            status_code: Some(200),
-            uptime_pct: 100.0,
-            history: vec![],
-            group: "Test".to_string(),
-            error: None,
-        });
+        app.latest_snap
+            .uptime_monitors
+            .push(crate::systat::UptimeMonitor {
+                name: "fake-mon".to_string(),
+                target: "http://fake".to_string(),
+                is_up: true,
+                latency_ms: Some(10),
+                status_code: Some(200),
+                uptime_pct: 100.0,
+                history: vec![],
+                group: "Test".to_string(),
+                error: None,
+            });
         app.selected_monitor = app.latest_snap.uptime_monitors.len() - 1;
         app.remove_selected_monitor();
         assert!(app.show_delete_confirm);
         assert_eq!(app.pending_delete_target, DeleteTarget::Monitor);
         app.execute_pending_deletion();
         assert!(!app.show_delete_confirm);
-        assert!(!app.latest_snap.uptime_monitors.iter().any(|m| m.name == "fake-mon"));
+        assert!(!app
+            .latest_snap
+            .uptime_monitors
+            .iter()
+            .any(|m| m.name == "fake-mon"));
     }
 
     #[test]
@@ -14094,20 +17757,36 @@ mod tests {
         // When token is empty -> warning toast
         app.trigger_test_telegram_alert();
         let notif = app.notification.as_ref().map(|(n, _)| n.as_str());
-        assert_eq!(notif, Some("⚠ Configure Telegram Bot Token & Chat ID in Settings first."));
+        assert_eq!(
+            notif,
+            Some("⚠ Configure Telegram Bot Token & Chat ID in Settings first.")
+        );
 
         // When token is set in uptime -> success toast
         app.cfg.uptime.telegram_bot_token = "123456:BOT_TOKEN".to_string();
         app.cfg.uptime.telegram_chat_id = "12345678".to_string();
         app.trigger_test_telegram_alert();
         let notif = app.notification.as_ref().map(|(n, _)| n.as_str());
-        assert_eq!(notif, Some("📨 Test Telegram alert sent! Check your Telegram if it's configured."));
+        assert_eq!(
+            notif,
+            Some("📨 Test Telegram alert sent! Check your Telegram if it's configured.")
+        );
     }
 
     #[test]
     fn test_parse_command_tokens() {
-        let tokens = parse_command_tokens(r#"/uptime add-monitor "Landing CATerm" "https://caterm.fathforce.com""#);
-        assert_eq!(tokens, vec!["/uptime", "add-monitor", "Landing CATerm", "https://caterm.fathforce.com"]);
+        let tokens = parse_command_tokens(
+            r#"/uptime add-monitor "Landing CATerm" "https://caterm.fathforce.com""#,
+        );
+        assert_eq!(
+            tokens,
+            vec![
+                "/uptime",
+                "add-monitor",
+                "Landing CATerm",
+                "https://caterm.fathforce.com"
+            ]
+        );
 
         let tokens = parse_command_tokens("/go uptime");
         assert_eq!(tokens, vec!["/go", "uptime"]);
@@ -14135,18 +17814,37 @@ mod tests {
         assert_eq!(app.current_tab, CockpitTab::Server);
 
         // /uptime add-monitor
-        assert!(handle_ai_slash_command(&mut app, r#"/uptime add-monitor "Test Monitor" "https://test.local""#));
-        assert!(app.latest_snap.uptime_monitors.iter().any(|m| m.name == "Test Monitor"));
-        assert!(app.cfg.uptime.custom_monitors.iter().any(|m| m.name == "Test Monitor"));
+        assert!(handle_ai_slash_command(
+            &mut app,
+            r#"/uptime add-monitor "Test Monitor" "https://test.local""#
+        ));
+        assert!(app
+            .latest_snap
+            .uptime_monitors
+            .iter()
+            .any(|m| m.name == "Test Monitor"));
+        assert!(app
+            .cfg
+            .uptime
+            .custom_monitors
+            .iter()
+            .any(|m| m.name == "Test Monitor"));
         let last_chat = app.chat_lines.last().cloned().unwrap_or_default();
         assert!(last_chat.contains("Added monitor 'Test Monitor'"));
 
         // /uptime delete
-        assert!(handle_ai_slash_command(&mut app, r#"/uptime delete "Test Monitor""#));
+        assert!(handle_ai_slash_command(
+            &mut app,
+            r#"/uptime delete "Test Monitor""#
+        ));
         assert!(app.show_delete_confirm);
         assert_eq!(app.pending_delete_target, DeleteTarget::Monitor);
         app.execute_pending_deletion();
-        assert!(!app.latest_snap.uptime_monitors.iter().any(|m| m.name == "Test Monitor"));
+        assert!(!app
+            .latest_snap
+            .uptime_monitors
+            .iter()
+            .any(|m| m.name == "Test Monitor"));
 
         // /uptime test-telegram
         assert!(handle_ai_slash_command(&mut app, "/uptime test-telegram"));
@@ -14162,11 +17860,20 @@ mod tests {
 
         // /fleet status
         assert!(handle_ai_slash_command(&mut app, "/fleet status"));
-        assert!(app.chat_lines.iter().any(|line| line.contains("Fleet Status")));
+        assert!(app
+            .chat_lines
+            .iter()
+            .any(|line| line.contains("Fleet Status")));
 
         // /fleet restart with confirmation prompt
-        assert!(handle_ai_slash_command(&mut app, "/fleet restart test-service"));
-        assert_eq!(app.pending_service_restart, Some("test-service".to_string()));
+        assert!(handle_ai_slash_command(
+            &mut app,
+            "/fleet restart test-service"
+        ));
+        assert_eq!(
+            app.pending_service_restart,
+            Some("test-service".to_string())
+        );
         let last_chat = app.chat_lines.last().cloned().unwrap_or_default();
         assert!(last_chat.contains("Confirm restart of service 'test-service'"));
 
@@ -14260,16 +17967,14 @@ mod tests {
         app.latest_snap.net_total_tx_gb = 3.2;
         app.latest_snap.active_net_iface = "wlp2s0".to_string();
 
-        app.latest_snap.top_processes = vec![
-            crate::systat::ProcInfo {
-                pid: 101,
-                name: "test-proc".to_string(),
-                cpu_pct: 33.3,
-                mem_mb: 64,
-                status: "Run".to_string(),
-                role: "Test".to_string(),
-            },
-        ];
+        app.latest_snap.top_processes = vec![crate::systat::ProcInfo {
+            pid: 101,
+            name: "test-proc".to_string(),
+            cpu_pct: 33.3,
+            mem_mb: 64,
+            status: "Run".to_string(),
+            role: "Test".to_string(),
+        }];
 
         let backend = ratatui::backend::TestBackend::new(140, 45);
         let mut terminal = Terminal::new(backend).expect("terminal");
@@ -14282,9 +17987,18 @@ mod tests {
             .expect("draw dashboard");
 
         // Verify that process selection and kill hitboxes were registered
-        assert!(app.hitboxes.iter().any(|h| matches!(h.action, HitboxAction::SelectProcess(0))));
-        assert!(app.hitboxes.iter().any(|h| matches!(h.action, HitboxAction::KillProcess(101))));
-        assert!(app.hitboxes.iter().any(|h| matches!(h.action, HitboxAction::FocusDashboardPanel(5))));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|h| matches!(h.action, HitboxAction::SelectProcess(0))));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|h| matches!(h.action, HitboxAction::KillProcess(101))));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|h| matches!(h.action, HitboxAction::FocusDashboardPanel(5))));
     }
 
     #[test]
@@ -14292,7 +18006,10 @@ mod tests {
         let mut app = CockpitApp::new(&Config::default());
         app.prompt_kill_process_with_name(4321, "worker-job");
         assert!(app.show_kill_modal);
-        assert_eq!(app.pending_kill_proc, Some((4321, "worker-job".to_string())));
+        assert_eq!(
+            app.pending_kill_proc,
+            Some((4321, "worker-job".to_string()))
+        );
 
         // Test render modal
         let backend = ratatui::backend::TestBackend::new(80, 25);
@@ -14305,19 +18022,31 @@ mod tests {
             .expect("draw kill modal");
 
         // Verify confirm and cancel hitboxes
-        assert!(app.hitboxes.iter().any(|h| matches!(h.action, HitboxAction::ConfirmKillProcess)));
-        assert!(app.hitboxes.iter().any(|h| matches!(h.action, HitboxAction::CancelKillProcess)));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|h| matches!(h.action, HitboxAction::ConfirmKillProcess)));
+        assert!(app
+            .hitboxes
+            .iter()
+            .any(|h| matches!(h.action, HitboxAction::CancelKillProcess)));
 
         // Simulated cancellation
         app.show_kill_modal = false;
         app.set_notification("Process termination cancelled.");
-        assert_eq!(app.notification.as_ref().map(|(m, _)| m.as_str()), Some("Process termination cancelled."));
+        assert_eq!(
+            app.notification.as_ref().map(|(m, _)| m.as_str()),
+            Some("Process termination cancelled.")
+        );
 
         // Simulated successful termination toast
         let pid = 4321;
         let name = "worker-job";
         app.set_notification(format!("Terminated process {name} (PID {pid})"));
-        assert_eq!(app.notification.as_ref().map(|(m, _)| m.as_str()), Some("Terminated process worker-job (PID 4321)"));
+        assert_eq!(
+            app.notification.as_ref().map(|(m, _)| m.as_str()),
+            Some("Terminated process worker-job (PID 4321)")
+        );
     }
 
     #[test]
@@ -14352,7 +18081,10 @@ mod tests {
         // Wizard should have closed and saved to daemon nodes
         assert!(!app.show_server_wizard);
         assert!(app.cfg.daemon.nodes.contains_key("pc-gerlink-updated"));
-        assert_eq!(app.cfg.daemon.nodes["pc-gerlink-updated"].ip, "100.102.147.99");
+        assert_eq!(
+            app.cfg.daemon.nodes["pc-gerlink-updated"].ip,
+            "100.102.147.99"
+        );
         assert!(!app.cfg.daemon.nodes.contains_key("pc-gerlink"));
 
         // 4. Test draw_server_wizard dynamic hitboxes

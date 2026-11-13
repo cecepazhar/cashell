@@ -8,7 +8,10 @@ use colored::Colorize;
 // ── CLI types ─────────────────────────────────────────────────────────────────
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "server", about = "Server management: stats, db, firewall, docker, ai")]
+#[command(
+    name = "server",
+    about = "Server management: stats, db, firewall, docker, ai"
+)]
 pub struct ServerCommand {
     #[command(subcommand)]
     pub action: ServerAction,
@@ -88,7 +91,10 @@ pub fn run(cmd: &ServerCommand, cfg: &Config) -> Result<()> {
         ServerAction::Firewall { action, port } => run_firewall(action, *port),
         ServerAction::Docker { action, name } => run_docker(action, name.as_deref()),
         ServerAction::Tui => {
-            println!("{}", "[TUI coming soon — caorch tui for dashboard]".yellow());
+            println!(
+                "{}",
+                "[TUI coming soon — caorch tui for dashboard]".yellow()
+            );
             Ok(())
         }
         ServerAction::Ai { prompt } => run_ai(prompt, cfg),
@@ -108,11 +114,11 @@ fn run_stats() -> Result<()> {
     std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
     sys.refresh_cpu_usage();
     let cpu_count = sys.cpus().len();
-    let cpu_avg: f32 = sys.cpus().iter().map(|c| c.cpu_usage()).sum::<f32>()
-        / cpu_count.max(1) as f32;
+    let cpu_avg: f32 =
+        sys.cpus().iter().map(|c| c.cpu_usage()).sum::<f32>() / cpu_count.max(1) as f32;
 
     // RAM
-    let ram_used = sys.used_memory();   // bytes
+    let ram_used = sys.used_memory(); // bytes
     let ram_total = sys.total_memory();
     let ram_pct = (ram_used * 100).checked_div(ram_total).unwrap_or(0);
 
@@ -173,7 +179,10 @@ fn run_disk_health() -> Result<()> {
 
     let disks = probe_storage_health();
 
-    println!("{}", "── CrystalDisk SSD / NVMe SMART Health ─────────────────────".bold());
+    println!(
+        "{}",
+        "── CrystalDisk SSD / NVMe SMART Health ─────────────────────".bold()
+    );
     if disks.is_empty() {
         println!(
             "  {}",
@@ -271,7 +280,10 @@ fn db_install(engine: &str) -> Result<()> {
         "postgresql" | "postgres" | "pg" => "postgresql",
         "mysql" => "mysql-server",
         "mariadb" => "mariadb-server",
-        other => bail!("unknown engine '{}'; supported: postgresql, mysql, mariadb", other),
+        other => bail!(
+            "unknown engine '{}'; supported: postgresql, mysql, mariadb",
+            other
+        ),
     };
     let cmd = format!("apt-get install -y {pkg}");
     println!("{} {}", "▶ Running:".bold(), cmd.yellow());
@@ -304,8 +316,26 @@ fn db_status() -> Result<()> {
     Ok(())
 }
 
+/// H-08: validate a database name — must match ^[a-zA-Z0-9_]{1,63}$.
+/// Prevents filename/shell injection via backup/restore command interpolation.
+fn is_valid_db_name(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    if bytes.is_empty() || bytes.len() > 63 {
+        return false;
+    }
+    bytes
+        .iter()
+        .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
+}
+
 fn db_backup(name: &str) -> Result<()> {
     use std::path::Path;
+
+    // H-08: validate DB name before it is interpolated into any file path.
+    if !is_valid_db_name(name) {
+        bail!("invalid database name '{name}' — must match ^[a-zA-Z0-9_]{{1,63}}$");
+    }
+
     let backup_dir = "/var/backups/csp";
     std::fs::create_dir_all(backup_dir)?;
 
@@ -313,43 +343,126 @@ fn db_backup(name: &str) -> Result<()> {
     let file = format!("{backup_dir}/{name}-{ts}.sql.gz");
 
     // Detect engine by checking if pg_dump exists; fall back to mysqldump.
-    let use_pg = Path::new("/usr/bin/pg_dump")
-        .exists()
-        || Path::new("/usr/lib/postgresql").exists();
+    let use_pg =
+        Path::new("/usr/bin/pg_dump").exists() || Path::new("/usr/lib/postgresql").exists();
 
-    let cmd_str = if use_pg {
-        format!("pg_dump {name} | gzip > {file}")
-    } else {
-        format!("mysqldump {name} | gzip > {file}")
-    };
-    println!("{} {}", "▶ Running:".bold(), cmd_str.yellow());
+    // H-08: argv-based process chain — pg_dump/mysqldump stdout is piped into
+    // `gzip -f` via OS stdio pipes; no shell is involved at all.
+    let dump_bin = if use_pg { "pg_dump" } else { "mysqldump" };
+    println!(
+        "{} {} → {}",
+        "▶ Running:".bold(),
+        format!("{dump_bin} {name} | gzip -f").yellow(),
+        file.yellow()
+    );
 
-    let status = std::process::Command::new("sh")
-        .args(["-c", &cmd_str])
-        .status()?;
-    if !status.success() {
-        bail!("backup command failed (exit {:?})", status.code());
+    let mut dump = std::process::Command::new(dump_bin)
+        .arg(name)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("failed to spawn {dump_bin}: {e}"))?;
+    let dump_stdout = dump
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("failed to capture stdout pipe from {dump_bin}"))?;
+
+    // gzip -c compresses its stdin and writes to the stdout we redirect to
+    // the backup file; `-f` overwrites an existing backup file.
+    let backup_out = std::fs::File::create(&file)
+        .map_err(|e| anyhow::anyhow!("failed to create backup file {file}: {e}"))?;
+    let mut gzip = std::process::Command::new("gzip")
+        .args(["-c", "-f"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::from(backup_out))
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("failed to spawn gzip: {e}"))?;
+    let mut gzip_stdin = gzip
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("failed to capture gzip stdin pipe"))?;
+
+    // Feed dump stdout into gzip stdin; the join handle's receiver is dropped
+    // so gzip receives EOF once the copy finishes.
+    let feeder = std::thread::spawn(move || {
+        let _ = std::io::copy(&mut std::io::BufReader::new(dump_stdout), &mut gzip_stdin);
+    });
+
+    let dump_status = dump.wait()?;
+    let _ = feeder.join();
+    let gzip_status = gzip.wait()?;
+
+    if !dump_status.success() || !gzip_status.success() {
+        std::fs::remove_file(&file).ok();
+        bail!(
+            "backup command failed ({} exit {:?}, gzip exit {:?})",
+            dump_bin,
+            dump_status.code(),
+            gzip_status.code()
+        );
     }
+
     println!("{}", format!("✓ backup written to {file}").green());
     Ok(())
 }
 
 fn db_restore(name: &str, file: &str) -> Result<()> {
+    // H-08: same DB name validation as db_backup.
+    if !is_valid_db_name(name) {
+        bail!("invalid database name '{name}' — must match ^[a-zA-Z0-9_]{{1,63}}$");
+    }
     if !std::path::Path::new(file).exists() {
         bail!("file not found: {file}");
     }
+
+    // H-08: argv-based process chain — gunzip stdout piped into psql/mysql
+    // stdin; no shell involved.
     let use_pg = std::path::Path::new("/usr/bin/psql").exists();
-    let cmd_str = if use_pg {
-        format!("zcat {file} | psql {name}")
-    } else {
-        format!("zcat {file} | mysql {name}")
-    };
-    println!("{} {}", "▶ Running:".bold(), cmd_str.yellow());
-    let status = std::process::Command::new("sh")
-        .args(["-c", &cmd_str])
-        .status()?;
-    if !status.success() {
-        bail!("restore command failed (exit {:?})", status.code());
+    let db_bin = if use_pg { "psql" } else { "mysql" };
+    println!(
+        "{} {}",
+        "▶ Running:".bold(),
+        format!("zcat {file} | {db_bin} {name}").yellow()
+    );
+
+    let mut gunzip = std::process::Command::new("zcat")
+        .arg(file)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("failed to spawn zcat: {e}"))?;
+    let gunzip_stdout = gunzip
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("failed to capture zcat stdout pipe"))?;
+
+    let mut db = std::process::Command::new(db_bin)
+        .arg(name)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("failed to spawn {db_bin}: {e}"))?;
+    let mut db_stdin = db
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("failed to capture {db_bin} stdin pipe"))?;
+
+    let feeder = std::thread::spawn(move || {
+        let _ = std::io::copy(&mut std::io::BufReader::new(gunzip_stdout), &mut db_stdin);
+    });
+
+    let gunzip_status = gunzip.wait()?;
+    let _ = feeder.join();
+    let db_status = db.wait()?;
+
+    if !gunzip_status.success() || !db_status.success() {
+        bail!(
+            "restore command failed (zcat exit {:?}, {db_bin} exit {:?})",
+            gunzip_status.code(),
+            db_status.code()
+        );
     }
     println!("{}", format!("✓ restored {file} → {name}").green());
     Ok(())
@@ -392,14 +505,13 @@ fn run_docker(action: &str, name: Option<&str>) -> Result<()> {
     let args: Vec<&str> = match action_lc.as_str() {
         "ps" => vec!["ps"],
         "start" | "stop" | "restart" | "logs" => {
-            let n = name.ok_or_else(|| {
-                anyhow::anyhow!("action '{action}' requires a container name")
-            })?;
+            let n =
+                name.ok_or_else(|| anyhow::anyhow!("action '{action}' requires a container name"))?;
             vec![action_lc.as_str(), n]
         }
-        other => bail!(
-            "unknown docker action '{other}'; supported: ps, start, stop, restart, logs"
-        ),
+        other => {
+            bail!("unknown docker action '{other}'; supported: ps, start, stop, restart, logs")
+        }
     };
 
     // Build args vec owned to avoid lifetime issues

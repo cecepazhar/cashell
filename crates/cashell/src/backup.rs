@@ -14,10 +14,7 @@ use std::path::{Path, PathBuf};
 use tar::Builder;
 
 fn default_backup_dir() -> PathBuf {
-    dirs::cache_dir()
-        .unwrap_or_else(|| PathBuf::from(".cache"))
-        .join("cashell")
-        .join("backups")
+    crate::paths::backups_dir()
 }
 
 /// Snapshot of all cashell configuration and state files.
@@ -49,9 +46,12 @@ impl Snapshot {
         // config.toml
         let cfg_path = config_dir.join("config.toml");
         if cfg_path.exists() {
-            let mut buf = std::io::Read::read_exact(&mut config_dir.open(), &mut Vec::new()).ok().unwrap_or_default();
+            let mut buf = std::io::Read::read_exact(&mut config_dir.open(), &mut Vec::new())
+                .ok()
+                .unwrap_or_default();
             // Use fs::read to keep it simple
-            buf = fs::read(&cfg_path).with_context(|| format!("failed reading {}", cfg_path.display()))?;
+            buf = fs::read(&cfg_path)
+                .with_context(|| format!("failed reading {}", cfg_path.display()))?;
             let mut header = tar::Header::new_gnu();
             header.set_path("config.toml")?;
             header.set_size(buf.len() as u64);
@@ -64,7 +64,8 @@ impl Snapshot {
         for suffix in ["db", "db-shm", "db-wal"] {
             let db_path = config_dir.join(format!("cashell.{}", suffix));
             if db_path.exists() {
-                let data = fs::read(&db_path).with_context(|| format!("failed reading {}", db_path.display()))?;
+                let data = fs::read(&db_path)
+                    .with_context(|| format!("failed reading {}", db_path.display()))?;
                 let mut header = tar::Header::new_gnu();
                 header.set_path(format!("cashell.{}", suffix))?;
                 header.set_size(data.len() as u64);
@@ -89,16 +90,9 @@ impl Snapshot {
         }
         let mut entries: Vec<(PathBuf, std::time::SystemTime)> = fs::read_dir(out_dir)?
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .is_some_and(|ext| ext == "tar.gz")
-            })
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "tar.gz"))
             .map(|e| {
-                let modified = e
-                    .metadata()
-                    .and_then(|m| m.modified())
-                    .ok();
+                let modified = e.metadata().and_then(|m| m.modified()).ok();
                 (e.path(), modified)
             })
             .collect();
@@ -111,12 +105,8 @@ impl Snapshot {
         fs::create_dir_all(config_dir)
             .with_context(|| format!("failed creating config dir {}", config_dir.display()))?;
 
-        let file = File::open(snapshot).with_context(|| {
-            format!(
-                "failed opening snapshot file {}",
-                snapshot.display()
-            )
-        })?;
+        let file = File::open(snapshot)
+            .with_context(|| format!("failed opening snapshot file {}", snapshot.display()))?;
         let gz = std::io::BufReader::new(file);
         let mut tar = tar::Archive::new(gz);
 
@@ -146,9 +136,8 @@ impl Snapshot {
                 continue;
             }
             fs::create_dir_all(&target.parent().unwrap_or_else(|| PathBuf::from(".")))?;
-            std::io::copy(&mut entry, &mut target.file()).with_context(|| {
-                format!("failed writing restored file {}", target.display())
-            })?;
+            std::io::copy(&mut entry, &mut target.file())
+                .with_context(|| format!("failed writing restored file {}", target.display()))?;
         }
         Ok(())
     }

@@ -1,6 +1,6 @@
 [package]
 name = "cashell-common"
-version = "1.0.4"
+version = "1.0.5"
 edition = "2021"
 description = "Shared types for the CA ecosystem"
 authors = ["Cecep Saeful Azhar Hidayat, ST"]
@@ -8,4 +8,5 @@ license = "MIT"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

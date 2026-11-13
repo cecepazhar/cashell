@@ -1,6 +1,6 @@
 [package]
 name = "caorch"
-version = "1.0.4"
+version = "1.0.5"
 edition = "2021"
 description = "CAOrch — Lightweight Fleet Agent Daemon for CA Ecosystem"
 authors = ["Cecep Saeful Azhar Hidayat, ST"]
@@ -11,7 +11,7 @@ name = "caorch"
 path = "src/main.rs"
 
 [dependencies]
-cashell-common = { path = "../common", version = "1.0.4" }
+cashell-common = { path = "../common", version = "1.0.5" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
@@ -27,6 +27,8 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
 hex = "0.4"
+sha2 = "0.10"
+hmac = "0.12"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

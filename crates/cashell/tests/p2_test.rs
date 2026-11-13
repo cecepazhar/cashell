@@ -7,11 +7,10 @@ mod tests {
     #[test]
     fn ai_config_defaults_present() {
         let cfg = Config::default();
-        assert!(!cfg.ai.fallback_chain.is_empty());
-        assert_eq!(cfg.ai.fallback_chain[0], "9router");
-        assert!(cfg.ai.providers.contains_key("9router"));
-        assert!(cfg.ai.providers.contains_key("omniroute"));
-        assert!(cfg.ai.providers.contains_key("local"));
+        // H-09: defaults are empty — no hardcoded providers, no private URLs.
+        assert!(cfg.ai.fallback_chain.is_empty());
+        assert!(cfg.ai.providers.is_empty());
+        assert!(cfg.ai.default_provider.is_empty());
     }
 
     #[test]
@@ -19,8 +18,9 @@ mod tests {
         // A config file predating the [ai] and [doctor] sections must still deserialize.
         let legacy = "[auth]\napi_base = \"https://api.example.com\"\n";
         let cfg: Config = toml::from_str(legacy).expect("legacy config must load");
-        assert_eq!(cfg.ai.default_provider, "9router");
-        assert_eq!(cfg.doctor.target_addr, "100.76.150.46");
+        // H-09: doctor target_addr default is empty (no hardcoded private IP).
+        assert!(cfg.ai.default_provider.is_empty());
+        assert!(cfg.doctor.target_addr.is_empty());
         assert_eq!(cfg.doctor.ports.len(), 8);
     }
 

@@ -14,7 +14,7 @@
 //! default_catalog = "fathstore"
 //!
 //! [deploy.coolify]
-//! base_url = "https://vps-hostinger.tail2a1bee.ts.net/api/v1"
+//! base_url = "https://coolify.example.com/api/v1"
 //! api_token = "env:COOLIFY_API_TOKEN"
 //! timeout_seconds = 60
 //!
@@ -61,6 +61,8 @@ pub struct Config {
     pub pro: ProConfig,
     #[serde(default)]
     pub mascot: MascotConfig,
+    #[serde(default)]
+    pub license: LicenseConfig,
 }
 
 /// Daemon & multi-node orchestration configuration.
@@ -70,6 +72,10 @@ pub struct DaemonConfig {
     pub port: u16,
     #[serde(default = "default_daemon_token")]
     pub token: String,
+    /// Address to bind the HTTP API listener to (default: 127.0.0.1).
+    /// A non-loopback bind requires a non-empty token.
+    #[serde(default = "default_daemon_bind")]
+    pub bind: String,
     #[serde(default = "default_daemon_interval")]
     pub interval_secs: u64,
     #[serde(default = "default_daemon_retry_threshold")]
@@ -84,6 +90,19 @@ pub struct DaemonConfig {
     pub nodes: std::collections::HashMap<String, NodeConfig>,
     #[serde(default = "default_remediation")]
     pub remediation: std::collections::HashMap<String, String>,
+    /// H-10: peer addresses trusted to supply `X-Forwarded-For` /
+    /// `CF-Connecting-IP` client-IP headers. Only honored when the TCP peer
+    /// matches this list; otherwise the peer address is used.
+    /// H-05: per-node heartbeat secrets keyed by node name (matches `daemon.nodes`
+    /// keys). Stored in the user's config file; keep the config file itself at 0600.
+    /// TODO(F-02): dedicated per-node secret storage/rotation.
+    #[serde(default)]
+    pub node_secrets: std::collections::HashMap<String, String>,
+    /// H-10: peer addresses trusted to supply `X-Forwarded-For` /
+    /// `CF-Connecting-IP` client-IP headers. Only honored when the TCP peer
+    /// matches this list; otherwise the peer address is used.
+    #[serde(default = "default_trusted_proxies")]
+    pub trusted_proxies: Vec<String>,
 }
 
 impl Default for DaemonConfig {
@@ -91,6 +110,7 @@ impl Default for DaemonConfig {
         Self {
             port: default_daemon_port(),
             token: default_daemon_token(),
+            bind: default_daemon_bind(),
             interval_secs: default_daemon_interval(),
             retry_threshold: default_daemon_retry_threshold(),
             ssh_key_path: default_ssh_key_path(),
@@ -98,8 +118,18 @@ impl Default for DaemonConfig {
             telegram_chat_id: String::new(),
             nodes: default_nodes(),
             remediation: default_remediation(),
+            node_secrets: std::collections::HashMap::new(),
+            trusted_proxies: default_trusted_proxies(),
         }
     }
+}
+
+fn default_daemon_bind() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_trusted_proxies() -> Vec<String> {
+    vec!["127.0.0.1".to_string(), "::1".to_string()]
 }
 
 /// Remote node configuration.
@@ -153,22 +183,8 @@ fn default_protocol() -> String {
 }
 
 fn default_nodes() -> std::collections::HashMap<String, NodeConfig> {
-    let mut m = std::collections::HashMap::new();
-    let user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
-    m.insert(
-        "local".to_string(),
-        NodeConfig {
-            ip: "127.0.0.1".to_string(),
-            user,
-            services: vec![ServiceConfig {
-                name: "api".to_string(),
-                port: 8080,
-                protocol: "http".to_string(),
-            }],
-            active: true,
-        },
-    );
-    m
+    // R-05: empty default — no nodes/IPs baked into default config.
+    std::collections::HashMap::new()
 }
 
 fn default_remediation() -> std::collections::HashMap<String, String> {
@@ -250,14 +266,30 @@ impl Default for MascotConfig {
     }
 }
 
-pub fn default_mascot_speed() -> String { "Normal".to_string() }
-pub fn default_mascot_sensitivity() -> String { "Balanced".to_string() }
-pub fn default_mascot_tracking() -> bool { true }
-pub fn default_mascot_color() -> String { "Dynamic Reactive".to_string() }
-pub fn default_mascot_animation() -> String { "Hover Bobbing".to_string() }
-pub fn default_mascot_scale() -> String { "Auto-Fit".to_string() }
-pub fn default_matrix_speed() -> String { "Normal".to_string() }
-pub fn default_mascot_chat() -> bool { true }
+pub fn default_mascot_speed() -> String {
+    "Normal".to_string()
+}
+pub fn default_mascot_sensitivity() -> String {
+    "Balanced".to_string()
+}
+pub fn default_mascot_tracking() -> bool {
+    true
+}
+pub fn default_mascot_color() -> String {
+    "Dynamic Reactive".to_string()
+}
+pub fn default_mascot_animation() -> String {
+    "Hover Bobbing".to_string()
+}
+pub fn default_mascot_scale() -> String {
+    "Auto-Fit".to_string()
+}
+pub fn default_matrix_speed() -> String {
+    "Normal".to_string()
+}
+pub fn default_mascot_chat() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProductsConfig {
@@ -272,30 +304,8 @@ pub struct DeployConfig {
 }
 
 fn default_deploy_apps() -> std::collections::HashMap<String, AppDeployConfig> {
-    let mut m = std::collections::HashMap::new();
-    // Default CA ecosystem apps. Replace UUIDs with real Coolify instance UUIDs.
-    m.insert(
-        "caterm".to_string(),
-        AppDeployConfig {
-            uuid: "caterm-app-uuid".to_string(),
-            app_type: "application".to_string(),
-        },
-    );
-    m.insert(
-        "fathstore".to_string(),
-        AppDeployConfig {
-            uuid: "fathstore-app-uuid".to_string(),
-            app_type: "application".to_string(),
-        },
-    );
-    m.insert(
-        "gcc".to_string(),
-        AppDeployConfig {
-            uuid: "gcc-app-uuid".to_string(),
-            app_type: "application".to_string(),
-        },
-    );
-    m
+    // R-05: empty default — UUIDs are per-instance, never baked in.
+    std::collections::HashMap::new()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -345,7 +355,7 @@ impl Default for WorkspaceConfig {
 }
 
 fn default_scan_dirs() -> Vec<String> {
-    vec!["~/Product".to_string(), "~/Project".to_string()]
+    Vec::new()
 }
 
 fn default_ignore_patterns() -> Vec<String> {
@@ -391,7 +401,7 @@ impl Default for UptimeConfig {
 }
 
 fn default_telegram_alerts_enabled() -> bool {
-    true
+    false
 }
 
 /// A custom Uptime Kuma style endpoint monitor definition.
@@ -458,7 +468,8 @@ pub struct AiProviderConfig {
 }
 
 fn default_ai_provider() -> String {
-    "9router".to_string()
+    // H-09: no default provider — users must configure [ai] explicitly.
+    String::new()
 }
 fn default_ai_timeout() -> u64 {
     30
@@ -467,7 +478,8 @@ fn default_ai_max_retries() -> u32 {
     1
 }
 fn default_fallback_chain() -> Vec<String> {
-    vec!["9router".to_string()]
+    // H-09: empty — no hardcoded fallback providers.
+    Vec::new()
 }
 pub fn default_audit_max_context_kb() -> usize {
     32
@@ -476,41 +488,9 @@ pub fn default_audit_context_limit_tokens() -> usize {
     8000
 }
 fn default_providers() -> std::collections::HashMap<String, AiProviderConfig> {
-    let mut m = std::collections::HashMap::new();
-    let mk = |base: &str, key: &str, model: &str| AiProviderConfig {
-        base_url: base.to_string(),
-        api_key: key.to_string(),
-        default_model: model.to_string(),
-    };
-    m.insert(
-        "9router".to_string(),
-        mk("http://localhost:20128/v1", "", ""),
-    );
-    m.insert(
-        "omniroute".to_string(),
-        mk(
-            "http://100.76.150.46:3007/v1",
-            "env:OMNIROUTE_API_KEY",
-            "auto",
-        ),
-    );
-    m.insert(
-        "openai".to_string(),
-        mk("https://api.openai.com/v1", "env:OPENAI_API_KEY", "gpt-4o"),
-    );
-    m.insert(
-        "anthropic".to_string(),
-        mk(
-            "https://api.anthropic.com/v1",
-            "env:ANTHROPIC_API_KEY",
-            "claude-3-5-sonnet-20241022",
-        ),
-    );
-    m.insert(
-        "local".to_string(),
-        mk("http://127.0.0.1:11434/api", "", "qwen2.5-coder:7b"),
-    );
-    m
+    // H-09: no default providers or URLs. All [ai] provider entries must come
+    // from user config; no private hosts are ever baked in.
+    std::collections::HashMap::new()
 }
 
 impl Default for AiConfig {
@@ -555,7 +535,8 @@ impl Default for DoctorConfig {
 }
 
 fn default_doctor_target() -> String {
-    "100.76.150.46".to_string()
+    // H-09: no hardcoded doctor target — must come from user config.
+    String::new()
 }
 
 fn default_doctor_target_port() -> u16 {
@@ -598,11 +579,11 @@ impl Default for PersonaConfig {
 }
 
 fn default_user_name() -> String {
-    std::env::var("USER").unwrap_or_else(|_| "Developer".to_string())
+    String::new()
 }
 
 fn default_assistant_role() -> String {
-    "Kamu adalah AI Operations Assistant. Terse, cekatan, dan solutif.".to_string()
+    String::new()
 }
 
 /// SQLite database persistence & retention policy.
@@ -628,16 +609,13 @@ fn default_retention_days() -> u32 {
 }
 
 fn default_auto_prune() -> bool {
-    true
+    false
 }
 
 impl Config {
     /// Returns the default config file path.
     pub fn default_path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from(".config"))
-            .join("cashell")
-            .join("config.toml")
+        crate::paths::config_path()
     }
 
     /// Load config from file (or create default).
@@ -725,7 +703,29 @@ impl Default for ProConfig {
 }
 
 fn default_pro_api_base() -> String {
-    "https://api.fathforce.com".to_string()
+    String::new()
+}
+
+/// License / GCC activation endpoint configuration.
+///
+/// Single source of truth for the GCC base URL used by the license client
+/// (L-01). The GCC license API lives under `{gcc_base_url}/api/v1/licenses/*`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LicenseConfig {
+    #[serde(default = "default_license_gcc_base_url")]
+    pub gcc_base_url: String,
+}
+
+impl Default for LicenseConfig {
+    fn default() -> Self {
+        Self {
+            gcc_base_url: default_license_gcc_base_url(),
+        }
+    }
+}
+
+fn default_license_gcc_base_url() -> String {
+    String::new()
 }
 
 fn default_pro_auto_sync() -> bool {
@@ -747,7 +747,7 @@ mod tests {
     #[test]
     fn test_pro_config_defaults() {
         let pro = ProConfig::default();
-        assert_eq!(pro.api_base, "https://api.fathforce.com");
+        assert_eq!(pro.api_base, "");
         assert_eq!(pro.account_email, "");
         assert!(pro.auto_sync);
         assert_eq!(pro.sync_interval_mins, 15);
@@ -764,7 +764,7 @@ mod tests {
         let cfg: Config = toml::from_str(toml_str).expect("deserialize failed");
         assert_eq!(cfg.pro.account_email, "dev@fathforce.com");
         assert_eq!(cfg.pro.sync_interval_mins, 30);
-        assert_eq!(cfg.pro.api_base, "https://api.fathforce.com");
+        assert_eq!(cfg.pro.api_base, "");
         assert!(cfg.pro.auto_sync);
         assert!(cfg.pro.sync_on_startup);
     }
@@ -774,7 +774,7 @@ mod tests {
         let uptime = UptimeConfig::default();
         assert_eq!(uptime.telegram_bot_token, "");
         assert_eq!(uptime.telegram_chat_id, "");
-        assert!(uptime.telegram_alerts_enabled);
+        assert!(!uptime.telegram_alerts_enabled);
 
         let toml_str = r#"
             [uptime]
@@ -784,7 +784,7 @@ mod tests {
         let cfg: Config = toml::from_str(toml_str).expect("deserialize failed");
         assert_eq!(cfg.uptime.telegram_bot_token, "123456:ABC-DEF");
         assert_eq!(cfg.uptime.telegram_chat_id, "987654321");
-        assert!(cfg.uptime.telegram_alerts_enabled);
+        assert!(!cfg.uptime.telegram_alerts_enabled);
 
         let toml_empty = r#"
             [uptime]

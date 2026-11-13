@@ -15,7 +15,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub const DEFAULT_VAULT_PATH: &str = "/run/media/cecepazhar/DATA/11_NOTES/Notes";
+pub const DEFAULT_VAULT_PATH: &str = "~/.local/share/cashell/vault";
 
 /// Query search hit.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -65,7 +65,10 @@ impl Drop for FileLock {
 }
 
 pub fn run(cmd: &VaultCommand) -> Result<i32> {
-    let vault_path = PathBuf::from(DEFAULT_VAULT_PATH);
+    let raw =
+        std::env::var("CASHELL_VAULT_PATH").unwrap_or_else(|_| DEFAULT_VAULT_PATH.to_string());
+    let expanded = raw.replace("~", &crate::paths::home_dir().to_string_lossy());
+    let vault_path = PathBuf::from(expanded);
 
     match &cmd.mode {
         VaultMode::Sync => sync(&vault_path),

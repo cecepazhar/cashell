@@ -28,9 +28,7 @@ pub struct RepoStatus {
 /// Expand tilde in paths.
 fn expand_tilde(path: &str) -> PathBuf {
     if let Some(stripped) = path.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(stripped);
-        }
+        return crate::paths::home_dir().join(stripped);
     }
     PathBuf::from(path)
 }
@@ -316,7 +314,7 @@ mod tests {
 
     #[test]
     fn test_expand_tilde() {
-        let home = dirs::home_dir().unwrap();
+        let home = crate::paths::home_dir();
         assert_eq!(expand_tilde("~/test"), home.join("test"));
         assert_eq!(
             expand_tilde("/absolute/path"),

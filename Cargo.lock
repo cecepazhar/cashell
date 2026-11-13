@@ -252,7 +252,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "caorch"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "anyhow",
  "axum",
@@ -262,11 +262,13 @@ dependencies = [
  "dirs",
  "ed25519-dalek",
  "hex",
+ "hmac",
  "rand 0.8.8",
  "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "sysinfo",
  "tokio",
  "toml",
@@ -308,10 +310,11 @@ dependencies = [
 
 [[package]]
 name = "cashell-common"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "chrono",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -40,9 +40,8 @@ impl HwidGenerator {
     /// Create a generator that caches the HWID at `~/.local/share/cashell/hwid`
     /// (Linux) or platform-appropriate data directory.
     pub fn new() -> Self {
-        let cache_dir = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
         Self {
-            cache_path: cache_dir.join("cashell").join("hwid"),
+            cache_path: crate::paths::hwid_path(),
         }
     }
 
@@ -82,7 +81,8 @@ impl HwidGenerator {
             })
             .unwrap_or_else(|| {
                 // Secondary fallback: hostname + system info
-                let hostname = std::env::var("HOSTNAME").unwrap_or_else(|_| "localhost".to_string());
+                let hostname =
+                    std::env::var("HOSTNAME").unwrap_or_else(|_| "localhost".to_string());
                 let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
                 format!("fallback-{hostname}-{user}")
             });
@@ -153,6 +153,11 @@ impl JwtClaims {
 }
 
 /// URL-safe base64 encoding without padding.
+#[doc(hidden)]
+pub fn b64_url_encode_public(data: &[u8]) -> String {
+    b64_url_encode(data)
+}
+
 fn b64_url_encode(data: &[u8]) -> String {
     use base64ct::{Base64UrlUnpadded, Encoding};
     Base64UrlUnpadded::encode_string(data)
@@ -162,8 +167,7 @@ fn b64_url_encode(data: &[u8]) -> String {
 fn b64_url_decode(s: &str) -> Result<Vec<u8>> {
     use base64ct::{Base64UrlUnpadded, Encoding};
     let trimmed = s.trim_end_matches('=');
-    Base64UrlUnpadded::decode_vec(trimmed)
-        .map_err(|e| anyhow!("base64url decode failed: {e}"))
+    Base64UrlUnpadded::decode_vec(trimmed).map_err(|e| anyhow!("base64url decode failed: {e}"))
 }
 
 /// Sign and produce a JWT (HS256).
@@ -176,8 +180,8 @@ pub fn sign_jwt(claims: &JwtClaims, secret: &[u8]) -> Result<String> {
     let claims_b64 = b64_url_encode(&claims_json);
     let signing_input = format!("{header_b64}.{claims_b64}");
 
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret)
-        .map_err(|e| anyhow!("hmac init error: {e}"))?;
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(secret).map_err(|e| anyhow!("hmac init error: {e}"))?;
     mac.update(signing_input.as_bytes());
     let sig = mac.finalize().into_bytes();
     let sig_b64 = b64_url_encode(&sig);
@@ -193,8 +197,8 @@ pub fn verify_jwt(token: &str, secret: &[u8]) -> Result<JwtClaims> {
     }
 
     let signing_input = format!("{}.{}", parts[0], parts[1]);
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret)
-        .map_err(|e| anyhow!("hmac init error: {e}"))?;
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(secret).map_err(|e| anyhow!("hmac init error: {e}"))?;
     mac.update(signing_input.as_bytes());
     let expected_sig = mac.finalize().into_bytes();
 
@@ -206,11 +210,7 @@ pub fn verify_jwt(token: &str, secret: &[u8]) -> Result<JwtClaims> {
     let claims_bytes = b64_url_decode(parts[1])?;
     let claims: JwtClaims = serde_json::from_slice(&claims_bytes)?;
     if claims.is_expired() {
-        bail!(
-            "jwt has expired (exp: {}, now: {})",
-            claims.exp,
-            now_unix()
-        );
+        bail!("jwt has expired (exp: {}, now: {})", claims.exp, now_unix());
     }
     Ok(claims)
 }
@@ -374,8 +374,9 @@ impl SessionManager {
             bail!("refresh failed with HTTP status: {}", resp.status());
         }
 
-        let body: serde_json::Value =
-            resp.json().map_err(|e| anyhow!("invalid json response: {e}"))?;
+        let body: serde_json::Value = resp
+            .json()
+            .map_err(|e| anyhow!("invalid json response: {e}"))?;
         let new_access = body
             .get("access_token")
             .and_then(|v| v.as_str())
@@ -415,10 +416,7 @@ impl SessionManager {
 
     /// Return the standard path for persisting the Pro session (`~/.config/cashell/pro_session.json`).
     pub fn default_path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from(".config"))
-            .join("cashell")
-            .join("pro_session.json")
+        crate::paths::pro_session_path()
     }
 
     /// Load the session from the default file path.
@@ -476,7 +474,8 @@ impl Ed25519Verifier {
         }
         let mut arr = [0u8; 32];
         arr.copy_from_slice(&bytes);
-        let key = VerifyingKey::from_bytes(&arr).map_err(|e| anyhow!("invalid ed25519 public key: {e}"))?;
+        let key = VerifyingKey::from_bytes(&arr)
+            .map_err(|e| anyhow!("invalid ed25519 public key: {e}"))?;
         Ok(Self {
             key,
             public_key_hex: hex_key.trim().to_lowercase(),
@@ -521,8 +520,7 @@ pub struct FastBootCache {
 
 impl FastBootCache {
     pub fn path() -> PathBuf {
-        let dir = dirs::cache_dir().unwrap_or_else(|| PathBuf::from("."));
-        dir.join("cashell").join("pro-fastboot.json")
+        crate::paths::fastboot_cache_path()
     }
 
     /// Load the cache from disk; returns `None` if absent or corrupt.
@@ -611,9 +609,13 @@ mod tests {
     fn test_session_manager_jwt_durations() {
         let hwid = "test-hwid-abc";
         let secret = b"super-secret-key-for-testing-123";
-        let sm =
-            SessionManager::create_session("cecep@fathforce.com", hwid, "https://api.fathforce.com", secret)
-                .expect("create session");
+        let sm = SessionManager::create_session(
+            "cecep@fathforce.com",
+            hwid,
+            "https://api.fathforce.com",
+            secret,
+        )
+        .expect("create session");
 
         assert!(!sm.is_access_expired());
         assert!(!sm.is_refresh_expired());

@@ -92,8 +92,7 @@ fn resolve_passphrase(flag_val: Option<&str>) -> Result<String> {
         }
     }
     if crate::output::is_tty() {
-        let p =
-            prompt_secret("Zero-knowledge master passphrase (leave empty for trial): ")?;
+        let p = prompt_secret("Zero-knowledge master passphrase (leave empty for trial): ")?;
         return Ok(p);
     }
     Ok(String::new())
@@ -185,6 +184,12 @@ fn run_login(args: &ProLoginArgs, cfg: &Config) -> Result<i32> {
         .clone()
         .unwrap_or_else(|| cfg.pro.api_base.clone());
 
+    if api_base.trim().is_empty() {
+        return Err(anyhow!(
+            "pro.api_base is empty — set [pro] api_base in config or pass --api-base"
+        ));
+    }
+
     let hwid = hwid()?;
     let now_unix = now_unix_ts();
 
@@ -192,12 +197,7 @@ fn run_login(args: &ProLoginArgs, cfg: &Config) -> Result<i32> {
         let secret = format!("cashell-trial-{hwid}");
         SessionManager::create_session(&email, &hwid, &api_base, secret.as_bytes())?
     } else {
-        SessionManager::new(
-            token.clone(),
-            String::new(),
-            hwid.clone(),
-            api_base.clone(),
-        )
+        SessionManager::new(token.clone(), String::new(), hwid.clone(), api_base.clone())
     };
 
     sm.save_default()?;
@@ -232,13 +232,7 @@ fn run_login(args: &ProLoginArgs, cfg: &Config) -> Result<i32> {
     if let Ok(db) = crate::db::Database::open() {
         let extra =
             serde_json::json!({ "email": &email, "api_base": &api_base, "is_trial": is_trial });
-        let _ = db.upsert_pro_device(
-            &device_id,
-            &label,
-            "active",
-            None,
-            Some(&extra.to_string()),
-        );
+        let _ = db.upsert_pro_device(&device_id, &label, "active", None, Some(&extra.to_string()));
     }
 
     if wants_json(args.json) {
@@ -261,7 +255,9 @@ fn run_login(args: &ProLoginArgs, cfg: &Config) -> Result<i32> {
         };
         println!(
             "{}",
-            format!("✓ Pro account activated for {email} — {badge}").green().bold()
+            format!("✓ Pro account activated for {email} — {badge}")
+                .green()
+                .bold()
         );
         println!("  {} {}", "HWID:".cyan().bold(), hwid);
         println!(
@@ -336,7 +332,11 @@ fn run_status(args: &ProStatusArgs, cfg: &Config) -> Result<i32> {
         println!("  API base:    {}", cfg.pro.api_base);
         println!(
             "  Auto-sync:   {} ({})",
-            if cfg.pro.auto_sync { "ON".to_string() } else { "OFF".to_string() },
+            if cfg.pro.auto_sync {
+                "ON".to_string()
+            } else {
+                "OFF".to_string()
+            },
             cfg.pro.sync_interval_mins,
         );
         if let Some(sm) = &session {
@@ -390,6 +390,9 @@ fn run_sync(args: &ProSyncArgs, cfg: &Config) -> Result<i32> {
         eprintln!("warning: pull failed ({e}) — continuing with local-only sync.");
         None
     });
+
+    // TODO(T-07): gate multi-user Telegram alerts behind Pro entitlements
+    // (crate::entitlements::current().is_pro).
 
     let local_vault_path = crate::sync::ZERO_KNOWLEDGE_VAULT_PATH.to_string();
     let local = std::fs::read_to_string(&local_vault_path).unwrap_or_default();
@@ -455,7 +458,12 @@ fn run_sync(args: &ProSyncArgs, cfg: &Config) -> Result<i32> {
     } else {
         println!(
             "{}",
-            format!("✓ GCC sync complete (vault: {} bytes, pushed={pushed})", merged.len()).green().bold()
+            format!(
+                "✓ GCC sync complete (vault: {} bytes, pushed={pushed})",
+                merged.len()
+            )
+            .green()
+            .bold()
         );
         if !remote_text.is_empty() && remote_text != local {
             println!(
@@ -612,27 +620,20 @@ fn devices_list(args: &ProDevicesListArgs) -> Result<i32> {
     if wants_json(args.json) {
         let json: Vec<DeviceJson> = rows
             .into_iter()
-            .map(
-                |d| DeviceJson {
-                    device_id: d.device_id,
-                    device_label: d.device_label,
-                    status: d.status,
-                    last_seen: d.last_seen,
-                    last_error: d.last_error,
-                    updated_at: d.updated_at,
-                },
-            )
+            .map(|d| DeviceJson {
+                device_id: d.device_id,
+                device_label: d.device_label,
+                status: d.status,
+                last_seen: d.last_seen,
+                last_error: d.last_error,
+                updated_at: d.updated_at,
+            })
             .collect();
         println!("{}", serde_json::to_string_pretty(&json)?);
     } else {
         println!("{}", "Registered Pro devices:".bold());
         for d in &rows {
-            println!(
-                "  [{}] {}  ({})",
-                d.status,
-                d.device_label,
-                d.device_id
-            );
+            println!("  [{}] {}  ({})", d.status, d.device_label, d.device_id);
         }
     }
     Ok(0)
@@ -667,7 +668,10 @@ fn run_logout(args: &ProLogoutArgs, cfg: &Config) -> Result<i32> {
     }
 
     if wants_json(args.json) {
-        println!("{}", serde_json::json!({ "logout": "ok", "hwid": hwid_val }));
+        println!(
+            "{}",
+            serde_json::json!({ "logout": "ok", "hwid": hwid_val })
+        );
     } else {
         println!(
             "{} Pro session revoked and fast-boot cache invalidated.",
