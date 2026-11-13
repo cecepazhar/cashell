@@ -995,9 +995,8 @@ pub async fn probe_all(
 
 pub fn expand_tilde(path: &str) -> String {
     if let Some(stripped) = path.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(stripped).to_string_lossy().to_string();
-        }
+        let home = crate::paths::home_dir();
+        return home.join(stripped).to_string_lossy().to_string();
     }
     path.to_string()
 }
@@ -1109,6 +1108,12 @@ pub fn periodic_license_verify(cfg: &Config) {
         return;
     }
 
+    // R-05: default config no longer bakes in a GCC host — skip verify when
+    // no base URL is configured (user must set [license] gcc_base_url).
+    if cfg.license.gcc_base_url.is_empty() {
+        return;
+    }
+
     match crate::license_local::verify_license(&lic, &cfg.license.gcc_base_url) {
         Ok(()) => {
             eprintln!("ℹ License verified against GCC.");
@@ -1148,6 +1153,19 @@ fn run_daemon(cfg: &Config, port_opt: Option<u16>, interval_opt: Option<u64>) ->
         interval,
         threshold
     );
+
+    // R-03: write PID file so `cashell reset` can stop the daemon (SIGTERM ≤ 10s).
+    let pid_path = crate::paths::daemon_pid_path();
+    if let Some(parent) = pid_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(e) = std::fs::write(&pid_path, std::process::id().to_string()) {
+        eprintln!(
+            "{} failed writing PID file {}: {e}",
+            "⚠".yellow(),
+            pid_path.display()
+        );
+    }
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -1393,13 +1411,9 @@ fn run_restart(cfg: &Config, node: &str, service: &str) -> Result<()> {
 
 pub fn service_unit_path(user: bool) -> std::path::PathBuf {
     if user {
-        dirs::config_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from(".config"))
-            .join("systemd")
-            .join("user")
-            .join("cashell-daemon.service")
+        crate::paths::user_systemd_unit()
     } else {
-        std::path::PathBuf::from("/etc/systemd/system/cashell-daemon.service")
+        crate::paths::system_systemd_unit()
     }
 }
 
@@ -1442,7 +1456,7 @@ WantedBy=multi-user.target
 fn run_install_service(user: bool) -> Result<()> {
     // H-01: ensure daemon.auth token exists before installing the service.
     // Generate a 32-byte random base64url token and persist it to config (0600).
-    let cfg_path = crate::config::Config::default_path();
+    let cfg_path = crate::paths::config_path();
     let mut cfg = crate::config::Config::load(None)?;
     if cfg.daemon.token.is_empty() {
         let mut buf = [0u8; 32];
@@ -1630,7 +1644,7 @@ mod tests {
         assert_eq!(cfg.daemon.interval_secs, 60);
         assert_eq!(cfg.daemon.retry_threshold, 3);
         assert_eq!(cfg.daemon.ssh_key_path, "~/.ssh/id_ed25519");
-        assert!(cfg.daemon.nodes.contains_key("local"));
+        assert!(cfg.daemon.nodes.is_empty());
     }
 
     // ── H-01: check_auth fail-closed ───────────────────────────────────────────

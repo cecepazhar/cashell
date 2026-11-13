@@ -12,6 +12,7 @@ pub mod entitlements;
 pub mod license_gcc;
 pub mod license_local;
 pub mod output;
+pub mod paths;
 pub mod pet;
 pub mod pro;
 pub mod sync;

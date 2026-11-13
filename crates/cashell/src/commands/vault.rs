@@ -65,12 +65,9 @@ impl Drop for FileLock {
 }
 
 pub fn run(cmd: &VaultCommand) -> Result<i32> {
-    let raw = std::env::var("CASHELL_VAULT_PATH").unwrap_or_else(|_| DEFAULT_VAULT_PATH.to_string());
-    let expanded = if let Some(home) = dirs::home_dir() {
-        raw.replace("~", &home.to_string_lossy())
-    } else {
-        raw
-    };
+    let raw =
+        std::env::var("CASHELL_VAULT_PATH").unwrap_or_else(|_| DEFAULT_VAULT_PATH.to_string());
+    let expanded = raw.replace("~", &crate::paths::home_dir().to_string_lossy());
     let vault_path = PathBuf::from(expanded);
 
     match &cmd.mode {

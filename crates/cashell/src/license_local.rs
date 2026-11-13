@@ -58,9 +58,12 @@ fn default_schema_v2() -> u32 {
 }
 
 /// Return the default license file path: `~/.local/share/cashell/license.json`.
+/// Resolved through [`crate::paths`] so the `CASHELL_HOME` test override applies.
 pub fn license_path() -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow!("no home directory"))?;
-    Ok(home.join(".local/share/cashell/license.json"))
+    if dirs::home_dir().is_none() {
+        return Err(anyhow!("no home directory"));
+    }
+    Ok(crate::paths::license_path())
 }
 
 /// Persist a license atomically (temp file + rename) with 0600 permissions.

@@ -183,22 +183,8 @@ fn default_protocol() -> String {
 }
 
 fn default_nodes() -> std::collections::HashMap<String, NodeConfig> {
-    let mut m = std::collections::HashMap::new();
-    let user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
-    m.insert(
-        "local".to_string(),
-        NodeConfig {
-            ip: "127.0.0.1".to_string(),
-            user,
-            services: vec![ServiceConfig {
-                name: "api".to_string(),
-                port: 8080,
-                protocol: "http".to_string(),
-            }],
-            active: true,
-        },
-    );
-    m
+    // R-05: empty default — no nodes/IPs baked into default config.
+    std::collections::HashMap::new()
 }
 
 fn default_remediation() -> std::collections::HashMap<String, String> {
@@ -318,30 +304,8 @@ pub struct DeployConfig {
 }
 
 fn default_deploy_apps() -> std::collections::HashMap<String, AppDeployConfig> {
-    let mut m = std::collections::HashMap::new();
-    // Default CA ecosystem apps. Replace UUIDs with real Coolify instance UUIDs.
-    m.insert(
-        "caterm".to_string(),
-        AppDeployConfig {
-            uuid: "caterm-app-uuid".to_string(),
-            app_type: "application".to_string(),
-        },
-    );
-    m.insert(
-        "fathstore".to_string(),
-        AppDeployConfig {
-            uuid: "fathstore-app-uuid".to_string(),
-            app_type: "application".to_string(),
-        },
-    );
-    m.insert(
-        "gcc".to_string(),
-        AppDeployConfig {
-            uuid: "gcc-app-uuid".to_string(),
-            app_type: "application".to_string(),
-        },
-    );
-    m
+    // R-05: empty default — UUIDs are per-instance, never baked in.
+    std::collections::HashMap::new()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -391,7 +355,7 @@ impl Default for WorkspaceConfig {
 }
 
 fn default_scan_dirs() -> Vec<String> {
-    vec!["~/Product".to_string(), "~/Project".to_string()]
+    Vec::new()
 }
 
 fn default_ignore_patterns() -> Vec<String> {
@@ -437,7 +401,7 @@ impl Default for UptimeConfig {
 }
 
 fn default_telegram_alerts_enabled() -> bool {
-    true
+    false
 }
 
 /// A custom Uptime Kuma style endpoint monitor definition.
@@ -615,11 +579,11 @@ impl Default for PersonaConfig {
 }
 
 fn default_user_name() -> String {
-    std::env::var("USER").unwrap_or_else(|_| "Developer".to_string())
+    String::new()
 }
 
 fn default_assistant_role() -> String {
-    "You are a concise operations assistant. Provide practical, direct answers.".to_string()
+    String::new()
 }
 
 /// SQLite database persistence & retention policy.
@@ -645,16 +609,13 @@ fn default_retention_days() -> u32 {
 }
 
 fn default_auto_prune() -> bool {
-    true
+    false
 }
 
 impl Config {
     /// Returns the default config file path.
     pub fn default_path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from(".config"))
-            .join("cashell")
-            .join("config.toml")
+        crate::paths::config_path()
     }
 
     /// Load config from file (or create default).
@@ -742,7 +703,7 @@ impl Default for ProConfig {
 }
 
 fn default_pro_api_base() -> String {
-    "https://api.fathforce.com".to_string()
+    String::new()
 }
 
 /// License / GCC activation endpoint configuration.
@@ -764,7 +725,7 @@ impl Default for LicenseConfig {
 }
 
 fn default_license_gcc_base_url() -> String {
-    "https://gcc.fathforce.com".to_string()
+    String::new()
 }
 
 fn default_pro_auto_sync() -> bool {
@@ -786,7 +747,7 @@ mod tests {
     #[test]
     fn test_pro_config_defaults() {
         let pro = ProConfig::default();
-        assert_eq!(pro.api_base, "https://api.fathforce.com");
+        assert_eq!(pro.api_base, "");
         assert_eq!(pro.account_email, "");
         assert!(pro.auto_sync);
         assert_eq!(pro.sync_interval_mins, 15);
@@ -803,7 +764,7 @@ mod tests {
         let cfg: Config = toml::from_str(toml_str).expect("deserialize failed");
         assert_eq!(cfg.pro.account_email, "dev@fathforce.com");
         assert_eq!(cfg.pro.sync_interval_mins, 30);
-        assert_eq!(cfg.pro.api_base, "https://api.fathforce.com");
+        assert_eq!(cfg.pro.api_base, "");
         assert!(cfg.pro.auto_sync);
         assert!(cfg.pro.sync_on_startup);
     }
@@ -813,7 +774,7 @@ mod tests {
         let uptime = UptimeConfig::default();
         assert_eq!(uptime.telegram_bot_token, "");
         assert_eq!(uptime.telegram_chat_id, "");
-        assert!(uptime.telegram_alerts_enabled);
+        assert!(!uptime.telegram_alerts_enabled);
 
         let toml_str = r#"
             [uptime]
@@ -823,7 +784,7 @@ mod tests {
         let cfg: Config = toml::from_str(toml_str).expect("deserialize failed");
         assert_eq!(cfg.uptime.telegram_bot_token, "123456:ABC-DEF");
         assert_eq!(cfg.uptime.telegram_chat_id, "987654321");
-        assert!(cfg.uptime.telegram_alerts_enabled);
+        assert!(!cfg.uptime.telegram_alerts_enabled);
 
         let toml_empty = r#"
             [uptime]

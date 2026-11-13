@@ -122,10 +122,7 @@ pub struct Database {
 impl Database {
     /// Return the default SQLite database path (`~/.config/cashell/cashell.db`).
     pub fn default_path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from(".config"))
-            .join("cashell")
-            .join("cashell.db")
+        crate::paths::db_path()
     }
 
     /// Open or create the database at the default path.
@@ -357,14 +354,38 @@ impl Database {
             .collect();
 
         let audit_migrations = [
-            ("project_name", "ALTER TABLE audit_reports ADD COLUMN project_name TEXT DEFAULT ''"),
-            ("score", "ALTER TABLE audit_reports ADD COLUMN score INTEGER DEFAULT 100"),
-            ("medium_count", "ALTER TABLE audit_reports ADD COLUMN medium_count INTEGER DEFAULT 0"),
-            ("low_count", "ALTER TABLE audit_reports ADD COLUMN low_count INTEGER DEFAULT 0"),
-            ("info_count", "ALTER TABLE audit_reports ADD COLUMN info_count INTEGER DEFAULT 0"),
-            ("user_prompt", "ALTER TABLE audit_reports ADD COLUMN user_prompt TEXT DEFAULT ''"),
-            ("tuned_prompt", "ALTER TABLE audit_reports ADD COLUMN tuned_prompt TEXT DEFAULT ''"),
-            ("report_markdown", "ALTER TABLE audit_reports ADD COLUMN report_markdown TEXT DEFAULT ''"),
+            (
+                "project_name",
+                "ALTER TABLE audit_reports ADD COLUMN project_name TEXT DEFAULT ''",
+            ),
+            (
+                "score",
+                "ALTER TABLE audit_reports ADD COLUMN score INTEGER DEFAULT 100",
+            ),
+            (
+                "medium_count",
+                "ALTER TABLE audit_reports ADD COLUMN medium_count INTEGER DEFAULT 0",
+            ),
+            (
+                "low_count",
+                "ALTER TABLE audit_reports ADD COLUMN low_count INTEGER DEFAULT 0",
+            ),
+            (
+                "info_count",
+                "ALTER TABLE audit_reports ADD COLUMN info_count INTEGER DEFAULT 0",
+            ),
+            (
+                "user_prompt",
+                "ALTER TABLE audit_reports ADD COLUMN user_prompt TEXT DEFAULT ''",
+            ),
+            (
+                "tuned_prompt",
+                "ALTER TABLE audit_reports ADD COLUMN tuned_prompt TEXT DEFAULT ''",
+            ),
+            (
+                "report_markdown",
+                "ALTER TABLE audit_reports ADD COLUMN report_markdown TEXT DEFAULT ''",
+            ),
         ];
 
         for (col, sql) in audit_migrations {
@@ -397,9 +418,9 @@ impl Database {
 
     /// Load the most recent `limit` messages in chronological order.
     pub fn load_recent_chat(&self, limit: usize) -> Result<Vec<(String, String)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT role, content FROM ai_chat ORDER BY id DESC LIMIT ?1",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT role, content FROM ai_chat ORDER BY id DESC LIMIT ?1")?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
@@ -509,7 +530,13 @@ impl Database {
     }
 
     /// Register a node with its public key.
-    pub fn register_node(&self, node_id: &str, display_name: &str, ip: &str, pubkey: &str) -> Result<()> {
+    pub fn register_node(
+        &self,
+        node_id: &str,
+        display_name: &str,
+        ip: &str,
+        pubkey: &str,
+    ) -> Result<()> {
         self.conn.execute(
             "INSERT INTO registered_nodes (node_id, display_name, ip, pubkey, last_seen)
              VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
@@ -652,12 +679,18 @@ impl Database {
 
     /// Add XP to active pet and advance stage if threshold reached.
     pub fn add_pet_xp(&self, id: i64, xp_to_add: i64) -> Result<()> {
-        let mut stmt = self.conn.prepare(
-            "SELECT species, stage, xp FROM pets WHERE id = ?1"
-        )?;
-        let pet_opt = stmt.query_row(params![id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
-        }).ok();
+        let mut stmt = self
+            .conn
+            .prepare("SELECT species, stage, xp FROM pets WHERE id = ?1")?;
+        let pet_opt = stmt
+            .query_row(params![id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })
+            .ok();
 
         if let Some((_species, current_stage, current_xp)) = pet_opt {
             let new_xp = current_xp + xp_to_add;
@@ -723,7 +756,8 @@ impl Database {
 
     /// Delete a cron job by id.
     pub fn delete_cron_job(&self, id: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM cron_jobs WHERE id = ?1", params![id])?;
+        self.conn
+            .execute("DELETE FROM cron_jobs WHERE id = ?1", params![id])?;
         Ok(())
     }
 
@@ -737,7 +771,13 @@ impl Database {
     }
 
     /// Log a pet interaction event.
-    pub fn log_pet_action(&self, pet_id: i64, pet_name: &str, action_type: &str, detail: &str) -> Result<()> {
+    pub fn log_pet_action(
+        &self,
+        pet_id: i64,
+        pet_name: &str,
+        action_type: &str,
+        detail: &str,
+    ) -> Result<()> {
         self.conn.execute(
             "INSERT INTO pet_action_logs (pet_id, pet_name, action_type, detail) VALUES (?1, ?2, ?3, ?4)",
             params![pet_id, pet_name, action_type, detail],
@@ -801,7 +841,14 @@ impl Database {
     }
 
     /// Add or update a tracked project folder in SQLite.
-    pub fn add_tracked_project(&self, path: &str, name: &str, category: &str, branch: &str, is_dirty: bool) -> Result<()> {
+    pub fn add_tracked_project(
+        &self,
+        path: &str,
+        name: &str,
+        category: &str,
+        branch: &str,
+        is_dirty: bool,
+    ) -> Result<()> {
         self.conn.execute(
             "INSERT INTO tracked_projects (path, name, category, branch, is_dirty)
              VALUES (?1, ?2, ?3, ?4, ?5)
@@ -817,7 +864,9 @@ impl Database {
 
     /// Retrieve all tracked projects from SQLite.
     pub fn get_tracked_projects(&self) -> Result<Vec<TrackedProjectRecord>> {
-        let mut stmt = self.conn.prepare("SELECT path, name, category, branch, is_dirty FROM tracked_projects ORDER BY name")?;
+        let mut stmt = self.conn.prepare(
+            "SELECT path, name, category, branch, is_dirty FROM tracked_projects ORDER BY name",
+        )?;
         let rows = stmt.query_map([], |row| {
             let path: String = row.get(0)?;
             let name: Option<String> = row.get(1)?;
@@ -826,7 +875,9 @@ impl Database {
             let dirty: i64 = row.get(4).unwrap_or(0);
             Ok(TrackedProjectRecord {
                 path: path.clone(),
-                name: name.unwrap_or_else(|| path.split('/').next_back().unwrap_or("project").to_string()),
+                name: name.unwrap_or_else(|| {
+                    path.split('/').next_back().unwrap_or("project").to_string()
+                }),
                 category: cat.unwrap_or_else(|| "Project".to_string()),
                 branch: branch.unwrap_or_else(|| "main".to_string()),
                 is_dirty: dirty != 0,
@@ -851,10 +902,10 @@ impl Database {
 
     /// Retrieve all custom uptime monitors from SQLite.
     pub fn get_uptime_monitors(&self) -> Result<Vec<(String, String)>> {
-        let mut stmt = self.conn.prepare("SELECT name, target FROM uptime_monitors ORDER BY name")?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name, target FROM uptime_monitors ORDER BY name")?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
         let mut list = Vec::new();
         for r in rows {
             list.push(r?);
@@ -863,7 +914,13 @@ impl Database {
     }
 
     /// Save a Docker container run record in SQLite.
-    pub fn add_docker_container(&self, name: &str, image: &str, ports: &str, env: &str) -> Result<()> {
+    pub fn add_docker_container(
+        &self,
+        name: &str,
+        image: &str,
+        ports: &str,
+        env: &str,
+    ) -> Result<()> {
         self.conn.execute(
             "INSERT INTO docker_containers (name, image, ports, env) VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(name) DO UPDATE SET image = excluded.image, ports = excluded.ports, env = excluded.env",
@@ -874,9 +931,16 @@ impl Database {
 
     /// Retrieve all recorded Docker containers from SQLite.
     pub fn get_docker_containers(&self) -> Result<Vec<(String, String, String, String)>> {
-        let mut stmt = self.conn.prepare("SELECT name, image, ports, env FROM docker_containers ORDER BY name")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name, image, ports, env FROM docker_containers ORDER BY name")?;
         let rows = stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get::<_, Option<String>>(2)?.unwrap_or_default(), row.get::<_, Option<String>>(3)?.unwrap_or_default()))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+            ))
         })?;
         let mut list = Vec::new();
         for r in rows {
@@ -895,25 +959,36 @@ impl Database {
 
     /// Remove a tracked project from the `tracked_projects` table.
     pub fn delete_tracked_project(&self, path: &str) -> Result<usize> {
-        let n = self.conn.execute("DELETE FROM tracked_projects WHERE path = ?1", params![path])?;
+        let n = self.conn.execute(
+            "DELETE FROM tracked_projects WHERE path = ?1",
+            params![path],
+        )?;
         Ok(n)
     }
 
     /// Remove an uptime monitor from the `uptime_monitors` table.
     pub fn delete_uptime_monitor(&self, name: &str) -> Result<usize> {
-        let n = self.conn.execute("DELETE FROM uptime_monitors WHERE name = ?1", params![name])?;
+        let n = self
+            .conn
+            .execute("DELETE FROM uptime_monitors WHERE name = ?1", params![name])?;
         Ok(n)
     }
 
     /// Remove a docker container record from the `docker_containers` table.
     pub fn delete_docker_container(&self, name: &str) -> Result<usize> {
-        let n = self.conn.execute("DELETE FROM docker_containers WHERE name = ?1", params![name])?;
+        let n = self.conn.execute(
+            "DELETE FROM docker_containers WHERE name = ?1",
+            params![name],
+        )?;
         Ok(n)
     }
 
     /// Remove a registered node from the `registered_nodes` table.
     pub fn delete_registered_node(&self, node_id: &str) -> Result<usize> {
-        let n = self.conn.execute("DELETE FROM registered_nodes WHERE node_id = ?1", params![node_id])?;
+        let n = self.conn.execute(
+            "DELETE FROM registered_nodes WHERE node_id = ?1",
+            params![node_id],
+        )?;
         Ok(n)
     }
 
@@ -946,7 +1021,11 @@ impl Database {
     }
 
     /// Retrieve audit reports for a specific project repository path, newest first.
-    pub fn get_audit_reports_for_repo(&self, repo_path: &str, limit: usize) -> Result<Vec<AuditReportRecord>> {
+    pub fn get_audit_reports_for_repo(
+        &self,
+        repo_path: &str,
+        limit: usize,
+    ) -> Result<Vec<AuditReportRecord>> {
         let canonical = std::fs::canonicalize(repo_path)
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| repo_path.to_string());
@@ -960,7 +1039,7 @@ impl Database {
                     COALESCE(created_at, '')
              FROM audit_reports
              WHERE repo_path = ?1 OR repo_path = ?2
-             ORDER BY id DESC LIMIT ?3"
+             ORDER BY id DESC LIMIT ?3",
         )?;
         let rows = stmt.query_map(params![repo_path, canonical, limit as i64], |row| {
             Ok(AuditReportRecord {
@@ -997,7 +1076,7 @@ impl Database {
                     COALESCE(tuned_prompt, ''), COALESCE(report_markdown, ''),
                     COALESCE(created_at, '')
              FROM audit_reports
-             ORDER BY id DESC LIMIT ?1"
+             ORDER BY id DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             Ok(AuditReportRecord {
@@ -1033,7 +1112,13 @@ impl Database {
              ORDER BY max(created_at) DESC"
         )?;
         let rows = stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
         })?;
         let mut list = Vec::new();
         for r in rows {
@@ -1044,7 +1129,9 @@ impl Database {
 
     /// Delete a single audit report record by ID.
     pub fn delete_audit_report(&self, id: i64) -> Result<usize> {
-        let n = self.conn.execute("DELETE FROM audit_reports WHERE id = ?1", params![id])?;
+        let n = self
+            .conn
+            .execute("DELETE FROM audit_reports WHERE id = ?1", params![id])?;
         Ok(n)
     }
 
@@ -1061,7 +1148,9 @@ impl Database {
 
     /// Fetch all registered websites from `analytics_websites`.
     pub fn get_analytic_sites(&self) -> Result<Vec<crate::systat::AnalyticSiteItem>> {
-        let mut stmt = self.conn.prepare("SELECT id, name, domain FROM analytics_websites ORDER BY name")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, name, domain FROM analytics_websites ORDER BY name")?;
         let rows = stmt
             .query_map([], |row| {
                 Ok(crate::systat::AnalyticSiteItem {
@@ -1076,7 +1165,9 @@ impl Database {
 
     /// Delete a website from the `analytics_websites` tracking table.
     pub fn delete_analytic_site(&self, id: &str) -> Result<usize> {
-        let n = self.conn.execute("DELETE FROM analytics_websites WHERE id = ?1", params![id])?;
+        let n = self
+            .conn
+            .execute("DELETE FROM analytics_websites WHERE id = ?1", params![id])?;
         Ok(n)
     }
 
@@ -1114,8 +1205,8 @@ impl Database {
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             rows
         };
-        let mut json_str =
-            serde_json::to_string_pretty(&events).context("Failed to serialize analytics events to JSON")?;
+        let mut json_str = serde_json::to_string_pretty(&events)
+            .context("Failed to serialize analytics events to JSON")?;
         json_str.push('\n');
         std::fs::write(path, json_str)?;
         Ok(events.len() as u64)
@@ -1124,7 +1215,8 @@ impl Database {
     /// Export all analytics events to a CSV file.
     pub fn export_analytics_csv(&self, path: &str) -> Result<u64> {
         let mut csv_lines = vec![
-            "website_id,session_id,url,referrer,page_title,browser,os,device,country,created_at".to_string(),
+            "website_id,session_id,url,referrer,page_title,browser,os,device,country,created_at"
+                .to_string(),
         ];
         let mut stmt = self.conn.prepare(
             "SELECT website_id, session_id, url, referrer, page_title, browser, os, device, country, created_at
@@ -1241,14 +1333,19 @@ impl Database {
     }
 
     /// Query scroll depth distribution: for each threshold, how many sessions reached it.
-    pub fn get_scroll_depth_distribution(&self, website_id: Option<&str>) -> Result<Vec<(i32, u64)>> {
+    pub fn get_scroll_depth_distribution(
+        &self,
+        website_id: Option<&str>,
+    ) -> Result<Vec<(i32, u64)>> {
         let ref_val = website_id;
         let mut stmt = self.conn.prepare(
             "SELECT scroll_depth, COUNT(*) as c FROM analytics_events
              WHERE (?1 IS NULL OR website_id = ?1) AND event_type = 'scroll_depth' AND scroll_depth IS NOT NULL
              GROUP BY scroll_depth ORDER BY scroll_depth ASC",
         )?;
-        let rows = stmt.query_map(params![ref_val], |row| Ok((row.get::<_, i32>(0)?, row.get::<_, u64>(1)?)))?;
+        let rows = stmt.query_map(params![ref_val], |row| {
+            Ok((row.get::<_, i32>(0)?, row.get::<_, u64>(1)?))
+        })?;
         let mut result = Vec::new();
         for row in rows {
             let (depth, count) = row?;
@@ -1258,7 +1355,11 @@ impl Database {
     }
 
     /// Query the top CTA / click events by event_name frequency.
-    pub fn get_top_cta_events(&self, website_id: Option<&str>, limit: i64) -> Result<Vec<(String, u64)>> {
+    pub fn get_top_cta_events(
+        &self,
+        website_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<(String, u64)>> {
         let ref_val = website_id;
         let mut stmt = self.conn.prepare(
             "SELECT COALESCE(event_name, 'unknown') as name, COUNT(*) as c
@@ -1266,7 +1367,9 @@ impl Database {
              WHERE (?1 IS NULL OR website_id = ?1) AND event_type IN ('click','cta','rage_click') AND event_name IS NOT NULL
              GROUP BY name ORDER BY c DESC LIMIT ?2",
         )?;
-        let rows = stmt.query_map(params![ref_val, limit], |row| Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?)))?;
+        let rows = stmt.query_map(params![ref_val, limit], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
+        })?;
         let mut result = Vec::new();
         for row in rows {
             let (name, count) = row?;
@@ -1305,7 +1408,10 @@ impl Database {
     }
 
     /// Fetch overall web analytics summary for a specific website or `None` for global stats.
-    pub fn get_analytics_summary(&self, website_id: Option<&str>) -> Result<crate::systat::AnalyticsSummary> {
+    pub fn get_analytics_summary(
+        &self,
+        website_id: Option<&str>,
+    ) -> Result<crate::systat::AnalyticsSummary> {
         let target = website_id.map(|id| id.to_string());
         let ref_val = target.as_deref();
 
@@ -1379,7 +1485,11 @@ impl Database {
         while let Some(row) = rows.next()? {
             let label: String = row.get(0)?;
             let count: u64 = row.get(1)?;
-            let pct = if pageviews > 0 { (count as f32 / pageviews as f32) * 100.0 } else { 0.0 };
+            let pct = if pageviews > 0 {
+                (count as f32 / pageviews as f32) * 100.0
+            } else {
+                0.0
+            };
             device_breakdown.push(crate::systat::AnalyticsBreakdown { label, count, pct });
         }
 
@@ -1392,7 +1502,11 @@ impl Database {
         while let Some(row) = rows.next()? {
             let label: String = row.get(0)?;
             let count: u64 = row.get(1)?;
-            let pct = if pageviews > 0 { (count as f32 / pageviews as f32) * 100.0 } else { 0.0 };
+            let pct = if pageviews > 0 {
+                (count as f32 / pageviews as f32) * 100.0
+            } else {
+                0.0
+            };
             browser_breakdown.push(crate::systat::AnalyticsBreakdown { label, count, pct });
         }
 
@@ -1405,7 +1519,11 @@ impl Database {
         while let Some(row) = rows.next()? {
             let label: String = row.get(0)?;
             let count: u64 = row.get(1)?;
-            let pct = if pageviews > 0 { (count as f32 / pageviews as f32) * 100.0 } else { 0.0 };
+            let pct = if pageviews > 0 {
+                (count as f32 / pageviews as f32) * 100.0
+            } else {
+                0.0
+            };
             os_breakdown.push(crate::systat::AnalyticsBreakdown { label, count, pct });
         }
 
@@ -1418,7 +1536,11 @@ impl Database {
         while let Some(row) = rows.next()? {
             let label: String = row.get(0)?;
             let count: u64 = row.get(1)?;
-            let pct = if pageviews > 0 { (count as f32 / pageviews as f32) * 100.0 } else { 0.0 };
+            let pct = if pageviews > 0 {
+                (count as f32 / pageviews as f32) * 100.0
+            } else {
+                0.0
+            };
             country_breakdown.push(crate::systat::AnalyticsBreakdown { label, count, pct });
         }
 
@@ -1518,7 +1640,9 @@ impl Database {
             country_breakdown,
             daily_traffic,
             product_analytics,
-            scroll_funnel: self.get_scroll_depth_distribution(ref_val).unwrap_or_default(),
+            scroll_funnel: self
+                .get_scroll_depth_distribution(ref_val)
+                .unwrap_or_default(),
             top_cta_events: self.get_top_cta_events(ref_val, 5).unwrap_or_default(),
             rage_clicks: self.count_rage_clicks(ref_val).unwrap_or(0),
             avg_dwell_time_secs: self.avg_dwell_time_secs(ref_val).unwrap_or(0.0),
@@ -1577,9 +1701,10 @@ impl Database {
 
     /// Remove a single device from `pro_state`.
     pub fn delete_pro_device(&self, device_id: &str) -> Result<usize> {
-        let n = self
-            .conn
-            .execute("DELETE FROM pro_state WHERE device_id = ?1", params![device_id])?;
+        let n = self.conn.execute(
+            "DELETE FROM pro_state WHERE device_id = ?1",
+            params![device_id],
+        )?;
         Ok(n)
     }
 
@@ -1843,7 +1968,10 @@ mod tests {
         assert_eq!(summary.pageviews, 2);
         assert_eq!(summary.unique_visitors, 2);
         assert_eq!(summary.top_pages.len(), 2);
-        assert!(summary.top_referrers.iter().any(|(r, _)| r == "https://google.com"));
+        assert!(summary
+            .top_referrers
+            .iter()
+            .any(|(r, _)| r == "https://google.com"));
         assert!(summary.top_referrers.iter().any(|(r, _)| r == "Direct"));
         Ok(())
     }
@@ -1984,8 +2112,14 @@ mod tests {
             let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
             rows.collect::<Result<Vec<_>, _>>()?
         };
-        assert!(tables.contains(&"pro_state".to_string()), "pro_state table missing");
-        assert!(tables.contains(&"pro_sync_metadata".to_string()), "pro_sync_metadata table missing");
+        assert!(
+            tables.contains(&"pro_state".to_string()),
+            "pro_state table missing"
+        );
+        assert!(
+            tables.contains(&"pro_sync_metadata".to_string()),
+            "pro_sync_metadata table missing"
+        );
         Ok(())
     }
 
@@ -2017,7 +2151,10 @@ mod tests {
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].score, 95);
         assert_eq!(reports[0].project_name, "catable");
-        assert_eq!(reports[0].user_prompt, "cek security auth dan performa query database");
+        assert_eq!(
+            reports[0].user_prompt,
+            "cek security auth dan performa query database"
+        );
         assert_eq!(reports[0].medium_count, 1);
 
         let summaries = db.get_audit_project_summaries()?;
@@ -2025,10 +2162,11 @@ mod tests {
         assert_eq!(summaries[0].0, "/tmp/cashell-test/Product/catable");
         assert_eq!(summaries[0].1, "catable");
         assert_eq!(summaries[0].2, 95); // score
-        assert_eq!(summaries[0].3, 1);  // count
+        assert_eq!(summaries[0].3, 1); // count
 
         db.delete_audit_report(reports[0].id)?;
-        let reports_after = db.get_audit_reports_for_repo("/tmp/cashell-test/Product/catable", 10)?;
+        let reports_after =
+            db.get_audit_reports_for_repo("/tmp/cashell-test/Product/catable", 10)?;
         assert_eq!(reports_after.len(), 0);
 
         Ok(())

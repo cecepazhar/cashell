@@ -184,6 +184,12 @@ fn run_login(args: &ProLoginArgs, cfg: &Config) -> Result<i32> {
         .clone()
         .unwrap_or_else(|| cfg.pro.api_base.clone());
 
+    if api_base.trim().is_empty() {
+        return Err(anyhow!(
+            "pro.api_base is empty — set [pro] api_base in config or pass --api-base"
+        ));
+    }
+
     let hwid = hwid()?;
     let now_unix = now_unix_ts();
 

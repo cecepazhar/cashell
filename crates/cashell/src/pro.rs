@@ -40,9 +40,8 @@ impl HwidGenerator {
     /// Create a generator that caches the HWID at `~/.local/share/cashell/hwid`
     /// (Linux) or platform-appropriate data directory.
     pub fn new() -> Self {
-        let cache_dir = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
         Self {
-            cache_path: cache_dir.join("cashell").join("hwid"),
+            cache_path: crate::paths::hwid_path(),
         }
     }
 
@@ -417,10 +416,7 @@ impl SessionManager {
 
     /// Return the standard path for persisting the Pro session (`~/.config/cashell/pro_session.json`).
     pub fn default_path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from(".config"))
-            .join("cashell")
-            .join("pro_session.json")
+        crate::paths::pro_session_path()
     }
 
     /// Load the session from the default file path.
@@ -524,8 +520,7 @@ pub struct FastBootCache {
 
 impl FastBootCache {
     pub fn path() -> PathBuf {
-        let dir = dirs::cache_dir().unwrap_or_else(|| PathBuf::from("."));
-        dir.join("cashell").join("pro-fastboot.json")
+        crate::paths::fastboot_cache_path()
     }
 
     /// Load the cache from disk; returns `None` if absent or corrupt.

@@ -9,7 +9,10 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "project", about = "Project workspaces: list projects and resources (repos, containers, services, DBs)")]
+#[command(
+    name = "project",
+    about = "Project workspaces: list projects and resources (repos, containers, services, DBs)"
+)]
 pub struct ProjectCommand {
     #[command(subcommand)]
     pub action: Option<ProjectAction>,
@@ -51,11 +54,18 @@ pub enum ProjectAction {
 }
 
 pub fn run(cmd: &ProjectCommand, cfg: &Config) -> Result<i32> {
-    let action = cmd.action.clone().unwrap_or(ProjectAction::List { active: false });
+    let action = cmd
+        .action
+        .clone()
+        .unwrap_or(ProjectAction::List { active: false });
     match action {
         ProjectAction::List { active } => run_list(cmd.json, active),
         ProjectAction::Info { name } => run_info(&name, cmd.json),
-        ProjectAction::Add { path, name, category } => run_add(&path, name.as_deref(), &category, cfg),
+        ProjectAction::Add {
+            path,
+            name,
+            category,
+        } => run_add(&path, name.as_deref(), &category, cfg),
         ProjectAction::Remove { name } => run_remove(&name, cfg),
     }
 }
@@ -65,7 +75,9 @@ fn run_list(is_json: bool, active_only: bool) -> Result<i32> {
     if active_only {
         projects.retain(|p| {
             p.containers.iter().any(|c| c.state == "running")
-                || p.services.iter().any(|s| s.state == "up" || s.state == "online")
+                || p.services
+                    .iter()
+                    .any(|s| s.state == "up" || s.state == "online")
         });
     }
 
@@ -76,13 +88,26 @@ fn run_list(is_json: bool, active_only: bool) -> Result<i32> {
     }
 
     if projects.is_empty() {
-        println!("\n  No project workspaces tracked. Run `cashell project add <path>` to add one.\n");
+        println!(
+            "\n  No project workspaces tracked. Run `cashell project add <path>` to add one.\n"
+        );
         return Ok(0);
     }
 
-    println!("\n{}", "  ══════════════════════════════════════════════════════════════════════════════".cyan());
-    println!("{}", "  PROJECT WORKSPACES HIERARCHY (Projects → Repos, Containers, Services, DBs)".cyan().bold());
-    println!("{}\n", "  ══════════════════════════════════════════════════════════════════════════════".cyan());
+    println!(
+        "\n{}",
+        "  ══════════════════════════════════════════════════════════════════════════════".cyan()
+    );
+    println!(
+        "{}",
+        "  PROJECT WORKSPACES HIERARCHY (Projects → Repos, Containers, Services, DBs)"
+            .cyan()
+            .bold()
+    );
+    println!(
+        "{}\n",
+        "  ══════════════════════════════════════════════════════════════════════════════".cyan()
+    );
 
     for p in &projects {
         print_project_tree(p);
@@ -120,9 +145,21 @@ fn print_project_tree(p: &TrackedProject) {
         println!("     ├── 📦 Repositories ({})", p.repos.len());
         for (i, r) in p.repos.iter().enumerate() {
             let is_last_repo = i + 1 == p.repos.len();
-            let branch_str = if r.branch.is_empty() { "main".to_string() } else { r.branch.clone() };
-            let r_dirty = if r.is_dirty { "● dirty".yellow() } else { "● clean".green() };
-            let tree_char = if is_last_repo { "└──" } else { "├──" };
+            let branch_str = if r.branch.is_empty() {
+                "main".to_string()
+            } else {
+                r.branch.clone()
+            };
+            let r_dirty = if r.is_dirty {
+                "● dirty".yellow()
+            } else {
+                "● clean".green()
+            };
+            let tree_char = if is_last_repo {
+                "└──"
+            } else {
+                "├──"
+            };
             let path_disp = if r.path.is_empty() { "root" } else { &r.path };
             println!(
                 "     │   {} {} [git:{} {}] ({})",
@@ -149,7 +186,11 @@ fn print_project_tree(p: &TrackedProject) {
                 "defined" => "◌ defined".cyan(),
                 _ => "✖ exited".red(),
             };
-            let ports_disp = if c.ports.is_empty() { String::new() } else { format!(" ports: {}", c.ports) };
+            let ports_disp = if c.ports.is_empty() {
+                String::new()
+            } else {
+                format!(" ports: {}", c.ports)
+            };
             println!(
                 "     │   {} {} [{} {}]{}",
                 tree_char,
@@ -198,7 +239,11 @@ fn print_project_tree(p: &TrackedProject) {
                 "file" => "● FILE".cyan(),
                 _ => "✖ STOPPED".red(),
             };
-            let port_str = if d.port > 0 { format!(":{}", d.port) } else { "local".to_string() };
+            let port_str = if d.port > 0 {
+                format!(":{}", d.port)
+            } else {
+                "local".to_string()
+            };
             println!(
                 "         {} {} [{} {} {}] ({})\n",
                 tree_char,
@@ -241,11 +286,10 @@ fn run_info(name: &str, is_json: bool) -> Result<i32> {
 fn run_add(path: &str, name: Option<&str>, category: &str, cfg: &Config) -> Result<i32> {
     let mut updated_cfg = cfg.clone();
     let expanded = if let Some(stripped) = path.strip_prefix("~/") {
-        if let Some(h) = dirs::home_dir() {
-            h.join(stripped).to_string_lossy().to_string()
-        } else {
-            path.to_string()
-        }
+        crate::paths::home_dir()
+            .join(stripped)
+            .to_string_lossy()
+            .to_string()
     } else {
         path.to_string()
     };
@@ -256,11 +300,19 @@ fn run_add(path: &str, name: Option<&str>, category: &str, cfg: &Config) -> Resu
         return Ok(1);
     }
 
-    let display_name = name
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| p.file_name().and_then(|n| n.to_str()).unwrap_or("project").to_string());
+    let display_name = name.map(|s| s.to_string()).unwrap_or_else(|| {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("project")
+            .to_string()
+    });
 
-    if !updated_cfg.workspace.custom_projects.iter().any(|cp| cp == &expanded) {
+    if !updated_cfg
+        .workspace
+        .custom_projects
+        .iter()
+        .any(|cp| cp == &expanded)
+    {
         updated_cfg.workspace.custom_projects.push(expanded.clone());
         let _ = updated_cfg.save(&Config::default_path());
     }
@@ -269,7 +321,10 @@ fn run_add(path: &str, name: Option<&str>, category: &str, cfg: &Config) -> Resu
         let _ = db.add_tracked_project(&expanded, &display_name, category, "main", false);
     }
 
-    println!("✔ Project workspace '{}' ({}) added to tracked workspaces", display_name, category);
+    println!(
+        "✔ Project workspace '{}' ({}) added to tracked workspaces",
+        display_name, category
+    );
     Ok(0)
 }
 
@@ -278,9 +333,12 @@ fn run_remove(name: &str, cfg: &Config) -> Result<i32> {
     let name_lower = name.to_lowercase();
     let mut removed = false;
 
-    if let Some(pos) = updated_cfg.workspace.custom_projects.iter().position(|p| {
-        p.eq_ignore_ascii_case(name) || p.to_lowercase().ends_with(&name_lower)
-    }) {
+    if let Some(pos) = updated_cfg
+        .workspace
+        .custom_projects
+        .iter()
+        .position(|p| p.eq_ignore_ascii_case(name) || p.to_lowercase().ends_with(&name_lower))
+    {
         let removed_path = updated_cfg.workspace.custom_projects.remove(pos);
         let _ = updated_cfg.save(&Config::default_path());
         if let Ok(db) = crate::db::Database::open() {
@@ -304,7 +362,10 @@ fn run_remove(name: &str, cfg: &Config) -> Result<i32> {
         println!("✔ Removed project workspace '{}' from tracking", name);
         Ok(0)
     } else {
-        eprintln!("Warning: Project workspace '{}' was not in custom tracked list", name);
+        eprintln!(
+            "Warning: Project workspace '{}' was not in custom tracked list",
+            name
+        );
         Ok(1)
     }
 }

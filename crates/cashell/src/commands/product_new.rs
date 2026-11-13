@@ -72,10 +72,7 @@ pub fn run(
 
     let target = match dir {
         Some(d) => d.clone(),
-        None => dirs::home_dir()
-            .context("cannot determine home directory")?
-            .join("Product")
-            .join(slug),
+        None => crate::paths::home_dir().join("Product").join(slug),
     };
 
     // Refuse to clobber a non-empty directory unless --force.

@@ -904,33 +904,31 @@ pub fn probe_tracked_projects_with(
 ) -> Vec<TrackedProject> {
     let mut list = Vec::new();
 
-    if let Some(home) = dirs::home_dir() {
-        for (dir_name, cat) in [("Product", "Product"), ("Project", "Project")] {
-            let path = home.join(dir_name);
-            if let Ok(entries) = std::fs::read_dir(path) {
-                for entry in entries.flatten() {
-                    let p = entry.path();
-                    if p.is_dir() {
-                        let name = p
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("")
-                            .to_string();
-                        if !name.starts_with('.')
-                            && !name.starts_with('_')
-                            && name != "target"
-                            && name != "node_modules"
+    let home = crate::paths::home_dir();
+    for (dir_name, cat) in [("Product", "Product"), ("Project", "Project")] {
+        let path = home.join(dir_name);
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    let name = p
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if !name.starts_with('.')
+                        && !name.starts_with('_')
+                        && name != "target"
+                        && name != "node_modules"
+                    {
+                        let is_git = p.join(".git").exists();
+                        if is_git
+                            || p.join("Cargo.toml").exists()
+                            || p.join("package.json").exists()
+                            || p.join("go.mod").exists()
                         {
-                            let is_git = p.join(".git").exists();
-                            if is_git
-                                || p.join("Cargo.toml").exists()
-                                || p.join("package.json").exists()
-                                || p.join("go.mod").exists()
-                            {
-                                let proj =
-                                    build_project_workspace(&name, &p, cat, known_containers);
-                                list.push(proj);
-                            }
+                            let proj = build_project_workspace(&name, &p, cat, known_containers);
+                            list.push(proj);
                         }
                     }
                 }
@@ -942,11 +940,10 @@ pub fn probe_tracked_projects_with(
     if let Ok(cfg) = crate::config::Config::load(None) {
         for cp in cfg.workspace.custom_projects {
             let expanded = if let Some(stripped) = cp.strip_prefix("~/") {
-                if let Some(h) = dirs::home_dir() {
-                    h.join(stripped).to_string_lossy().to_string()
-                } else {
-                    cp.clone()
-                }
+                crate::paths::home_dir()
+                    .join(stripped)
+                    .to_string_lossy()
+                    .to_string()
             } else {
                 cp.clone()
             };

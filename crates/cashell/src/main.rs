@@ -159,8 +159,9 @@ fn run_app() -> Result<i32> {
             Ok(0)
         }
         Some(Commands::Reset(cmd)) => {
-            commands::reset::run(&cmd)?;
-            Ok(0)
+            // R-02: 0 = all removed, 1 = partial failure, 2 = cancelled.
+            let code = commands::reset::run(&cmd)?;
+            Ok(code)
         }
     }
 }

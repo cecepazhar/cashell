@@ -250,6 +250,11 @@ fn cmd_activate(key_arg: &Option<String>, cmd: &LicenseCommand, cfg: &Config) ->
         .clone()
         .unwrap_or_else(|| cfg.license.gcc_base_url.clone());
 
+    // R-05: no host baked into default config — refuse to call with empty base.
+    if base_url.trim().is_empty() {
+        bail!("license base URL is empty — set [license] gcc_base_url or pass --gcc-base-url");
+    }
+
     let dev_id = license_gcc::device_id();
     let dev_name = device_display_name();
     let platform = platform_name();
@@ -476,7 +481,15 @@ fn cmd_deactivate(cmd: &LicenseCommand, cfg: &Config, local_only: bool) -> Resul
         .unwrap_or_else(|| cfg.license.gcc_base_url.clone());
     let dev_id = license_gcc::device_id();
 
-    if !local_only {
+    if !local_only && base_url.trim().is_empty() {
+        // R-05: no host baked into default config — skip the GCC call, remove
+        // the local license file only, report the skipped step.
+        eprintln!(
+            "⚠ [license] gcc_base_url empty — GCC deactivation skipped (local file removed only)."
+        );
+    }
+
+    if !local_only && !base_url.trim().is_empty() {
         // Contact GCC to free the device slot.
         match license_gcc::deactivate(&base_url, &lic.key, &dev_id) {
             Ok(()) => {

@@ -15,6 +15,7 @@ mod tests {
         cfg.output.theme = "tokyo-night".into();
         cfg.persona.user_name = "Dr. Cecep".into();
         cfg.database.retention_days = 14;
+        cfg.database.auto_prune = true;
         cfg.save(&path).unwrap();
 
         let loaded = Config::load(Some(&path)).unwrap();
@@ -33,7 +34,8 @@ mod tests {
     #[test]
     fn config_defaults_check() {
         let cfg = Config::default();
-        assert_eq!(cfg.workspace.scan_dirs, vec!["~/Product", "~/Project"]);
+        // R-05: no scan dirs baked into default config — user must configure.
+        assert!(cfg.workspace.scan_dirs.is_empty());
         assert!(cfg
             .workspace
             .ignore_patterns
@@ -42,14 +44,12 @@ mod tests {
             .workspace
             .ignore_patterns
             .contains(&"node_modules".to_string()));
-        let user = std::env::var("USER").unwrap_or_else(|_| "Developer".to_string());
-        assert_eq!(cfg.persona.user_name, user);
-        assert_eq!(
-            cfg.persona.assistant_role,
-            "You are a concise operations assistant. Provide practical, direct answers."
-        );
+        // R-05: no user name / assistant role baked into default config.
+        assert_eq!(cfg.persona.user_name, "");
+        assert_eq!(cfg.persona.assistant_role, "");
         assert_eq!(cfg.database.retention_days, 7);
-        assert!(cfg.database.auto_prune);
+        // R-05: auto_prune defaults to false — no side-effect on load.
+        assert!(!cfg.database.auto_prune);
         assert!(cfg.output.theme == "ca-classic" || cfg.output.theme == "tokyo-night");
     }
 }
