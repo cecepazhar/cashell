@@ -475,23 +475,18 @@ pub fn run(cmd: &ResetCommand) -> Result<i32> {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::Mutex;
 
-    /// All env-mutating tests hold this lock for their ENTIRE body —
-    /// `$HOME` / `__TEST_TMP_DIR` are process-global.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
     static SEQ: AtomicU64 = AtomicU64::new(0);
 
-    /// Per-test fake home. Owns its temp dir; `Drop` cleans it up before
-    /// the lock is released so no other test sees a stale tree.
+    /// Per-test fake home. Owns its temp dir; `Drop` cleans it up so no
+    /// other test sees a stale tree. Relocates the tree via the
+    /// thread-local seam in [`crate::paths`] — no global env mutation, so
+    /// all reset tests run fully in parallel.
     struct FakeHome {
         dir: PathBuf,
-        #[allow(dead_code)]
-        guard: std::sync::MutexGuard<'static, ()>,
     }
 
     impl FakeHome {
@@ -503,114 +498,28 @@ mod tests {
                 SEQ.fetch_add(1, Ordering::SeqCst)
             ));
             fs::create_dir_all(&dir).unwrap();
-
-            let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            Self { dir, guard }
+            Self { dir }
         }
 
         fn home(&self) -> &std::path::Path {
             &self.dir
+        }
+
+        /// Run `f` with this thread's CAShell tree relocated into the fake
+        /// home: thread-local home override + matching tmp-dir override.
+        /// No env vars, no locks, no watchdog — the override is
+        /// thread-scoped, so parallel tests can never interfere.
+        fn with_home<T>(&self, f: impl Fn() -> T) -> T {
+            let home = self.dir.clone();
+            let tmp = home.join("tmp");
+            paths::with_test_home(&home, move || paths::with_test_tmp(&tmp, f))
         }
     }
 
     impl Drop for FakeHome {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.dir);
-            // guard (field order) releases ENV_LOCK last.
         }
-    }
-
-    /// Scoped env override: saves the original `HOME` / `CASHELL_HOME` /
-    /// `__TEST_TMP_DIR` values, sets them to our fake dir, and spawns a
-    /// watchdog thread that re-asserts them every 500 µs for the duration
-    /// of the struct's life. On drop, the watchdog is stopped and the
-    /// original values are restored (not just removed) so parallel tests
-    /// that ran before us see a consistent state.
-    ///
-    /// Setting **both** `CASHELL_HOME` and `HOME` is critical: `paths::home_dir()`
-    /// reads `CASHELL_HOME` first, then falls back to `dirs::home_dir()`
-    /// (which reads `$HOME`). A parallel `paths` test may transiently remove
-    /// `CASHELL_HOME`; the `HOME` fallback keeps `home_dir()` pointing at our
-    /// fake dir for the entire `run()` window.
-    struct EnvOverride<'a> {
-        #[allow(dead_code)]
-        fh: &'a FakeHome,
-        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-        orig_cashell_home: Option<std::ffi::OsString>,
-        orig_test_tmp: Option<std::ffi::OsString>,
-    }
-
-    impl<'a> EnvOverride<'a> {
-        fn new(fh: &'a FakeHome) -> Self {
-            let dir = fh.home().to_path_buf();
-
-            let orig_cashell_home = std::env::var_os("CASHELL_HOME");
-            let orig_test_tmp = std::env::var_os("__TEST_TMP_DIR");
-
-            std::env::set_var("CASHELL_HOME", &dir);
-            std::env::set_var("__TEST_TMP_DIR", dir.join("tmp"));
-            std::env::remove_var("XDG_CONFIG_HOME");
-            std::env::remove_var("XDG_DATA_HOME");
-            std::env::remove_var("XDG_CACHE_HOME");
-
-            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let stop_clone = stop.clone();
-            let dir_clone = dir.clone();
-            std::thread::spawn(move || {
-                while !stop_clone.load(Ordering::SeqCst) {
-                    std::env::set_var("CASHELL_HOME", &dir_clone);
-                    std::env::set_var("__TEST_TMP_DIR", dir_clone.join("tmp"));
-                    std::thread::sleep(std::time::Duration::from_micros(100));
-                }
-            });
-
-            Self {
-                fh,
-                stop,
-                orig_cashell_home,
-                orig_test_tmp,
-            }
-        }
-    }
-
-    impl Drop for EnvOverride<'_> {
-        fn drop(&mut self) {
-            self.stop.store(true, Ordering::SeqCst);
-            std::thread::sleep(std::time::Duration::from_millis(2));
-            match &self.orig_cashell_home {
-                Some(v) => std::env::set_var("CASHELL_HOME", v),
-                None => {
-                    let _ = std::env::remove_var("CASHELL_HOME");
-                }
-            }
-            match &self.orig_test_tmp {
-                Some(v) => std::env::set_var("__TEST_TMP_DIR", v),
-                None => {
-                    let _ = std::env::remove_var("__TEST_TMP_DIR");
-                }
-            }
-        }
-    }
-
-    /// Run `f` while the env override is active, retrying the whole
-    /// setup+run sequence if `paths::home_dir()` did not resolve to our
-    /// fake dir at the moment `run()` started (i.e. a parallel `paths` test
-    /// stomped `CASHELL_HOME` in the 100 µs watchdog gap). Up to 3
-    /// attempts; the watchdog keeps re-asserting between attempts.
-    fn with_env_reliable(fh: &FakeHome, f: impl Fn() -> Result<i32> + Copy) -> Result<i32> {
-        for _ in 0..3 {
-            let _env = EnvOverride::new(fh);
-            // Verify the override actually took effect before calling run().
-            if paths::home_dir() == *fh.home() {
-                return f();
-            }
-            // home_dir() pointed elsewhere — a parallel test won the race.
-            // Drop the env (restores originals), back off, retry.
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        // Final attempt without the check (give up on verification).
-        let _env = EnvOverride::new(fh);
-        f()
     }
 
     /// Populate the fake home with every resettable item.
@@ -647,7 +556,9 @@ mod tests {
             yes: true,
             backup: None,
         };
-        let code = with_env_reliable(&fh, || run(&cmd)).expect("run() must not return Err");
+        let code = fh
+            .with_home(|| run(&cmd))
+            .expect("run() must not return Err");
         assert_eq!(code, 0, "all present → exit 0");
 
         let c = fh.home().join(".config/cashell");
@@ -677,7 +588,9 @@ mod tests {
             yes: true,
             backup: None,
         };
-        let code = with_env_reliable(&fh, || run(&cmd)).expect("run() must not return Err");
+        let code = fh
+            .with_home(|| run(&cmd))
+            .expect("run() must not return Err");
         assert_eq!(code, 0, "--yes must not block on stdin");
     }
 
@@ -690,7 +603,9 @@ mod tests {
             yes: true,
             backup: Some(backup_path.clone()),
         };
-        let code = with_env_reliable(&fh, || run(&cmd)).expect("run() must not return Err");
+        let code = fh
+            .with_home(|| run(&cmd))
+            .expect("run() must not return Err");
         assert_eq!(code, 0, "reset with --backup must still succeed");
         assert!(backup_path.is_file(), "backup tarball created");
         #[cfg(unix)]
@@ -703,20 +618,17 @@ mod tests {
 
     /// R-08: full integration test.
     ///
-    /// - `CASHELL_HOME` → temp dir via `FakeHome` + scoped `EnvOverride`
-    ///   (never the owner's real profile). `ENV_LOCK` held by `FakeHome`
-    ///   serialises all reset tests; `EnvOverride` sets env only around
-    ///   the `run()` call so the global-mutation window is minimal.
+    /// - `CASHELL_HOME` → temp dir via `FakeHome` + the thread-local
+    ///   `paths::with_test_home` / `with_test_tmp` seam (never the owner's
+    ///   real profile; no global env mutation, so tests run in parallel).
     /// - Every CAShell path populated with fake data.
     /// - Mock GCC (axum, random port) on a dedicated multi-thread runtime
     ///   observes the deactivate POST.
     /// - `reset --yes` → assert ONLY the default `config.toml` remains.
     ///
     /// Deterministic by design: `run()` is called DIRECTLY in this test
-    /// thread (the one holding `ENV_LOCK`), never via `spawn_blocking`
-    /// on a separate thread that would race the global env. The mock
-    /// server runs on its own worker threads, so `run()`'s blocking
-    /// reqwest POST is answered without cross-thread env race.
+    /// thread under the thread-local override. The mock server runs on its
+    /// own runtime worker threads and never calls `paths`.
     #[test]
     fn test_reset_integration_home_override() {
         let fh = FakeHome::new();
@@ -791,12 +703,14 @@ mod tests {
             backup: None,
         };
         // `run()` is fully synchronous (reqwest blocking client). Call it
-        // DIRECTLY in THIS test thread (holding `ENV_LOCK`) via
-        // `with_env_reliable` so it reads exactly the env set here, with
-        // retry if a parallel test won the env race. The mock server keeps
-        // running on its own `server_rt` worker threads, so `run()`'s
-        // blocking reqwest POST is answered without any cross-thread env race.
-        let code = with_env_reliable(&fh, || run(&cmd)).expect("run() must not return Err");
+        // DIRECTLY in THIS test thread under the thread-local home/tmp
+        // override so every `paths` resolution lands inside the fake home.
+        // The mock server keeps running on its own `server_rt` worker
+        // threads (it never calls `paths`), so the blocking POST is
+        // answered without any cross-thread interference.
+        let code = fh
+            .with_home(|| run(&cmd))
+            .expect("integration reset must exit 0");
         assert_eq!(code, 0, "integration reset must exit 0");
         // Shut the mock server down deterministically: the serve task blocks
         // on `.await` for the lifetime of the process, so `drop(server_rt)`
