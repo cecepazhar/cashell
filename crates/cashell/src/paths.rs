@@ -31,8 +31,8 @@ const HOME_ENV: &str = "CASHELL_HOME";
 // unchanged: when no override is active the original resolution order
 // (env → `dirs`) applies untouched.
 thread_local! {
-    static TEST_HOME_OVERRIDE: Cell<Option<PathBuf>> = Cell::new(None);
-    static TEST_TMP_OVERRIDE: Cell<Option<PathBuf>> = Cell::new(None);
+    static TEST_HOME_OVERRIDE: Cell<Option<PathBuf>> = const { Cell::new(None) };
+    static TEST_TMP_OVERRIDE: Cell<Option<PathBuf>> = const { Cell::new(None) };
 }
 
 /// Per-test hook: read the active thread-local home override, if any.
@@ -150,6 +150,11 @@ pub fn ssh_known_hosts_path() -> PathBuf {
     config_dir().join("ssh_known_hosts")
 }
 
+/// `~/.config/cashell/secrets.enc` (encrypted secrets store — sensitive, F-02)
+pub fn secrets_path() -> PathBuf {
+    config_dir().join("secrets.enc")
+}
+
 /// `~/.local/share/cashell/`
 pub fn data_dir() -> PathBuf {
     data_root().join("cashell")
@@ -244,6 +249,7 @@ pub fn resettable_paths() -> Vec<PathBuf> {
         db_shm_path(),
         pro_session_path(),
         ssh_known_hosts_path(),
+        secrets_path(),
         // ~/.local/share/cashell/ files & dirs
         license_path(),
         hwid_path(),
@@ -354,7 +360,7 @@ mod tests {
                 tmp.join(".local/share/cashell/daemon.pid")
             );
         });
-        drop(got);
+        let _ = got;
         // Outside `with_test_home` the override must not leak.
         assert_ne!(home_dir(), tmp, "override leaked outside with_test_home");
     }

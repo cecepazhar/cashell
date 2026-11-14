@@ -234,66 +234,58 @@ async fn action_handler(
             .into_response();
     }
 
-    match body.action.as_str() {
-        "restart" | "stop" | "start" => {
-            // H-03: validate container name — must match ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$
-            let target = &body.target;
-            if !is_valid_container_name(target) {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({"error": format!("invalid container name: {target}")})),
-                )
-                    .into_response();
-            }
-
-            // H-03: container must exist in `docker ps -a` (or podman fallback).
-            if !container_exists(target).await {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({"error": format!("container '{target}' not found in docker ps -a")})),
-                )
-                    .into_response();
-            }
-
-            let mut result = tokio::process::Command::new("docker")
-                .args([&body.action, &body.target])
-                .output()
-                .await;
-            if result.is_err() || matches!(&result, Ok(o) if !o.status.success()) {
-                let pod_result = tokio::process::Command::new("podman")
-                    .args([&body.action, &body.target])
-                    .output()
-                    .await;
-                if pod_result.is_ok() {
-                    result = pod_result;
-                }
-            }
-            match result {
-                Ok(o) => {
-                    let stdout = String::from_utf8_lossy(&o.stdout).to_string();
-                    let stderr = String::from_utf8_lossy(&o.stderr).to_string();
-                    let output = if stdout.trim().is_empty() {
-                        stderr
-                    } else {
-                        stdout
-                    };
-                    Json(ActionResponse {
-                        ok: o.status.success(),
-                        output,
-                    })
-                    .into_response()
-                }
-                Err(e) => Json(ActionResponse {
-                    ok: false,
-                    output: e.to_string(),
-                })
-                .into_response(),
-            }
+    let action = match body.action.as_str() {
+        "restart" => crate::actions::Action::RestartContainer {
+            name: body.target.clone(),
+        },
+        "stop" => crate::actions::Action::StopContainer {
+            name: body.target.clone(),
+        },
+        "start" => crate::actions::Action::StartContainer {
+            name: body.target.clone(),
+        },
+        other => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": format!("unknown action: {other}")})),
+            )
+                .into_response();
         }
-        // H-03: "backup" action removed — no longer accepted.
-        other => (
+    };
+
+    // H-03: validate container name — must match ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$
+    let target = &body.target;
+    if !is_valid_container_name(target) {
+        return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": format!("unknown action: {other}")})),
+            Json(serde_json::json!({"error": format!("invalid container name: {target}")})),
+        )
+            .into_response();
+    }
+
+    // H-03: container must exist in `docker ps -a` (or podman fallback).
+    if !container_exists(target).await {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": format!("container {target} not found in docker ps -a")})),
+        )
+            .into_response();
+    }
+
+    let mut ctx = crate::actions::ActionContext::new("daemon", "bearer_client");
+    if let Ok(db) = crate::db::Database::open() {
+        ctx = ctx.with_db(Arc::new(std::sync::Mutex::new(db)));
+    }
+
+    match crate::actions::execute(action, &ctx).await {
+        Ok(res) => Json(ActionResponse {
+            ok: res.ok,
+            output: res.output,
+        })
+        .into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": e.to_string()})),
         )
             .into_response(),
     }

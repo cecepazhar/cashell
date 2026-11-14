@@ -48,9 +48,7 @@ impl CronEntry {
 
     /// Read system user crontab via `crontab -l`.
     pub fn read_user_crontab() -> Result<Vec<Self>> {
-        let output = std::process::Command::new("crontab")
-            .arg("-l")
-            .output();
+        let output = std::process::Command::new("crontab").arg("-l").output();
 
         match output {
             Ok(o) if o.status.success() => {

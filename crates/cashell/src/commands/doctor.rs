@@ -126,7 +126,12 @@ fn check_tailscale(target_addr: &str, target_port: u16) -> CheckResult {
     // Mesh reachable: measure latency to the target.
     let addr: SocketAddr = match format!("{target_addr}:{target_port}").parse() {
         Ok(a) => a,
-        Err(_) => return CheckResult::warn("Tailscale", format!("invalid target address: {target_addr}:{target_port}")),
+        Err(_) => {
+            return CheckResult::warn(
+                "Tailscale",
+                format!("invalid target address: {target_addr}:{target_port}"),
+            )
+        }
     };
     match probe(addr, Duration::from_millis(500)) {
         Some(rtt) => CheckResult::ok(&format!(
@@ -164,7 +169,10 @@ fn check_ports(ports: &[u16]) -> CheckResult {
     };
 
     if open.is_empty() {
-        CheckResult::warn(&format!("Ports {range_desc}"), "no local listeners detected")
+        CheckResult::warn(
+            &format!("Ports {range_desc}"),
+            "no local listeners detected",
+        )
     } else {
         let list = open
             .iter()
@@ -185,7 +193,9 @@ fn df_percent(path: &str, inodes: bool) -> Option<f64> {
     }
     let text = String::from_utf8_lossy(&out.stdout);
     let line = text.lines().nth(1)?; // skip header
-    let token = line.split_whitespace().find(|f| f.ends_with('%') || *f == "-")?;
+    let token = line
+        .split_whitespace()
+        .find(|f| f.ends_with('%') || *f == "-")?;
     if token == "-" {
         return None;
     }
@@ -245,12 +255,18 @@ fn check_storage(mounts: &[String]) -> Vec<CheckResult> {
         if d.critical_warnings > 0 {
             results.push(CheckResult::fail(
                 &format!("SSD SMART {}", d.device),
-                format!("{} ({}): {} critical warnings, temp {:.1}°C", d.model, d.health_status, d.critical_warnings, d.temperature_c),
+                format!(
+                    "{} ({}): {} critical warnings, temp {:.1}°C",
+                    d.model, d.health_status, d.critical_warnings, d.temperature_c
+                ),
             ));
         } else if d.wear_level_pct >= 90 || d.temperature_c >= 75.0 {
             results.push(CheckResult::warn(
                 &format!("SSD SMART {}", d.device),
-                format!("{} ({}): {}% wear, temp {:.1}°C", d.model, d.health_status, d.wear_level_pct, d.temperature_c),
+                format!(
+                    "{} ({}): {}% wear, temp {:.1}°C",
+                    d.model, d.health_status, d.wear_level_pct, d.temperature_c
+                ),
             ));
         } else {
             results.push(CheckResult::ok(&format!(

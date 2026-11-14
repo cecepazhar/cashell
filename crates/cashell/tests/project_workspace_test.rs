@@ -12,8 +12,8 @@
 use cashell::commands::project::{ProjectAction, ProjectCommand};
 use cashell::config::Config;
 use cashell::systat::{
-    build_project_workspace, DockerContainerInfo, ProjectContainer, ProjectDatabase,
-    ProjectRepo, ProjectService, TrackedProject,
+    build_project_workspace, DockerContainerInfo, ProjectContainer, ProjectDatabase, ProjectRepo,
+    ProjectService, TrackedProject,
 };
 
 #[test]
@@ -54,15 +54,13 @@ fn test_project_workspace_data_model_structure() {
                 ports: "6379:6379".to_string(),
             },
         ],
-        services: vec![
-            ProjectService {
-                name: "fathstore-api".to_string(),
-                host: "127.0.0.1".to_string(),
-                port: 8082,
-                protocol: "http".to_string(),
-                state: "up".to_string(),
-            },
-        ],
+        services: vec![ProjectService {
+            name: "fathstore-api".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 8082,
+            protocol: "http".to_string(),
+            state: "up".to_string(),
+        }],
         databases: vec![
             ProjectDatabase {
                 name: "fs_core".to_string(),
@@ -91,7 +89,8 @@ fn test_project_workspace_data_model_structure() {
 
     // Verify JSON serialization round-trip
     let json_str = serde_json::to_string(&ws).expect("serialize workspace");
-    let deserialized: TrackedProject = serde_json::from_str(&json_str).expect("deserialize workspace");
+    let deserialized: TrackedProject =
+        serde_json::from_str(&json_str).expect("deserialize workspace");
     assert_eq!(deserialized.name, "fathstore");
     assert_eq!(deserialized.repos.len(), 2);
     assert_eq!(deserialized.containers.len(), 2);
@@ -110,10 +109,22 @@ fn test_monorepo_project_workspace_builder() {
     std::fs::create_dir_all(tmp.join("apps/worker")).unwrap();
 
     // Create Cargo.toml / package.json in subpackages to emulate monorepo
-    std::fs::write(tmp.join("Cargo.toml"), b"[workspace]\nmembers = [\"crates/*\", \"apps/*\"]").unwrap();
-    std::fs::write(tmp.join("crates/core/Cargo.toml"), b"[package]\nname = \"core\"").unwrap();
+    std::fs::write(
+        tmp.join("Cargo.toml"),
+        b"[workspace]\nmembers = [\"crates/*\", \"apps/*\"]",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("crates/core/Cargo.toml"),
+        b"[package]\nname = \"core\"",
+    )
+    .unwrap();
     std::fs::write(tmp.join("crates/web/package.json"), b"{\"name\": \"web\"}").unwrap();
-    std::fs::write(tmp.join("apps/worker/Cargo.toml"), b"[package]\nname = \"worker\"").unwrap();
+    std::fs::write(
+        tmp.join("apps/worker/Cargo.toml"),
+        b"[package]\nname = \"worker\"",
+    )
+    .unwrap();
 
     // Create docker-compose.yml defining web, worker, postgres, and redis
     let compose_content = r#"
@@ -142,15 +153,13 @@ services:
     std::fs::write(tmp.join("local_cache.db"), b"SQLITE FORMAT 3").unwrap();
 
     // Mock known container status
-    let known_containers = vec![
-        DockerContainerInfo {
-            name: "mymono-web".to_string(),
-            image: "mymono-web:latest".to_string(),
-            state: "running".to_string(),
-            status_detail: "Up 2 hours".to_string(),
-            ports: "8080:8080".to_string(),
-        },
-    ];
+    let known_containers = vec![DockerContainerInfo {
+        name: "mymono-web".to_string(),
+        image: "mymono-web:latest".to_string(),
+        state: "running".to_string(),
+        status_detail: "Up 2 hours".to_string(),
+        ports: "8080:8080".to_string(),
+    }];
 
     // Build workspace
     let ws = build_project_workspace("mymono", &tmp, "Product", &known_containers);
@@ -160,16 +169,32 @@ services:
     assert!(ws.repos.iter().any(|r| r.name == "crates/core"));
     assert!(ws.repos.iter().any(|r| r.name == "crates/web"));
     assert!(ws.repos.iter().any(|r| r.name == "apps/worker"));
-    assert!(ws.repos.len() >= 3, "expected at least 3 monorepo sub-repos, got {}", ws.repos.len());
+    assert!(
+        ws.repos.len() >= 3,
+        "expected at least 3 monorepo sub-repos, got {}",
+        ws.repos.len()
+    );
 
     // Containers: web, worker, db, cache
     assert!(ws.containers.iter().any(|c| c.name.contains("web")));
-    assert!(ws.containers.iter().any(|c| c.name.contains("worker") || c.name.contains("db")));
+    assert!(ws
+        .containers
+        .iter()
+        .any(|c| c.name.contains("worker") || c.name.contains("db")));
 
     // Databases: postgres, redis, and sqlite
-    assert!(ws.databases.iter().any(|d| d.engine == "postgres"), "missing postgres db");
-    assert!(ws.databases.iter().any(|d| d.engine == "redis"), "missing redis db");
-    assert!(ws.databases.iter().any(|d| d.engine == "sqlite"), "missing sqlite local db");
+    assert!(
+        ws.databases.iter().any(|d| d.engine == "postgres"),
+        "missing postgres db"
+    );
+    assert!(
+        ws.databases.iter().any(|d| d.engine == "redis"),
+        "missing redis db"
+    );
+    assert!(
+        ws.databases.iter().any(|d| d.engine == "sqlite"),
+        "missing sqlite local db"
+    );
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -189,7 +214,9 @@ fn test_project_cli_command_json_output() {
 #[test]
 fn test_project_cli_info_command() {
     let cmd = ProjectCommand {
-        action: Some(ProjectAction::Info { name: "cashell".to_string() }),
+        action: Some(ProjectAction::Info {
+            name: "cashell".to_string(),
+        }),
         json: true,
     };
     let cfg = Config::default();

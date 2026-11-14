@@ -106,7 +106,10 @@ pub enum Commands {
 
 /// Top-level `cashell pro` CLI command.
 #[derive(Parser, Debug, Clone)]
-#[command(name = "pro", about = "CAShell Pro: multi-device zero-knowledge GCC sync & device management")]
+#[command(
+    name = "pro",
+    about = "CAShell Pro: multi-device zero-knowledge GCC sync & device management"
+)]
 pub struct ProCommand {
     #[command(subcommand)]
     pub mode: ProMode,

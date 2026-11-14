@@ -65,10 +65,7 @@ fn severity_colored(s: &Severity) -> String {
 }
 
 /// Run interactive interview for findings when in TTY mode and findings > 0.
-pub fn run_interview(
-    repo_path: &str,
-    files: &[(String, Vec<Finding>)],
-) -> Result<InterviewResult> {
+pub fn run_interview(repo_path: &str, files: &[(String, Vec<Finding>)]) -> Result<InterviewResult> {
     let mut flat: Vec<(&str, &Finding)> = Vec::new();
     for (path, fs) in files {
         for f in fs {
@@ -160,8 +157,14 @@ fn to_reviewed(file: &str, f: &Finding, decision: InterviewDecision) -> Reviewed
 }
 
 fn summarize(findings: &[ReviewedFinding]) -> InterviewSummary {
-    let accepted = findings.iter().filter(|f| f.decision == InterviewDecision::Accepted).count();
-    let skipped = findings.iter().filter(|f| f.decision == InterviewDecision::Skipped).count();
+    let accepted = findings
+        .iter()
+        .filter(|f| f.decision == InterviewDecision::Accepted)
+        .count();
+    let skipped = findings
+        .iter()
+        .filter(|f| f.decision == InterviewDecision::Skipped)
+        .count();
     let pending = findings.len() - accepted - skipped;
     InterviewSummary {
         accepted,
@@ -178,7 +181,10 @@ fn draw_finding_card(
     f: &Finding,
 ) -> Result<()> {
     let sev = severity_colored(&f.severity);
-    let line_str = f.line.map(|n| n.to_string()).unwrap_or_else(|| "-".to_string());
+    let line_str = f
+        .line
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| "-".to_string());
     let rec_str = f
         .recommendation
         .as_deref()
@@ -226,7 +232,9 @@ pub fn confirm_save(path_display: &str) -> bool {
                 if k.kind == KeyEventKind::Press {
                     match k.code {
                         KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => break true,
-                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Char('q') => break false,
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Char('q') => {
+                            break false
+                        }
                         _ => {}
                     }
                 }
@@ -290,7 +298,12 @@ pub fn build_markdown_report(
             let msg_s = f.message.replace('|', "\\|").replace('\n', " ");
             md.push_str(&format!(
                 "| {} | `{}` | {} | {} | {} | {} |\n",
-                f.severity, f.file, line_s, msg_s, rec_s, f.decision.label()
+                f.severity,
+                f.file,
+                line_s,
+                msg_s,
+                rec_s,
+                f.decision.label()
             ));
         }
     }
@@ -373,13 +386,7 @@ mod tests {
             low: 0,
             info: 0,
         };
-        let md = build_markdown_report(
-            "/tmp/fake-repo",
-            2,
-            0,
-            &totals,
-            &sample_findings(),
-        );
+        let md = build_markdown_report("/tmp/fake-repo", 2, 0, &totals, &sample_findings());
         assert!(md.contains("## Summary"), "missing summary section");
         assert!(md.contains("| HIGH | 1 |"), "missing HIGH count");
         assert!(md.contains("| MEDIUM | 1 |"), "missing MEDIUM count");
@@ -428,4 +435,3 @@ mod tests {
         }
     }
 }
-

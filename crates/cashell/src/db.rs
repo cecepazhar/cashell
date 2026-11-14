@@ -94,6 +94,19 @@ pub struct ProSyncMetadataRecord {
     pub last_synced_at: Option<String>,
 }
 
+/// A system/security audit log entry stored in `audit_log` (F-03).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct AuditLogEntry {
+    pub id: i64,
+    pub ts: String,
+    pub source: String,
+    pub actor: String,
+    pub action: String,
+    pub args_json: Option<String>,
+    pub result: Option<String>,
+    pub error: Option<String>,
+}
+
 /// An audit report record stored in `audit_reports` table per project/folder.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AuditReportRecord {
@@ -168,241 +181,369 @@ impl Database {
         self.conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
-             CREATE TABLE IF NOT EXISTS ai_chat (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 session_id TEXT,
-                 role TEXT,
-                 content TEXT,
-                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-             );
-             CREATE TABLE IF NOT EXISTS command_history (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 command TEXT,
-                 args TEXT,
-                 exit_code INTEGER,
-                 duration_ms INTEGER,
-                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-             );
-             CREATE TABLE IF NOT EXISTS audit_reports (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 repo_path TEXT,
-                 critical_count INTEGER,
-                 high_count INTEGER,
-                 report_path TEXT,
-                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-             );
-             CREATE TABLE IF NOT EXISTS system_events (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 level TEXT,
-                 source TEXT,
-                 message TEXT,
-                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-             );
-             CREATE TABLE IF NOT EXISTS node_heartbeats (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 node_id TEXT NOT NULL,
-                 cpu_percent REAL,
-                 ram_used_mb INTEGER,
-                 ram_total_mb INTEGER,
-                 disk_used_gb INTEGER,
-                 disk_total_gb INTEGER,
-                 services_json TEXT,
-                 uptime_secs INTEGER,
-                 version TEXT,
-                 received_at DATETIME DEFAULT CURRENT_TIMESTAMP
-             );
-             CREATE INDEX IF NOT EXISTS idx_heartbeats_node ON node_heartbeats(node_id, received_at);
-             CREATE TABLE IF NOT EXISTS registered_nodes (
-                 node_id TEXT PRIMARY KEY,
-                 display_name TEXT,
-                 ip TEXT,
-                 pubkey TEXT,
-                 last_seen DATETIME,
-                 registered_at DATETIME DEFAULT CURRENT_TIMESTAMP
-             );
-             CREATE TABLE IF NOT EXISTS pets (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 species TEXT NOT NULL,
-                 name TEXT NOT NULL,
-                 stage TEXT DEFAULT 'egg',
-                 xp INTEGER DEFAULT 0,
-                 born_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                 last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP
-             );
-             CREATE TABLE IF NOT EXISTS cron_jobs (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 schedule TEXT NOT NULL,
-                 command TEXT NOT NULL,
-                 description TEXT DEFAULT '',
-                 enabled INTEGER DEFAULT 1,
-                 last_run DATETIME,
-                 last_exit_code INTEGER,
-                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-             );
-             CREATE TABLE IF NOT EXISTS pet_action_logs (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 pet_id INTEGER,
-                 pet_name TEXT,
-                 action_type TEXT,
-                 detail TEXT,
-                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-             );
-             CREATE TABLE IF NOT EXISTS tracked_projects (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 path TEXT NOT NULL UNIQUE,
-                 name TEXT,
-                 category TEXT,
-                 branch TEXT,
-                 is_dirty INTEGER DEFAULT 0,
-                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-             );
-             CREATE TABLE IF NOT EXISTS uptime_monitors (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 name TEXT NOT NULL UNIQUE,
-                 target TEXT NOT NULL UNIQUE,
-                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-             );
-             CREATE TABLE IF NOT EXISTS docker_containers (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 name TEXT NOT NULL UNIQUE,
-                 image TEXT NOT NULL,
-                 ports TEXT,
-                 env TEXT,
-                 started_at DATETIME DEFAULT CURRENT_TIMESTAMP
-             );
-             CREATE TABLE IF NOT EXISTS analytics_events (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 website_id TEXT NOT NULL,
-                 session_id TEXT NOT NULL,
-                 url TEXT NOT NULL,
-                 referrer TEXT,
-                 page_title TEXT,
-                 browser TEXT,
-                 os TEXT,
-                 device TEXT,
-                 country TEXT,
-                 visitor_hash TEXT NOT NULL,
-                 event_type TEXT NOT NULL DEFAULT 'pageview',
-                 event_name TEXT,
-                 event_data TEXT,
-                 click_x REAL,
-                 click_y REAL,
-                 scroll_depth INTEGER,
-                 duration_secs INTEGER,
-                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-             );
-             CREATE TABLE IF NOT EXISTS analytics_websites (
-                 id TEXT PRIMARY KEY,
-                 name TEXT NOT NULL,
-                 domain TEXT NOT NULL,
-                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-             );
-             CREATE TABLE IF NOT EXISTS pro_state (
-                 device_id TEXT PRIMARY KEY,
-                 device_label TEXT NOT NULL DEFAULT '',
-                 status TEXT NOT NULL DEFAULT 'unknown',
-                 last_seen DATETIME,
-                 last_error TEXT,
-                 extra_json TEXT,
-                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-             );
-             CREATE TABLE IF NOT EXISTS pro_sync_metadata (
-                 entity_type TEXT NOT NULL,
-                 entity_id TEXT NOT NULL,
-                 revision INTEGER NOT NULL DEFAULT 1,
-                 etag TEXT,
-                 sync_state TEXT NOT NULL DEFAULT 'local',
-                 last_synced_at DATETIME,
-                 PRIMARY KEY (entity_type, entity_id)
-             );
-             CREATE INDEX IF NOT EXISTS idx_pro_sync_metadata_state ON pro_sync_metadata(sync_state);",
+             CREATE TABLE IF NOT EXISTS schema_migrations (
+                 version INTEGER PRIMARY KEY,
+                 applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+             );",
         )?;
 
-        // Ensure backwards compatibility for analytics_events table
-        let mut col_stmt = self.conn.prepare("PRAGMA table_info(analytics_events)")?;
-        let existing_cols: Vec<String> = col_stmt
-            .query_map([], |row| row.get::<_, String>(1))?
-            .filter_map(|r| r.ok())
-            .collect();
+        self.run_migrations()?;
+        Ok(())
+    }
 
-        let migrations = [
-            ("event_type", "ALTER TABLE analytics_events ADD COLUMN event_type TEXT NOT NULL DEFAULT 'pageview'"),
-            ("event_name", "ALTER TABLE analytics_events ADD COLUMN event_name TEXT"),
-            ("event_data", "ALTER TABLE analytics_events ADD COLUMN event_data TEXT"),
-            ("click_x", "ALTER TABLE analytics_events ADD COLUMN click_x REAL"),
-            ("click_y", "ALTER TABLE analytics_events ADD COLUMN click_y REAL"),
-            ("scroll_depth", "ALTER TABLE analytics_events ADD COLUMN scroll_depth INTEGER"),
-            ("duration_secs", "ALTER TABLE analytics_events ADD COLUMN duration_secs INTEGER"),
-        ];
+    /// Return list of migration versions already applied in ascending order.
+    pub fn applied_migrations(&self) -> Result<Vec<i64>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT version FROM schema_migrations ORDER BY version ASC")?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
 
-        for (col, sql) in migrations {
-            if !existing_cols.contains(&col.to_string()) {
-                let _ = self.conn.execute(sql, []);
-            }
+    /// Run all pending database migrations idempotently (F-03).
+    pub fn run_migrations(&self) -> Result<()> {
+        let applied = self.applied_migrations().unwrap_or_default();
+
+        // ── Migration 1: Core tables ─────────────────────────────────────────
+        if !applied.contains(&1) {
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS ai_chat (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     session_id TEXT,
+                     role TEXT,
+                     content TEXT,
+                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE TABLE IF NOT EXISTS command_history (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     command TEXT,
+                     args TEXT,
+                     exit_code INTEGER,
+                     duration_ms INTEGER,
+                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE TABLE IF NOT EXISTS audit_reports (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     repo_path TEXT,
+                     critical_count INTEGER,
+                     high_count INTEGER,
+                     report_path TEXT,
+                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE TABLE IF NOT EXISTS system_events (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     level TEXT,
+                     source TEXT,
+                     message TEXT,
+                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE TABLE IF NOT EXISTS node_heartbeats (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     node_id TEXT NOT NULL,
+                     cpu_percent REAL,
+                     ram_used_mb INTEGER,
+                     ram_total_mb INTEGER,
+                     disk_used_gb INTEGER,
+                     disk_total_gb INTEGER,
+                     services_json TEXT,
+                     uptime_secs INTEGER,
+                     version TEXT,
+                     received_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_heartbeats_node ON node_heartbeats(node_id, received_at);
+                 CREATE TABLE IF NOT EXISTS registered_nodes (
+                     node_id TEXT PRIMARY KEY,
+                     display_name TEXT,
+                     ip TEXT,
+                     pubkey TEXT,
+                     last_seen DATETIME,
+                     registered_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE TABLE IF NOT EXISTS pets (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     species TEXT NOT NULL,
+                     name TEXT NOT NULL,
+                     stage TEXT DEFAULT 'egg',
+                     xp INTEGER DEFAULT 0,
+                     born_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                     last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE TABLE IF NOT EXISTS cron_jobs (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     schedule TEXT NOT NULL,
+                     command TEXT NOT NULL,
+                     description TEXT DEFAULT '',
+                     enabled INTEGER DEFAULT 1,
+                     last_run DATETIME,
+                     last_exit_code INTEGER,
+                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE TABLE IF NOT EXISTS pet_action_logs (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     pet_id INTEGER,
+                     pet_name TEXT,
+                     action_type TEXT,
+                     detail TEXT,
+                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE TABLE IF NOT EXISTS tracked_projects (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     path TEXT NOT NULL UNIQUE,
+                     name TEXT,
+                     category TEXT,
+                     branch TEXT,
+                     is_dirty INTEGER DEFAULT 0,
+                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE TABLE IF NOT EXISTS uptime_monitors (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     name TEXT NOT NULL UNIQUE,
+                     target TEXT NOT NULL UNIQUE,
+                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE TABLE IF NOT EXISTS docker_containers (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     name TEXT NOT NULL UNIQUE,
+                     image TEXT NOT NULL,
+                     ports TEXT,
+                     env TEXT,
+                     started_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE TABLE IF NOT EXISTS analytics_events (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     website_id TEXT NOT NULL,
+                     session_id TEXT NOT NULL,
+                     url TEXT NOT NULL,
+                     referrer TEXT,
+                     page_title TEXT,
+                     browser TEXT,
+                     os TEXT,
+                     device TEXT,
+                     country TEXT,
+                     visitor_hash TEXT NOT NULL,
+                     event_type TEXT NOT NULL DEFAULT 'pageview',
+                     event_name TEXT,
+                     event_data TEXT,
+                     click_x REAL,
+                     click_y REAL,
+                     scroll_depth INTEGER,
+                     duration_secs INTEGER,
+                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE TABLE IF NOT EXISTS analytics_websites (
+                     id TEXT PRIMARY KEY,
+                     name TEXT NOT NULL,
+                     domain TEXT NOT NULL,
+                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE TABLE IF NOT EXISTS pro_state (
+                     device_id TEXT PRIMARY KEY,
+                     device_label TEXT NOT NULL DEFAULT '',
+                     status TEXT NOT NULL DEFAULT 'unknown',
+                     last_seen DATETIME,
+                     last_error TEXT,
+                     extra_json TEXT,
+                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE TABLE IF NOT EXISTS pro_sync_metadata (
+                     entity_type TEXT NOT NULL,
+                     entity_id TEXT NOT NULL,
+                     revision INTEGER NOT NULL DEFAULT 1,
+                     etag TEXT,
+                     sync_state TEXT NOT NULL DEFAULT 'local',
+                     last_synced_at DATETIME,
+                     PRIMARY KEY (entity_type, entity_id)
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_pro_sync_metadata_state ON pro_sync_metadata(sync_state);
+                 INSERT OR IGNORE INTO schema_migrations (version) VALUES (1);",
+            )?;
         }
 
-        let _ = self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_analytics_events_type ON analytics_events(website_id, event_type)",
-            [],
-        );
+        // ── Migration 2: Analytics columns ───────────────────────────────────
+        if !applied.contains(&2) {
+            let mut col_stmt = self.conn.prepare("PRAGMA table_info(analytics_events)")?;
+            let existing_cols: Vec<String> = col_stmt
+                .query_map([], |row| row.get::<_, String>(1))?
+                .filter_map(|r| r.ok())
+                .collect();
 
-        // Ensure backwards compatibility for audit_reports table
-        let mut audit_col_stmt = self.conn.prepare("PRAGMA table_info(audit_reports)")?;
-        let existing_audit_cols: Vec<String> = audit_col_stmt
-            .query_map([], |row| row.get::<_, String>(1))?
-            .filter_map(|r| r.ok())
-            .collect();
+            let migrations = [
+                ("event_type", "ALTER TABLE analytics_events ADD COLUMN event_type TEXT NOT NULL DEFAULT 'pageview'"),
+                ("event_name", "ALTER TABLE analytics_events ADD COLUMN event_name TEXT"),
+                ("event_data", "ALTER TABLE analytics_events ADD COLUMN event_data TEXT"),
+                ("click_x", "ALTER TABLE analytics_events ADD COLUMN click_x REAL"),
+                ("click_y", "ALTER TABLE analytics_events ADD COLUMN click_y REAL"),
+                ("scroll_depth", "ALTER TABLE analytics_events ADD COLUMN scroll_depth INTEGER"),
+                ("duration_secs", "ALTER TABLE analytics_events ADD COLUMN duration_secs INTEGER"),
+            ];
 
-        let audit_migrations = [
-            (
-                "project_name",
-                "ALTER TABLE audit_reports ADD COLUMN project_name TEXT DEFAULT ''",
-            ),
-            (
-                "score",
-                "ALTER TABLE audit_reports ADD COLUMN score INTEGER DEFAULT 100",
-            ),
-            (
-                "medium_count",
-                "ALTER TABLE audit_reports ADD COLUMN medium_count INTEGER DEFAULT 0",
-            ),
-            (
-                "low_count",
-                "ALTER TABLE audit_reports ADD COLUMN low_count INTEGER DEFAULT 0",
-            ),
-            (
-                "info_count",
-                "ALTER TABLE audit_reports ADD COLUMN info_count INTEGER DEFAULT 0",
-            ),
-            (
-                "user_prompt",
-                "ALTER TABLE audit_reports ADD COLUMN user_prompt TEXT DEFAULT ''",
-            ),
-            (
-                "tuned_prompt",
-                "ALTER TABLE audit_reports ADD COLUMN tuned_prompt TEXT DEFAULT ''",
-            ),
-            (
-                "report_markdown",
-                "ALTER TABLE audit_reports ADD COLUMN report_markdown TEXT DEFAULT ''",
-            ),
-        ];
-
-        for (col, sql) in audit_migrations {
-            if !existing_audit_cols.contains(&col.to_string()) {
-                let _ = self.conn.execute(sql, []);
+            for (col, sql) in migrations {
+                if !existing_cols.contains(&col.to_string()) {
+                    let _ = self.conn.execute(sql, []);
+                }
             }
+
+            let _ = self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_analytics_events_type ON analytics_events(website_id, event_type)",
+                [],
+            );
+            let _ = self.conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version) VALUES (2)",
+                [],
+            );
         }
 
-        let _ = self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_audit_reports_repo ON audit_reports(repo_path, created_at)",
-            [],
-        );
+        // ── Migration 3: Audit reports columns ───────────────────────────────
+        if !applied.contains(&3) {
+            let mut audit_col_stmt = self.conn.prepare("PRAGMA table_info(audit_reports)")?;
+            let existing_audit_cols: Vec<String> = audit_col_stmt
+                .query_map([], |row| row.get::<_, String>(1))?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            let audit_migrations = [
+                (
+                    "project_name",
+                    "ALTER TABLE audit_reports ADD COLUMN project_name TEXT DEFAULT ''",
+                ),
+                (
+                    "score",
+                    "ALTER TABLE audit_reports ADD COLUMN score INTEGER DEFAULT 100",
+                ),
+                (
+                    "medium_count",
+                    "ALTER TABLE audit_reports ADD COLUMN medium_count INTEGER DEFAULT 0",
+                ),
+                (
+                    "low_count",
+                    "ALTER TABLE audit_reports ADD COLUMN low_count INTEGER DEFAULT 0",
+                ),
+                (
+                    "info_count",
+                    "ALTER TABLE audit_reports ADD COLUMN info_count INTEGER DEFAULT 0",
+                ),
+                (
+                    "user_prompt",
+                    "ALTER TABLE audit_reports ADD COLUMN user_prompt TEXT DEFAULT ''",
+                ),
+                (
+                    "tuned_prompt",
+                    "ALTER TABLE audit_reports ADD COLUMN tuned_prompt TEXT DEFAULT ''",
+                ),
+                (
+                    "report_markdown",
+                    "ALTER TABLE audit_reports ADD COLUMN report_markdown TEXT DEFAULT ''",
+                ),
+            ];
+
+            for (col, sql) in audit_migrations {
+                if !existing_audit_cols.contains(&col.to_string()) {
+                    let _ = self.conn.execute(sql, []);
+                }
+            }
+
+            let _ = self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_audit_reports_repo ON audit_reports(repo_path, created_at)",
+                [],
+            );
+            let _ = self.conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version) VALUES (3)",
+                [],
+            );
+        }
+
+        // ── Migration 4: Audit log table (F-03) ───────────────────────────────
+        if !applied.contains(&4) {
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS audit_log (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+                     source TEXT NOT NULL,
+                     actor TEXT NOT NULL,
+                     action TEXT NOT NULL,
+                     args_json TEXT,
+                     result TEXT,
+                     error TEXT
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON audit_log(ts);
+                 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
+                 INSERT OR IGNORE INTO schema_migrations (version) VALUES (4);",
+            )?;
+        }
 
         Ok(())
     }
 
-    /// Save a chat turn to the `ai_chat` table.
+    /// Record an action execution into the `audit_log` table (F-03).
+    pub fn log_audit(
+        &self,
+        source: &str,
+        actor: &str,
+        action: &str,
+        args_json: Option<&str>,
+        result: Option<&str>,
+        error: Option<&str>,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO audit_log (source, actor, action, args_json, result, error) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![source, actor, action, args_json, result, error],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Query the most recent audit log entries in descending order.
+    pub fn query_audit(&self, limit: usize) -> Result<Vec<AuditLogEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, ts, source, actor, action, args_json, result, error FROM audit_log ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(AuditLogEntry {
+                id: row.get(0)?,
+                ts: row.get(1)?,
+                source: row.get(2)?,
+                actor: row.get(3)?,
+                action: row.get(4)?,
+                args_json: row.get(5)?,
+                result: row.get(6)?,
+                error: row.get(7)?,
+            })
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    /// Query audit log entries filtered by action.
+    pub fn query_audit_by_action(&self, action: &str, limit: usize) -> Result<Vec<AuditLogEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, ts, source, actor, action, args_json, result, error FROM audit_log WHERE action = ?1 ORDER BY id DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![action, limit as i64], |row| {
+            Ok(AuditLogEntry {
+                id: row.get(0)?,
+                ts: row.get(1)?,
+                source: row.get(2)?,
+                actor: row.get(3)?,
+                action: row.get(4)?,
+                args_json: row.get(5)?,
+                result: row.get(6)?,
+                error: row.get(7)?,
+            })
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    /// Save a chat turn to the `ai_chat` table.    /// Save a chat turn to the `ai_chat` table.
     pub fn save_chat(&self, role: &str, content: &str) -> Result<()> {
         self.save_chat_session("default", role, content)
     }
@@ -2168,6 +2309,60 @@ mod tests {
         let reports_after =
             db.get_audit_reports_for_repo("/tmp/cashell-test/Product/catable", 10)?;
         assert_eq!(reports_after.len(), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_schema_migrations_and_audit_log_crud() -> Result<()> {
+        let db = Database::open_in_memory()?;
+
+        // Verify migrations 1..=4 applied
+        let applied = db.applied_migrations()?;
+        assert_eq!(applied, vec![1, 2, 3, 4]);
+
+        // Idempotent migration run: running migrations second time must succeed
+        db.run_migrations()?;
+        let applied2 = db.applied_migrations()?;
+        assert_eq!(applied2, vec![1, 2, 3, 4]);
+
+        // Test audit log
+        let id1 = db.log_audit(
+            "daemon",
+            "admin",
+            "restart_container",
+            Some("{\"name\":\"web\"}"),
+            Some("Container web restarted"),
+            None,
+        )?;
+        assert!(id1 > 0);
+
+        let id2 = db.log_audit(
+            "telegram",
+            "user_123",
+            "deploy_app",
+            Some("{\"app\":\"api\"}"),
+            None,
+            Some("Docker daemon timeout"),
+        )?;
+        assert!(id2 > id1);
+
+        let logs = db.query_audit(10)?;
+        assert_eq!(logs.len(), 2);
+        assert_eq!(logs[0].id, id2);
+        assert_eq!(logs[0].source, "telegram");
+        assert_eq!(logs[0].action, "deploy_app");
+        assert_eq!(logs[0].error.as_deref(), Some("Docker daemon timeout"));
+
+        assert_eq!(logs[1].id, id1);
+        assert_eq!(logs[1].source, "daemon");
+        assert_eq!(logs[1].action, "restart_container");
+        assert_eq!(logs[1].result.as_deref(), Some("Container web restarted"));
+
+        // Query by action
+        let restarts = db.query_audit_by_action("restart_container", 5)?;
+        assert_eq!(restarts.len(), 1);
+        assert_eq!(restarts[0].actor, "admin");
 
         Ok(())
     }
