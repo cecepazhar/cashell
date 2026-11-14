@@ -170,13 +170,13 @@ pub struct MascotTelemetry {
     pub xp_level: usize,
     pub tick: usize,
     // Custom settings from Setting page
-    pub speed: String, // "Fast", "Normal", "Slow", "Zen"
+    pub speed: String,       // "Fast", "Normal", "Slow", "Zen"
     pub sensitivity: String, // "High", "Balanced", "Calm"
     pub condition_tracking: bool,
     pub color_scheme: String, // "Dynamic Reactive", "Phosphor Green", "Cyan Cyber", "Amber Retro", "Crimson Red", "Neon Violet"
     pub animation_style: String, // "Hover Bobbing", "Continuous 3D Spin", "Pulse Breathing", "Stationary"
-    pub render_scale: String, // "Auto-Fit", "Large", "Standard", "Compact"
-    pub matrix_speed: String, // "Fast", "Normal", "Slow"
+    pub render_scale: String,    // "Auto-Fit", "Large", "Standard", "Compact"
+    pub matrix_speed: String,    // "Fast", "Normal", "Slow"
 }
 
 impl Default for MascotTelemetry {
@@ -214,133 +214,1024 @@ pub struct MascotExpression {
     pub label: &'static str,
     pub desc: &'static str,
     pub has_glasses: bool,
-    pub mouth_type: u8,   // 0=smile, 1=smirk_left, 2=smirk_right, 3=grin, 4=laugh, 5=tongue, 6=frown, 7=open_o, 8=flat, 9=zigzag
-    pub eye_type: u8,     // 0=shades, 1=wink_left, 2=wink_right, 3=normal, 4=squint, 5=angry, 6=surprised, 7=sleep, 8=matrix, 9=crosshair
-    pub brow_type: u8,    // 0=none, 1=raised, 2=angry, 3=skeptical, 4=worried
+    pub mouth_type: u8, // 0=smile, 1=smirk_left, 2=smirk_right, 3=grin, 4=laugh, 5=tongue, 6=frown, 7=open_o, 8=flat, 9=zigzag
+    pub eye_type: u8, // 0=shades, 1=wink_left, 2=wink_right, 3=normal, 4=squint, 5=angry, 6=surprised, 7=sleep, 8=matrix, 9=crosshair
+    pub brow_type: u8, // 0=none, 1=raised, 2=angry, 3=skeptical, 4=worried
 }
 
 /// Static array of 100 distinct Sovereign expressions.
 /// 10 Archetypes × 10 Intensity Tiers = 100 Unique Visual Configurations.
 pub const SOVEREIGN_EXPRESSIONS: [MascotExpression; 100] = [
     // 00..09: SOVEREIGN SHADES (Cool with Cyber Sunglasses)
-    MascotExpression { id: 0, archetype: "SHADES", label: "Classic Shades", desc: "Balanced steady operations", has_glasses: true, mouth_type: 0, eye_type: 0, brow_type: 0 },
-    MascotExpression { id: 1, archetype: "SHADES", label: "Smirk Shades", desc: "All systems nominal & secure", has_glasses: true, mouth_type: 1, eye_type: 0, brow_type: 0 },
-    MascotExpression { id: 2, archetype: "SHADES", label: "Wide Shades", desc: "Fleet heartbeat synchronized", has_glasses: true, mouth_type: 3, eye_type: 0, brow_type: 0 },
-    MascotExpression { id: 3, archetype: "SHADES", label: "Right Smirk Shades", desc: "Zero packet loss on mesh", has_glasses: true, mouth_type: 2, eye_type: 0, brow_type: 0 },
-    MascotExpression { id: 4, archetype: "SHADES", label: "Stoic Shades", desc: "Quiescent background watcher", has_glasses: true, mouth_type: 8, eye_type: 0, brow_type: 0 },
-    MascotExpression { id: 5, archetype: "SHADES", label: "Gleam Shades", desc: "Fast RPC responses <5ms", has_glasses: true, mouth_type: 0, eye_type: 0, brow_type: 1 },
-    MascotExpression { id: 6, archetype: "SHADES", label: "Laughing Shades", desc: "Zero compiler warnings achieved", has_glasses: true, mouth_type: 4, eye_type: 0, brow_type: 0 },
-    MascotExpression { id: 7, archetype: "SHADES", label: "Tongue Shades", desc: "Playful overclock burst", has_glasses: true, mouth_type: 5, eye_type: 0, brow_type: 0 },
-    MascotExpression { id: 8, archetype: "SHADES", label: "Firm Shades", desc: "Heavy database transactions clean", has_glasses: true, mouth_type: 8, eye_type: 0, brow_type: 2 },
-    MascotExpression { id: 9, archetype: "SHADES", label: "Overdrive Shades", desc: "Consensus leader operating at peak", has_glasses: true, mouth_type: 3, eye_type: 0, brow_type: 1 },
-
+    MascotExpression {
+        id: 0,
+        archetype: "SHADES",
+        label: "Classic Shades",
+        desc: "Balanced steady operations",
+        has_glasses: true,
+        mouth_type: 0,
+        eye_type: 0,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 1,
+        archetype: "SHADES",
+        label: "Smirk Shades",
+        desc: "All systems nominal & secure",
+        has_glasses: true,
+        mouth_type: 1,
+        eye_type: 0,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 2,
+        archetype: "SHADES",
+        label: "Wide Shades",
+        desc: "Fleet heartbeat synchronized",
+        has_glasses: true,
+        mouth_type: 3,
+        eye_type: 0,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 3,
+        archetype: "SHADES",
+        label: "Right Smirk Shades",
+        desc: "Zero packet loss on mesh",
+        has_glasses: true,
+        mouth_type: 2,
+        eye_type: 0,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 4,
+        archetype: "SHADES",
+        label: "Stoic Shades",
+        desc: "Quiescent background watcher",
+        has_glasses: true,
+        mouth_type: 8,
+        eye_type: 0,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 5,
+        archetype: "SHADES",
+        label: "Gleam Shades",
+        desc: "Fast RPC responses <5ms",
+        has_glasses: true,
+        mouth_type: 0,
+        eye_type: 0,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 6,
+        archetype: "SHADES",
+        label: "Laughing Shades",
+        desc: "Zero compiler warnings achieved",
+        has_glasses: true,
+        mouth_type: 4,
+        eye_type: 0,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 7,
+        archetype: "SHADES",
+        label: "Tongue Shades",
+        desc: "Playful overclock burst",
+        has_glasses: true,
+        mouth_type: 5,
+        eye_type: 0,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 8,
+        archetype: "SHADES",
+        label: "Firm Shades",
+        desc: "Heavy database transactions clean",
+        has_glasses: true,
+        mouth_type: 8,
+        eye_type: 0,
+        brow_type: 2,
+    },
+    MascotExpression {
+        id: 9,
+        archetype: "SHADES",
+        label: "Overdrive Shades",
+        desc: "Consensus leader operating at peak",
+        has_glasses: true,
+        mouth_type: 3,
+        eye_type: 0,
+        brow_type: 1,
+    },
     // 10..19: SOVEREIGN WINK (Confident & Playful)
-    MascotExpression { id: 10, archetype: "WINK", label: "Left Wink", desc: "Confident node handshake", has_glasses: false, mouth_type: 0, eye_type: 1, brow_type: 0 },
-    MascotExpression { id: 11, archetype: "WINK", label: "Right Wink", desc: "Tailscale mesh tunnel established", has_glasses: false, mouth_type: 0, eye_type: 2, brow_type: 0 },
-    MascotExpression { id: 12, archetype: "WINK", label: "Left Wink Smirk", desc: "Smooth SSL cert auto-renewal", has_glasses: false, mouth_type: 1, eye_type: 1, brow_type: 0 },
-    MascotExpression { id: 13, archetype: "WINK", label: "Right Wink Smirk", desc: "Local SQLite WAL committed", has_glasses: false, mouth_type: 2, eye_type: 2, brow_type: 0 },
-    MascotExpression { id: 14, archetype: "WINK", label: "Wink Tongue", desc: "Developer treat action received", has_glasses: false, mouth_type: 5, eye_type: 1, brow_type: 0 },
-    MascotExpression { id: 15, archetype: "WINK", label: "Wink Open Mouth", desc: "Fast build completion signal", has_glasses: false, mouth_type: 4, eye_type: 2, brow_type: 1 },
-    MascotExpression { id: 16, archetype: "WINK", label: "Wink Brow Raised", desc: "Curious telemetry check", has_glasses: false, mouth_type: 1, eye_type: 1, brow_type: 1 },
-    MascotExpression { id: 17, archetype: "WINK", label: "Wink Grin", desc: "All 11 cockpit tabs nominal", has_glasses: false, mouth_type: 3, eye_type: 2, brow_type: 0 },
-    MascotExpression { id: 18, archetype: "WINK", label: "Wink Fast Pulse", desc: "Mesh packet ping incoming", has_glasses: false, mouth_type: 0, eye_type: 1, brow_type: 3 },
-    MascotExpression { id: 19, archetype: "WINK", label: "Sovereign Wink Master", desc: "Decentralized auth confirmed", has_glasses: false, mouth_type: 3, eye_type: 2, brow_type: 1 },
-
+    MascotExpression {
+        id: 10,
+        archetype: "WINK",
+        label: "Left Wink",
+        desc: "Confident node handshake",
+        has_glasses: false,
+        mouth_type: 0,
+        eye_type: 1,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 11,
+        archetype: "WINK",
+        label: "Right Wink",
+        desc: "Tailscale mesh tunnel established",
+        has_glasses: false,
+        mouth_type: 0,
+        eye_type: 2,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 12,
+        archetype: "WINK",
+        label: "Left Wink Smirk",
+        desc: "Smooth SSL cert auto-renewal",
+        has_glasses: false,
+        mouth_type: 1,
+        eye_type: 1,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 13,
+        archetype: "WINK",
+        label: "Right Wink Smirk",
+        desc: "Local SQLite WAL committed",
+        has_glasses: false,
+        mouth_type: 2,
+        eye_type: 2,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 14,
+        archetype: "WINK",
+        label: "Wink Tongue",
+        desc: "Developer treat action received",
+        has_glasses: false,
+        mouth_type: 5,
+        eye_type: 1,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 15,
+        archetype: "WINK",
+        label: "Wink Open Mouth",
+        desc: "Fast build completion signal",
+        has_glasses: false,
+        mouth_type: 4,
+        eye_type: 2,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 16,
+        archetype: "WINK",
+        label: "Wink Brow Raised",
+        desc: "Curious telemetry check",
+        has_glasses: false,
+        mouth_type: 1,
+        eye_type: 1,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 17,
+        archetype: "WINK",
+        label: "Wink Grin",
+        desc: "All 11 cockpit tabs nominal",
+        has_glasses: false,
+        mouth_type: 3,
+        eye_type: 2,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 18,
+        archetype: "WINK",
+        label: "Wink Fast Pulse",
+        desc: "Mesh packet ping incoming",
+        has_glasses: false,
+        mouth_type: 0,
+        eye_type: 1,
+        brow_type: 3,
+    },
+    MascotExpression {
+        id: 19,
+        archetype: "WINK",
+        label: "Sovereign Wink Master",
+        desc: "Decentralized auth confirmed",
+        has_glasses: false,
+        mouth_type: 3,
+        eye_type: 2,
+        brow_type: 1,
+    },
     // 20..29: SOVEREIGN GRIN (Cheerful Nominal)
-    MascotExpression { id: 20, archetype: "GRIN", label: "Cheerful Smile", desc: "System running smoothly", has_glasses: false, mouth_type: 0, eye_type: 3, brow_type: 0 },
-    MascotExpression { id: 21, archetype: "GRIN", label: "Wide Grin", desc: "All armada nodes responding", has_glasses: false, mouth_type: 3, eye_type: 3, brow_type: 0 },
-    MascotExpression { id: 22, archetype: "GRIN", label: "High Brow Grin", desc: "Uptime monitor at 100.0%", has_glasses: false, mouth_type: 3, eye_type: 3, brow_type: 1 },
-    MascotExpression { id: 23, archetype: "GRIN", label: "Gentle Beam", desc: "Git repository clean & synced", has_glasses: false, mouth_type: 0, eye_type: 3, brow_type: 0 },
-    MascotExpression { id: 24, archetype: "GRIN", label: "Contented Glow", desc: "Coolify deployment healthy", has_glasses: false, mouth_type: 0, eye_type: 3, brow_type: 1 },
-    MascotExpression { id: 25, archetype: "GRIN", label: "Bright Grin", desc: "Zero deadlocks on SQLite", has_glasses: false, mouth_type: 3, eye_type: 3, brow_type: 0 },
-    MascotExpression { id: 26, archetype: "GRIN", label: "Broad Smile", desc: "Fast NVMe disk write speeds", has_glasses: false, mouth_type: 3, eye_type: 3, brow_type: 1 },
-    MascotExpression { id: 27, archetype: "GRIN", label: "Subtle Grin", desc: "Autonomous daemon loop nominal", has_glasses: false, mouth_type: 1, eye_type: 3, brow_type: 0 },
-    MascotExpression { id: 28, archetype: "GRIN", label: "Radiant Grin", desc: "Hashrate XP milestone reached", has_glasses: false, mouth_type: 3, eye_type: 3, brow_type: 1 },
-    MascotExpression { id: 29, archetype: "GRIN", label: "Sovereign Apex Grin", desc: "Complete ecosystem sovereignty", has_glasses: false, mouth_type: 3, eye_type: 3, brow_type: 1 },
-
+    MascotExpression {
+        id: 20,
+        archetype: "GRIN",
+        label: "Cheerful Smile",
+        desc: "System running smoothly",
+        has_glasses: false,
+        mouth_type: 0,
+        eye_type: 3,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 21,
+        archetype: "GRIN",
+        label: "Wide Grin",
+        desc: "All armada nodes responding",
+        has_glasses: false,
+        mouth_type: 3,
+        eye_type: 3,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 22,
+        archetype: "GRIN",
+        label: "High Brow Grin",
+        desc: "Uptime monitor at 100.0%",
+        has_glasses: false,
+        mouth_type: 3,
+        eye_type: 3,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 23,
+        archetype: "GRIN",
+        label: "Gentle Beam",
+        desc: "Git repository clean & synced",
+        has_glasses: false,
+        mouth_type: 0,
+        eye_type: 3,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 24,
+        archetype: "GRIN",
+        label: "Contented Glow",
+        desc: "Coolify deployment healthy",
+        has_glasses: false,
+        mouth_type: 0,
+        eye_type: 3,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 25,
+        archetype: "GRIN",
+        label: "Bright Grin",
+        desc: "Zero deadlocks on SQLite",
+        has_glasses: false,
+        mouth_type: 3,
+        eye_type: 3,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 26,
+        archetype: "GRIN",
+        label: "Broad Smile",
+        desc: "Fast NVMe disk write speeds",
+        has_glasses: false,
+        mouth_type: 3,
+        eye_type: 3,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 27,
+        archetype: "GRIN",
+        label: "Subtle Grin",
+        desc: "Autonomous daemon loop nominal",
+        has_glasses: false,
+        mouth_type: 1,
+        eye_type: 3,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 28,
+        archetype: "GRIN",
+        label: "Radiant Grin",
+        desc: "Hashrate XP milestone reached",
+        has_glasses: false,
+        mouth_type: 3,
+        eye_type: 3,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 29,
+        archetype: "GRIN",
+        label: "Sovereign Apex Grin",
+        desc: "Complete ecosystem sovereignty",
+        has_glasses: false,
+        mouth_type: 3,
+        eye_type: 3,
+        brow_type: 1,
+    },
     // 30..39: SOVEREIGN LAUGH (High XP / Ecstatic)
-    MascotExpression { id: 30, archetype: "LAUGH", label: "Squint Laugh", desc: "Audit score 100/100 perfect", has_glasses: false, mouth_type: 4, eye_type: 4, brow_type: 0 },
-    MascotExpression { id: 31, archetype: "LAUGH", label: "Triumphant Laugh", desc: "Release binary successfully deployed", has_glasses: false, mouth_type: 4, eye_type: 4, brow_type: 1 },
-    MascotExpression { id: 32, archetype: "LAUGH", label: "Joyous Chortle", desc: "Multi-tenant sync completed", has_glasses: false, mouth_type: 4, eye_type: 4, brow_type: 0 },
-    MascotExpression { id: 33, archetype: "LAUGH", label: "Beaming Laugh", desc: "Pro E2EE state fully synchronized", has_glasses: false, mouth_type: 4, eye_type: 3, brow_type: 1 },
-    MascotExpression { id: 34, archetype: "LAUGH", label: "Guffaw Joy", desc: "Zero runtime panics detected", has_glasses: false, mouth_type: 4, eye_type: 4, brow_type: 1 },
-    MascotExpression { id: 35, archetype: "LAUGH", label: "Sparkle Laugh", desc: "Analytics visitors traffic spike", has_glasses: false, mouth_type: 4, eye_type: 4, brow_type: 0 },
-    MascotExpression { id: 36, archetype: "LAUGH", label: "Belly Laugh", desc: "Fastest benchmark test recorded", has_glasses: false, mouth_type: 4, eye_type: 4, brow_type: 1 },
-    MascotExpression { id: 37, archetype: "LAUGH", label: "Ecstatic Beam", desc: "Memory cache cleared & freed", has_glasses: false, mouth_type: 4, eye_type: 3, brow_type: 1 },
-    MascotExpression { id: 38, archetype: "LAUGH", label: "Consensus Laugh", desc: "All fleet daemons validated", has_glasses: false, mouth_type: 4, eye_type: 4, brow_type: 1 },
-    MascotExpression { id: 39, archetype: "LAUGH", label: "Sovereign Jubilation", desc: "Sovereign developer supreme state", has_glasses: false, mouth_type: 4, eye_type: 4, brow_type: 1 },
-
+    MascotExpression {
+        id: 30,
+        archetype: "LAUGH",
+        label: "Squint Laugh",
+        desc: "Audit score 100/100 perfect",
+        has_glasses: false,
+        mouth_type: 4,
+        eye_type: 4,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 31,
+        archetype: "LAUGH",
+        label: "Triumphant Laugh",
+        desc: "Release binary successfully deployed",
+        has_glasses: false,
+        mouth_type: 4,
+        eye_type: 4,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 32,
+        archetype: "LAUGH",
+        label: "Joyous Chortle",
+        desc: "Multi-tenant sync completed",
+        has_glasses: false,
+        mouth_type: 4,
+        eye_type: 4,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 33,
+        archetype: "LAUGH",
+        label: "Beaming Laugh",
+        desc: "Pro E2EE state fully synchronized",
+        has_glasses: false,
+        mouth_type: 4,
+        eye_type: 3,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 34,
+        archetype: "LAUGH",
+        label: "Guffaw Joy",
+        desc: "Zero runtime panics detected",
+        has_glasses: false,
+        mouth_type: 4,
+        eye_type: 4,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 35,
+        archetype: "LAUGH",
+        label: "Sparkle Laugh",
+        desc: "Analytics visitors traffic spike",
+        has_glasses: false,
+        mouth_type: 4,
+        eye_type: 4,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 36,
+        archetype: "LAUGH",
+        label: "Belly Laugh",
+        desc: "Fastest benchmark test recorded",
+        has_glasses: false,
+        mouth_type: 4,
+        eye_type: 4,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 37,
+        archetype: "LAUGH",
+        label: "Ecstatic Beam",
+        desc: "Memory cache cleared & freed",
+        has_glasses: false,
+        mouth_type: 4,
+        eye_type: 3,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 38,
+        archetype: "LAUGH",
+        label: "Consensus Laugh",
+        desc: "All fleet daemons validated",
+        has_glasses: false,
+        mouth_type: 4,
+        eye_type: 4,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 39,
+        archetype: "LAUGH",
+        label: "Sovereign Jubilation",
+        desc: "Sovereign developer supreme state",
+        has_glasses: false,
+        mouth_type: 4,
+        eye_type: 4,
+        brow_type: 1,
+    },
     // 40..49: SOVEREIGN TONGUE (Playful Blep)
-    MascotExpression { id: 40, archetype: "TONGUE", label: "Center Blep", desc: "Overclock treat consumed", has_glasses: false, mouth_type: 5, eye_type: 3, brow_type: 0 },
-    MascotExpression { id: 41, archetype: "TONGUE", label: "Wink Blep Left", desc: "Playful cache purge triggered", has_glasses: false, mouth_type: 5, eye_type: 1, brow_type: 0 },
-    MascotExpression { id: 42, archetype: "TONGUE", label: "Wink Blep Right", desc: "Interactive button click detected", has_glasses: false, mouth_type: 5, eye_type: 2, brow_type: 0 },
-    MascotExpression { id: 43, archetype: "TONGUE", label: "Squint Blep", desc: "Spin token action executed", has_glasses: false, mouth_type: 5, eye_type: 4, brow_type: 0 },
-    MascotExpression { id: 44, archetype: "TONGUE", label: "Cheeky Tongue", desc: "Testing Docker container restart", has_glasses: false, mouth_type: 5, eye_type: 3, brow_type: 1 },
-    MascotExpression { id: 45, archetype: "TONGUE", label: "Derp Blep", desc: "Temporary dev port test", has_glasses: false, mouth_type: 5, eye_type: 3, brow_type: 3 },
-    MascotExpression { id: 46, archetype: "TONGUE", label: "Happy Tongue", desc: "Bonus XP points accrued", has_glasses: false, mouth_type: 5, eye_type: 3, brow_type: 1 },
-    MascotExpression { id: 47, archetype: "TONGUE", label: "Surprised Blep", desc: "Unexpected fast response", has_glasses: false, mouth_type: 5, eye_type: 6, brow_type: 1 },
-    MascotExpression { id: 48, archetype: "TONGUE", label: "Matrix Blep", desc: "Digital token playful mood", has_glasses: false, mouth_type: 5, eye_type: 8, brow_type: 0 },
-    MascotExpression { id: 49, archetype: "TONGUE", label: "Sovereign Cheeky Blep", desc: "Mascot sovereign energy high", has_glasses: false, mouth_type: 5, eye_type: 3, brow_type: 1 },
-
+    MascotExpression {
+        id: 40,
+        archetype: "TONGUE",
+        label: "Center Blep",
+        desc: "Overclock treat consumed",
+        has_glasses: false,
+        mouth_type: 5,
+        eye_type: 3,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 41,
+        archetype: "TONGUE",
+        label: "Wink Blep Left",
+        desc: "Playful cache purge triggered",
+        has_glasses: false,
+        mouth_type: 5,
+        eye_type: 1,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 42,
+        archetype: "TONGUE",
+        label: "Wink Blep Right",
+        desc: "Interactive button click detected",
+        has_glasses: false,
+        mouth_type: 5,
+        eye_type: 2,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 43,
+        archetype: "TONGUE",
+        label: "Squint Blep",
+        desc: "Spin token action executed",
+        has_glasses: false,
+        mouth_type: 5,
+        eye_type: 4,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 44,
+        archetype: "TONGUE",
+        label: "Cheeky Tongue",
+        desc: "Testing Docker container restart",
+        has_glasses: false,
+        mouth_type: 5,
+        eye_type: 3,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 45,
+        archetype: "TONGUE",
+        label: "Derp Blep",
+        desc: "Temporary dev port test",
+        has_glasses: false,
+        mouth_type: 5,
+        eye_type: 3,
+        brow_type: 3,
+    },
+    MascotExpression {
+        id: 46,
+        archetype: "TONGUE",
+        label: "Happy Tongue",
+        desc: "Bonus XP points accrued",
+        has_glasses: false,
+        mouth_type: 5,
+        eye_type: 3,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 47,
+        archetype: "TONGUE",
+        label: "Surprised Blep",
+        desc: "Unexpected fast response",
+        has_glasses: false,
+        mouth_type: 5,
+        eye_type: 6,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 48,
+        archetype: "TONGUE",
+        label: "Matrix Blep",
+        desc: "Digital token playful mood",
+        has_glasses: false,
+        mouth_type: 5,
+        eye_type: 8,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 49,
+        archetype: "TONGUE",
+        label: "Sovereign Cheeky Blep",
+        desc: "Mascot sovereign energy high",
+        has_glasses: false,
+        mouth_type: 5,
+        eye_type: 3,
+        brow_type: 1,
+    },
     // 50..59: SOVEREIGN ALERT (Vigilant & Focused)
-    MascotExpression { id: 50, archetype: "ALERT", label: "Watchful Gaze", desc: "Network latency elevation >60ms", has_glasses: false, mouth_type: 8, eye_type: 3, brow_type: 3 },
-    MascotExpression { id: 51, archetype: "ALERT", label: "Narrow Eye Focus", desc: "Uncommitted git changes pending", has_glasses: false, mouth_type: 8, eye_type: 4, brow_type: 3 },
-    MascotExpression { id: 52, archetype: "ALERT", label: "Scanning Eyes", desc: "Fleet heartbeat telemetry probe", has_glasses: false, mouth_type: 8, eye_type: 3, brow_type: 1 },
-    MascotExpression { id: 53, archetype: "ALERT", label: "Skeptical Brow", desc: "Single container restart detected", has_glasses: false, mouth_type: 1, eye_type: 3, brow_type: 3 },
-    MascotExpression { id: 54, archetype: "ALERT", label: "Crosshair Scan", desc: "Audit vulnerability scan running", has_glasses: false, mouth_type: 8, eye_type: 9, brow_type: 2 },
-    MascotExpression { id: 55, archetype: "ALERT", label: "Guarded Stance", desc: "SSL cert expiration approaching", has_glasses: false, mouth_type: 6, eye_type: 3, brow_type: 2 },
-    MascotExpression { id: 56, archetype: "ALERT", label: "Vigilant Guard", desc: "Foreign SSH handshake blocked", has_glasses: false, mouth_type: 8, eye_type: 3, brow_type: 2 },
-    MascotExpression { id: 57, archetype: "ALERT", label: "Intense Audit", desc: "Codebase review in progress", has_glasses: false, mouth_type: 8, eye_type: 9, brow_type: 3 },
-    MascotExpression { id: 58, archetype: "ALERT", label: "Perimeter Alert", desc: "Elevated network traffic detected", has_glasses: false, mouth_type: 6, eye_type: 3, brow_type: 3 },
-    MascotExpression { id: 59, archetype: "ALERT", label: "Sovereign Sentry", desc: "24/7 autonomous cockpit vigilance", has_glasses: false, mouth_type: 8, eye_type: 9, brow_type: 2 },
-
+    MascotExpression {
+        id: 50,
+        archetype: "ALERT",
+        label: "Watchful Gaze",
+        desc: "Network latency elevation >60ms",
+        has_glasses: false,
+        mouth_type: 8,
+        eye_type: 3,
+        brow_type: 3,
+    },
+    MascotExpression {
+        id: 51,
+        archetype: "ALERT",
+        label: "Narrow Eye Focus",
+        desc: "Uncommitted git changes pending",
+        has_glasses: false,
+        mouth_type: 8,
+        eye_type: 4,
+        brow_type: 3,
+    },
+    MascotExpression {
+        id: 52,
+        archetype: "ALERT",
+        label: "Scanning Eyes",
+        desc: "Fleet heartbeat telemetry probe",
+        has_glasses: false,
+        mouth_type: 8,
+        eye_type: 3,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 53,
+        archetype: "ALERT",
+        label: "Skeptical Brow",
+        desc: "Single container restart detected",
+        has_glasses: false,
+        mouth_type: 1,
+        eye_type: 3,
+        brow_type: 3,
+    },
+    MascotExpression {
+        id: 54,
+        archetype: "ALERT",
+        label: "Crosshair Scan",
+        desc: "Audit vulnerability scan running",
+        has_glasses: false,
+        mouth_type: 8,
+        eye_type: 9,
+        brow_type: 2,
+    },
+    MascotExpression {
+        id: 55,
+        archetype: "ALERT",
+        label: "Guarded Stance",
+        desc: "SSL cert expiration approaching",
+        has_glasses: false,
+        mouth_type: 6,
+        eye_type: 3,
+        brow_type: 2,
+    },
+    MascotExpression {
+        id: 56,
+        archetype: "ALERT",
+        label: "Vigilant Guard",
+        desc: "Foreign SSH handshake blocked",
+        has_glasses: false,
+        mouth_type: 8,
+        eye_type: 3,
+        brow_type: 2,
+    },
+    MascotExpression {
+        id: 57,
+        archetype: "ALERT",
+        label: "Intense Audit",
+        desc: "Codebase review in progress",
+        has_glasses: false,
+        mouth_type: 8,
+        eye_type: 9,
+        brow_type: 3,
+    },
+    MascotExpression {
+        id: 58,
+        archetype: "ALERT",
+        label: "Perimeter Alert",
+        desc: "Elevated network traffic detected",
+        has_glasses: false,
+        mouth_type: 6,
+        eye_type: 3,
+        brow_type: 3,
+    },
+    MascotExpression {
+        id: 59,
+        archetype: "ALERT",
+        label: "Sovereign Sentry",
+        desc: "24/7 autonomous cockpit vigilance",
+        has_glasses: false,
+        mouth_type: 8,
+        eye_type: 9,
+        brow_type: 2,
+    },
     // 60..69: SOVEREIGN ANGRY / OVERHEATED (High Load & Temperature)
-    MascotExpression { id: 60, archetype: "ANGRY", label: "Annoyed Frown", desc: "CPU temp reaching 75°C", has_glasses: false, mouth_type: 6, eye_type: 5, brow_type: 2 },
-    MascotExpression { id: 61, archetype: "ANGRY", label: "Furious Glare", desc: "CPU load exceeds 85%", has_glasses: false, mouth_type: 6, eye_type: 5, brow_type: 2 },
-    MascotExpression { id: 62, archetype: "ANGRY", label: "Thermal Throttle", desc: "Core temperature >80°C threshold", has_glasses: false, mouth_type: 9, eye_type: 5, brow_type: 2 },
-    MascotExpression { id: 63, archetype: "ANGRY", label: "RAM Pressure", desc: "System memory utilized >85%", has_glasses: false, mouth_type: 6, eye_type: 5, brow_type: 2 },
-    MascotExpression { id: 64, archetype: "ANGRY", label: "Redline Overheat", desc: "Heavy multi-core compilation burn", has_glasses: false, mouth_type: 9, eye_type: 5, brow_type: 2 },
-    MascotExpression { id: 65, archetype: "ANGRY", label: "Steaming Core", desc: "High fan RPM on ThinkPad X1", has_glasses: false, mouth_type: 9, eye_type: 5, brow_type: 2 },
-    MascotExpression { id: 66, archetype: "ANGRY", label: "Swap Stress", desc: "Linux ZRAM swap active >80%", has_glasses: false, mouth_type: 6, eye_type: 5, brow_type: 2 },
-    MascotExpression { id: 67, archetype: "ANGRY", label: "Intense Scowl", desc: "Docker I/O bottleneck encountered", has_glasses: false, mouth_type: 6, eye_type: 5, brow_type: 2 },
-    MascotExpression { id: 68, archetype: "ANGRY", label: "Overclock Blaze", desc: "Max TDP PL2 burst sustained", has_glasses: false, mouth_type: 9, eye_type: 5, brow_type: 2 },
-    MascotExpression { id: 69, archetype: "ANGRY", label: "Sovereign Fury", desc: "Hardware boundary stress test", has_glasses: false, mouth_type: 9, eye_type: 5, brow_type: 2 },
-
+    MascotExpression {
+        id: 60,
+        archetype: "ANGRY",
+        label: "Annoyed Frown",
+        desc: "CPU temp reaching 75°C",
+        has_glasses: false,
+        mouth_type: 6,
+        eye_type: 5,
+        brow_type: 2,
+    },
+    MascotExpression {
+        id: 61,
+        archetype: "ANGRY",
+        label: "Furious Glare",
+        desc: "CPU load exceeds 85%",
+        has_glasses: false,
+        mouth_type: 6,
+        eye_type: 5,
+        brow_type: 2,
+    },
+    MascotExpression {
+        id: 62,
+        archetype: "ANGRY",
+        label: "Thermal Throttle",
+        desc: "Core temperature >80°C threshold",
+        has_glasses: false,
+        mouth_type: 9,
+        eye_type: 5,
+        brow_type: 2,
+    },
+    MascotExpression {
+        id: 63,
+        archetype: "ANGRY",
+        label: "RAM Pressure",
+        desc: "System memory utilized >85%",
+        has_glasses: false,
+        mouth_type: 6,
+        eye_type: 5,
+        brow_type: 2,
+    },
+    MascotExpression {
+        id: 64,
+        archetype: "ANGRY",
+        label: "Redline Overheat",
+        desc: "Heavy multi-core compilation burn",
+        has_glasses: false,
+        mouth_type: 9,
+        eye_type: 5,
+        brow_type: 2,
+    },
+    MascotExpression {
+        id: 65,
+        archetype: "ANGRY",
+        label: "Steaming Core",
+        desc: "High fan RPM on ThinkPad X1",
+        has_glasses: false,
+        mouth_type: 9,
+        eye_type: 5,
+        brow_type: 2,
+    },
+    MascotExpression {
+        id: 66,
+        archetype: "ANGRY",
+        label: "Swap Stress",
+        desc: "Linux ZRAM swap active >80%",
+        has_glasses: false,
+        mouth_type: 6,
+        eye_type: 5,
+        brow_type: 2,
+    },
+    MascotExpression {
+        id: 67,
+        archetype: "ANGRY",
+        label: "Intense Scowl",
+        desc: "Docker I/O bottleneck encountered",
+        has_glasses: false,
+        mouth_type: 6,
+        eye_type: 5,
+        brow_type: 2,
+    },
+    MascotExpression {
+        id: 68,
+        archetype: "ANGRY",
+        label: "Overclock Blaze",
+        desc: "Max TDP PL2 burst sustained",
+        has_glasses: false,
+        mouth_type: 9,
+        eye_type: 5,
+        brow_type: 2,
+    },
+    MascotExpression {
+        id: 69,
+        archetype: "ANGRY",
+        label: "Sovereign Fury",
+        desc: "Hardware boundary stress test",
+        has_glasses: false,
+        mouth_type: 9,
+        eye_type: 5,
+        brow_type: 2,
+    },
     // 70..79: SOVEREIGN SURPRISED (Node Timeout / Anomaly)
-    MascotExpression { id: 70, archetype: "SURPRISED", label: "Wide Eyes O", desc: "Uptime monitor returned 5xx", has_glasses: false, mouth_type: 7, eye_type: 6, brow_type: 1 },
-    MascotExpression { id: 71, archetype: "SURPRISED", label: "Gasp Shock", desc: "Remote node unreachable timeout", has_glasses: false, mouth_type: 7, eye_type: 6, brow_type: 1 },
-    MascotExpression { id: 72, archetype: "SURPRISED", label: "Dropped Jaw", desc: "Docker container unexpectedly exited", has_glasses: false, mouth_type: 7, eye_type: 6, brow_type: 1 },
-    MascotExpression { id: 73, archetype: "SURPRISED", label: "Asymmetric Shock", desc: "Disk partition capacity >90%", has_glasses: false, mouth_type: 7, eye_type: 6, brow_type: 3 },
-    MascotExpression { id: 74, archetype: "SURPRISED", label: "Blink Gasp", desc: "Network interface reconnected", has_glasses: false, mouth_type: 7, eye_type: 1, brow_type: 1 },
-    MascotExpression { id: 75, archetype: "SURPRISED", label: "Sudden Alert", desc: "Memory drop cache command issued", has_glasses: false, mouth_type: 7, eye_type: 6, brow_type: 1 },
-    MascotExpression { id: 76, archetype: "SURPRISED", label: "Bewildered O", desc: "Database lock contention resolved", has_glasses: false, mouth_type: 7, eye_type: 6, brow_type: 3 },
-    MascotExpression { id: 77, archetype: "SURPRISED", label: "Wide Stare", desc: "Rapid spike in web analytics", has_glasses: false, mouth_type: 7, eye_type: 6, brow_type: 1 },
-    MascotExpression { id: 78, archetype: "SURPRISED", label: "High Eyebrows O", desc: "Zero-day vulnerability patch alert", has_glasses: false, mouth_type: 7, eye_type: 6, brow_type: 1 },
-    MascotExpression { id: 79, archetype: "SURPRISED", label: "Sovereign Anomaly", desc: "Unexpected edge case captured", has_glasses: false, mouth_type: 7, eye_type: 6, brow_type: 1 },
-
+    MascotExpression {
+        id: 70,
+        archetype: "SURPRISED",
+        label: "Wide Eyes O",
+        desc: "Uptime monitor returned 5xx",
+        has_glasses: false,
+        mouth_type: 7,
+        eye_type: 6,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 71,
+        archetype: "SURPRISED",
+        label: "Gasp Shock",
+        desc: "Remote node unreachable timeout",
+        has_glasses: false,
+        mouth_type: 7,
+        eye_type: 6,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 72,
+        archetype: "SURPRISED",
+        label: "Dropped Jaw",
+        desc: "Docker container unexpectedly exited",
+        has_glasses: false,
+        mouth_type: 7,
+        eye_type: 6,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 73,
+        archetype: "SURPRISED",
+        label: "Asymmetric Shock",
+        desc: "Disk partition capacity >90%",
+        has_glasses: false,
+        mouth_type: 7,
+        eye_type: 6,
+        brow_type: 3,
+    },
+    MascotExpression {
+        id: 74,
+        archetype: "SURPRISED",
+        label: "Blink Gasp",
+        desc: "Network interface reconnected",
+        has_glasses: false,
+        mouth_type: 7,
+        eye_type: 1,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 75,
+        archetype: "SURPRISED",
+        label: "Sudden Alert",
+        desc: "Memory drop cache command issued",
+        has_glasses: false,
+        mouth_type: 7,
+        eye_type: 6,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 76,
+        archetype: "SURPRISED",
+        label: "Bewildered O",
+        desc: "Database lock contention resolved",
+        has_glasses: false,
+        mouth_type: 7,
+        eye_type: 6,
+        brow_type: 3,
+    },
+    MascotExpression {
+        id: 77,
+        archetype: "SURPRISED",
+        label: "Wide Stare",
+        desc: "Rapid spike in web analytics",
+        has_glasses: false,
+        mouth_type: 7,
+        eye_type: 6,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 78,
+        archetype: "SURPRISED",
+        label: "High Eyebrows O",
+        desc: "Zero-day vulnerability patch alert",
+        has_glasses: false,
+        mouth_type: 7,
+        eye_type: 6,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 79,
+        archetype: "SURPRISED",
+        label: "Sovereign Anomaly",
+        desc: "Unexpected edge case captured",
+        has_glasses: false,
+        mouth_type: 7,
+        eye_type: 6,
+        brow_type: 1,
+    },
     // 80..89: SOVEREIGN ZEN / SLEEP (Quiescent Night / Idle)
-    MascotExpression { id: 80, archetype: "ZEN", label: "Slumber Slits", desc: "System quiescent & idle", has_glasses: false, mouth_type: 8, eye_type: 7, brow_type: 0 },
-    MascotExpression { id: 81, archetype: "ZEN", label: "Zen Smile", desc: "Peaceful background operation", has_glasses: false, mouth_type: 0, eye_type: 7, brow_type: 0 },
-    MascotExpression { id: 82, archetype: "ZEN", label: "Deep Meditation", desc: "Zero processes hogging CPU", has_glasses: false, mouth_type: 8, eye_type: 7, brow_type: 0 },
-    MascotExpression { id: 83, archetype: "ZEN", label: "Sleepy Zzz", desc: "Overnight maintenance cycle", has_glasses: false, mouth_type: 8, eye_type: 7, brow_type: 0 },
-    MascotExpression { id: 84, archetype: "ZEN", label: "Gentle Respiration", desc: "Battery conservation mode active", has_glasses: false, mouth_type: 0, eye_type: 7, brow_type: 0 },
-    MascotExpression { id: 85, archetype: "ZEN", label: "Quiescent Slumber", desc: "Low thermal footprint <45°C", has_glasses: false, mouth_type: 8, eye_type: 7, brow_type: 0 },
-    MascotExpression { id: 86, archetype: "ZEN", label: "Trance State", desc: "Autonomous daemon resting", has_glasses: false, mouth_type: 0, eye_type: 7, brow_type: 0 },
-    MascotExpression { id: 87, archetype: "ZEN", label: "Calm Serenity", desc: "All background queues empty", has_glasses: false, mouth_type: 0, eye_type: 7, brow_type: 0 },
-    MascotExpression { id: 88, archetype: "ZEN", label: "Half Awake Blink", desc: "Telemetry tick awakening", has_glasses: false, mouth_type: 0, eye_type: 1, brow_type: 0 },
-    MascotExpression { id: 89, archetype: "ZEN", label: "Sovereign Quiescence", desc: "Harmonious sovereign harmony", has_glasses: false, mouth_type: 0, eye_type: 7, brow_type: 0 },
-
+    MascotExpression {
+        id: 80,
+        archetype: "ZEN",
+        label: "Slumber Slits",
+        desc: "System quiescent & idle",
+        has_glasses: false,
+        mouth_type: 8,
+        eye_type: 7,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 81,
+        archetype: "ZEN",
+        label: "Zen Smile",
+        desc: "Peaceful background operation",
+        has_glasses: false,
+        mouth_type: 0,
+        eye_type: 7,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 82,
+        archetype: "ZEN",
+        label: "Deep Meditation",
+        desc: "Zero processes hogging CPU",
+        has_glasses: false,
+        mouth_type: 8,
+        eye_type: 7,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 83,
+        archetype: "ZEN",
+        label: "Sleepy Zzz",
+        desc: "Overnight maintenance cycle",
+        has_glasses: false,
+        mouth_type: 8,
+        eye_type: 7,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 84,
+        archetype: "ZEN",
+        label: "Gentle Respiration",
+        desc: "Battery conservation mode active",
+        has_glasses: false,
+        mouth_type: 0,
+        eye_type: 7,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 85,
+        archetype: "ZEN",
+        label: "Quiescent Slumber",
+        desc: "Low thermal footprint <45°C",
+        has_glasses: false,
+        mouth_type: 8,
+        eye_type: 7,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 86,
+        archetype: "ZEN",
+        label: "Trance State",
+        desc: "Autonomous daemon resting",
+        has_glasses: false,
+        mouth_type: 0,
+        eye_type: 7,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 87,
+        archetype: "ZEN",
+        label: "Calm Serenity",
+        desc: "All background queues empty",
+        has_glasses: false,
+        mouth_type: 0,
+        eye_type: 7,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 88,
+        archetype: "ZEN",
+        label: "Half Awake Blink",
+        desc: "Telemetry tick awakening",
+        has_glasses: false,
+        mouth_type: 0,
+        eye_type: 1,
+        brow_type: 0,
+    },
+    MascotExpression {
+        id: 89,
+        archetype: "ZEN",
+        label: "Sovereign Quiescence",
+        desc: "Harmonious sovereign harmony",
+        has_glasses: false,
+        mouth_type: 0,
+        eye_type: 7,
+        brow_type: 0,
+    },
     // 90..99: SOVEREIGN CYBER / MATRIX OVERDRIVE (Turbo Overclock)
-    MascotExpression { id: 90, archetype: "CYBER", label: "Matrix Code Eyes", desc: "Turbo mode engaged / stream active", has_glasses: false, mouth_type: 3, eye_type: 8, brow_type: 1 },
-    MascotExpression { id: 91, archetype: "CYBER", label: "Crosshair HUD", desc: "Targeted performance optimization", has_glasses: false, mouth_type: 0, eye_type: 9, brow_type: 2 },
-    MascotExpression { id: 92, archetype: "CYBER", label: "Binary Visor", desc: "BBR congestion control accelerating", has_glasses: true, mouth_type: 3, eye_type: 8, brow_type: 1 },
-    MascotExpression { id: 93, archetype: "CYBER", label: "Neon Glitch", desc: "Kernel drop caches execution", has_glasses: false, mouth_type: 9, eye_type: 8, brow_type: 3 },
-    MascotExpression { id: 94, archetype: "CYBER", label: "Turbo Overdrive", desc: "Max governor performance lock", has_glasses: true, mouth_type: 4, eye_type: 0, brow_type: 1 },
-    MascotExpression { id: 95, archetype: "CYBER", label: "Warp Acceleration", desc: "Parallel cargo compilation burst", has_glasses: false, mouth_type: 4, eye_type: 8, brow_type: 1 },
-    MascotExpression { id: 96, archetype: "CYBER", label: "Crypto Proof Gaze", desc: "Hardware SHA-256 / Ed25519 loop", has_glasses: false, mouth_type: 3, eye_type: 9, brow_type: 1 },
-    MascotExpression { id: 97, archetype: "CYBER", label: "Quantum HUD", desc: "Multi-cluster mesh synchronization", has_glasses: false, mouth_type: 8, eye_type: 9, brow_type: 1 },
-    MascotExpression { id: 98, archetype: "CYBER", label: "Root Awakening", desc: "Maximum sovereign permissions", has_glasses: true, mouth_type: 3, eye_type: 8, brow_type: 1 },
-    MascotExpression { id: 99, archetype: "CYBER", label: "Sovereign Singularity", desc: "Peak sovereign developer singularity", has_glasses: true, mouth_type: 4, eye_type: 8, brow_type: 1 },
+    MascotExpression {
+        id: 90,
+        archetype: "CYBER",
+        label: "Matrix Code Eyes",
+        desc: "Turbo mode engaged / stream active",
+        has_glasses: false,
+        mouth_type: 3,
+        eye_type: 8,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 91,
+        archetype: "CYBER",
+        label: "Crosshair HUD",
+        desc: "Targeted performance optimization",
+        has_glasses: false,
+        mouth_type: 0,
+        eye_type: 9,
+        brow_type: 2,
+    },
+    MascotExpression {
+        id: 92,
+        archetype: "CYBER",
+        label: "Binary Visor",
+        desc: "BBR congestion control accelerating",
+        has_glasses: true,
+        mouth_type: 3,
+        eye_type: 8,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 93,
+        archetype: "CYBER",
+        label: "Neon Glitch",
+        desc: "Kernel drop caches execution",
+        has_glasses: false,
+        mouth_type: 9,
+        eye_type: 8,
+        brow_type: 3,
+    },
+    MascotExpression {
+        id: 94,
+        archetype: "CYBER",
+        label: "Turbo Overdrive",
+        desc: "Max governor performance lock",
+        has_glasses: true,
+        mouth_type: 4,
+        eye_type: 0,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 95,
+        archetype: "CYBER",
+        label: "Warp Acceleration",
+        desc: "Parallel cargo compilation burst",
+        has_glasses: false,
+        mouth_type: 4,
+        eye_type: 8,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 96,
+        archetype: "CYBER",
+        label: "Crypto Proof Gaze",
+        desc: "Hardware SHA-256 / Ed25519 loop",
+        has_glasses: false,
+        mouth_type: 3,
+        eye_type: 9,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 97,
+        archetype: "CYBER",
+        label: "Quantum HUD",
+        desc: "Multi-cluster mesh synchronization",
+        has_glasses: false,
+        mouth_type: 8,
+        eye_type: 9,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 98,
+        archetype: "CYBER",
+        label: "Root Awakening",
+        desc: "Maximum sovereign permissions",
+        has_glasses: true,
+        mouth_type: 3,
+        eye_type: 8,
+        brow_type: 1,
+    },
+    MascotExpression {
+        id: 99,
+        archetype: "CYBER",
+        label: "Sovereign Singularity",
+        desc: "Peak sovereign developer singularity",
+        has_glasses: true,
+        mouth_type: 4,
+        eye_type: 8,
+        brow_type: 1,
+    },
 ];
 
 /// Deterministically selects the exact expression from the 100 expressions
@@ -380,7 +1271,8 @@ pub fn select_expression(telem: &MascotTelemetry) -> &'static MascotExpression {
         }
 
         // 4. Critical: Node or Container Down (Surprise / Anomaly)
-        if telem.fleet_nodes_down > 0 || telem.containers_down > 0 || telem.uptime_monitors_down > 0 {
+        if telem.fleet_nodes_down > 0 || telem.containers_down > 0 || telem.uptime_monitors_down > 0
+        {
             let v = (tick_scaled / 16) % 10;
             return &SOVEREIGN_EXPRESSIONS[70 + v];
         }
@@ -433,9 +1325,9 @@ pub fn select_expression(telem: &MascotTelemetry) -> &'static MascotExpression {
     let cycle = (tick_scaled / 32) % 3;
     let v = (tick_scaled / 8) % 10;
     match cycle {
-        0 => &SOVEREIGN_EXPRESSIONS[v],        // Shades
-        1 => &SOVEREIGN_EXPRESSIONS[10 + v],   // Wink
-        _ => &SOVEREIGN_EXPRESSIONS[20 + v],   // Grin
+        0 => &SOVEREIGN_EXPRESSIONS[v],      // Shades
+        1 => &SOVEREIGN_EXPRESSIONS[10 + v], // Wink
+        _ => &SOVEREIGN_EXPRESSIONS[20 + v], // Grin
     }
 }
 
@@ -514,9 +1406,16 @@ pub fn render_sovereign_token_lines(
             (0i32, 1.0f64, pulse)
         }
         "Stationary" => (0i32, 1.0f64, 1.0f64),
-        _ => { // "Hover Bobbing"
+        _ => {
+            // "Hover Bobbing"
             let bob_sine = (telem.tick as f64 * 0.12).sin();
-            let b = if bob_sine > 0.4 { 1i32 } else if bob_sine < -0.4 { -1i32 } else { 0i32 };
+            let b = if bob_sine > 0.4 {
+                1i32
+            } else if bob_sine < -0.4 {
+                -1i32
+            } else {
+                0i32
+            };
             (b, 1.0f64, 1.0f64)
         }
     };
@@ -526,9 +1425,15 @@ pub fn render_sovereign_token_lines(
     let cy = ((h as f64) / 2.0 - 1.2 + (bob as f64)).max(2.0);
 
     let (base_rx, base_ry) = match telem.render_scale.as_str() {
-        "Large" => (((w as f64) / 2.0 - 1.2).max(4.0), ((h as f64) / 2.8).max(2.0)),
+        "Large" => (
+            ((w as f64) / 2.0 - 1.2).max(4.0),
+            ((h as f64) / 2.8).max(2.0),
+        ),
         "Compact" => (((w as f64) / 2.8).max(3.5), ((h as f64) / 4.2).max(1.5)),
-        _ => (((w as f64) / 2.0 - 2.8).max(4.0), ((h as f64) / 3.4).max(1.8)), // "Auto-Fit" / "Standard"
+        _ => (
+            ((w as f64) / 2.0 - 2.8).max(4.0),
+            ((h as f64) / 3.4).max(1.8),
+        ), // "Auto-Fit" / "Standard"
     };
     let rx = (base_rx * spin_mult * scale_mult).max(2.5);
     let ry = (base_ry * scale_mult).max(1.5);
@@ -536,20 +1441,57 @@ pub fn render_sovereign_token_lines(
 
     // 4. Color Scheme Configuration
     let (neon_bright, neon_mid, neon_dim) = match telem.color_scheme.as_str() {
-        "Phosphor Green" => (Color::Rgb(57, 255, 20), Color::Rgb(0, 190, 55), Color::Rgb(0, 90, 25)),
-        "Cyan Cyber" => (Color::Rgb(0, 255, 240), Color::Rgb(0, 180, 200), Color::Rgb(0, 80, 100)),
-        "Amber Retro" => (Color::Rgb(255, 176, 0), Color::Rgb(200, 130, 0), Color::Rgb(100, 60, 0)),
-        "Crimson Red" => (Color::Rgb(255, 50, 60), Color::Rgb(180, 30, 40), Color::Rgb(90, 15, 20)),
-        "Neon Violet" => (Color::Rgb(180, 60, 255), Color::Rgb(130, 40, 200), Color::Rgb(70, 20, 100)),
-        _ => { // "Dynamic Reactive" (Default)
+        "Phosphor Green" => (
+            Color::Rgb(57, 255, 20),
+            Color::Rgb(0, 190, 55),
+            Color::Rgb(0, 90, 25),
+        ),
+        "Cyan Cyber" => (
+            Color::Rgb(0, 255, 240),
+            Color::Rgb(0, 180, 200),
+            Color::Rgb(0, 80, 100),
+        ),
+        "Amber Retro" => (
+            Color::Rgb(255, 176, 0),
+            Color::Rgb(200, 130, 0),
+            Color::Rgb(100, 60, 0),
+        ),
+        "Crimson Red" => (
+            Color::Rgb(255, 50, 60),
+            Color::Rgb(180, 30, 40),
+            Color::Rgb(90, 15, 20),
+        ),
+        "Neon Violet" => (
+            Color::Rgb(180, 60, 255),
+            Color::Rgb(130, 40, 200),
+            Color::Rgb(70, 20, 100),
+        ),
+        _ => {
+            // "Dynamic Reactive" (Default)
             if telem.cpu_temp_c > 80.0 || telem.cpu_pct > 85.0 {
-                (Color::Rgb(255, 60, 60), Color::Rgb(180, 30, 30), Color::Rgb(90, 15, 15))
+                (
+                    Color::Rgb(255, 60, 60),
+                    Color::Rgb(180, 30, 30),
+                    Color::Rgb(90, 15, 15),
+                )
             } else if telem.turbo_active {
-                (Color::Rgb(0, 255, 240), Color::Rgb(0, 180, 200), Color::Rgb(0, 80, 100))
+                (
+                    Color::Rgb(0, 255, 240),
+                    Color::Rgb(0, 180, 200),
+                    Color::Rgb(0, 80, 100),
+                )
             } else if telem.cpu_pct > 65.0 {
-                (Color::Rgb(255, 215, 0), Color::Rgb(180, 150, 0), Color::Rgb(90, 75, 0))
+                (
+                    Color::Rgb(255, 215, 0),
+                    Color::Rgb(180, 150, 0),
+                    Color::Rgb(90, 75, 0),
+                )
             } else {
-                (Color::Rgb(57, 255, 20), Color::Rgb(0, 190, 55), Color::Rgb(0, 90, 25))
+                (
+                    Color::Rgb(57, 255, 20),
+                    Color::Rgb(0, 190, 55),
+                    Color::Rgb(0, 90, 25),
+                )
             }
         }
     };
@@ -565,7 +1507,11 @@ pub fn render_sovereign_token_lines(
                 if y_bot >= 0 && (y_bot as usize) < h {
                     let y_idx = y_bot as usize;
                     char_grid[y_idx][x] = if t_step == thickness { '█' } else { '▓' };
-                    fg_grid[y_idx][x] = if t_step == thickness { neon_bright } else { neon_mid };
+                    fg_grid[y_idx][x] = if t_step == thickness {
+                        neon_bright
+                    } else {
+                        neon_mid
+                    };
                     mod_grid[y_idx][x] = Modifier::BOLD;
                 }
                 // Extruded side walls
@@ -647,23 +1593,44 @@ pub fn render_sovereign_token_lines(
         if fcy - 1 >= 0 && ((fcy - 1) as usize) < h {
             let r = (fcy - 1) as usize;
             match expr.brow_type {
-                1 => { // Raised brows
+                1 => {
+                    // Raised brows
                     let lx = fcx - 3;
                     let rx_b = fcx + 3;
-                    if lx >= 0 && (lx as usize) < w { char_grid[r][lx as usize] = '▀'; fg_grid[r][lx as usize] = neon_bright; }
-                    if rx_b >= 0 && (rx_b as usize) < w { char_grid[r][rx_b as usize] = '▀'; fg_grid[r][rx_b as usize] = neon_bright; }
+                    if lx >= 0 && (lx as usize) < w {
+                        char_grid[r][lx as usize] = '▀';
+                        fg_grid[r][lx as usize] = neon_bright;
+                    }
+                    if rx_b >= 0 && (rx_b as usize) < w {
+                        char_grid[r][rx_b as usize] = '▀';
+                        fg_grid[r][rx_b as usize] = neon_bright;
+                    }
                 }
-                2 => { // Angry brows \ /
+                2 => {
+                    // Angry brows \ /
                     let lx = fcx - 3;
                     let rx_b = fcx + 3;
-                    if lx >= 0 && (lx as usize) < w { char_grid[r][lx as usize] = '╲'; fg_grid[r][lx as usize] = neon_bright; }
-                    if rx_b >= 0 && (rx_b as usize) < w { char_grid[r][rx_b as usize] = '╱'; fg_grid[r][rx_b as usize] = neon_bright; }
+                    if lx >= 0 && (lx as usize) < w {
+                        char_grid[r][lx as usize] = '╲';
+                        fg_grid[r][lx as usize] = neon_bright;
+                    }
+                    if rx_b >= 0 && (rx_b as usize) < w {
+                        char_grid[r][rx_b as usize] = '╱';
+                        fg_grid[r][rx_b as usize] = neon_bright;
+                    }
                 }
-                3 => { // Skeptical (one raised, one flat)
+                3 => {
+                    // Skeptical (one raised, one flat)
                     let lx = fcx - 3;
                     let rx_b = fcx + 3;
-                    if lx >= 0 && (lx as usize) < w { char_grid[r][lx as usize] = '▀'; fg_grid[r][lx as usize] = neon_bright; }
-                    if rx_b >= 0 && (rx_b as usize) < w { char_grid[r][rx_b as usize] = '─'; fg_grid[r][rx_b as usize] = neon_bright; }
+                    if lx >= 0 && (lx as usize) < w {
+                        char_grid[r][lx as usize] = '▀';
+                        fg_grid[r][lx as usize] = neon_bright;
+                    }
+                    if rx_b >= 0 && (rx_b as usize) < w {
+                        char_grid[r][rx_b as usize] = '─';
+                        fg_grid[r][rx_b as usize] = neon_bright;
+                    }
                 }
                 _ => {}
             }
@@ -705,7 +1672,8 @@ pub fn render_sovereign_token_lines(
     if fcy + 2 >= 0 && ((fcy + 2) as usize) < h {
         let r = (fcy + 2) as usize;
         match expr.mouth_type {
-            0 => { // Standard Smile
+            0 => {
+                // Standard Smile
                 for dx in -2..=2 {
                     let x = fcx + dx;
                     if x >= 0 && (x as usize) < w {
@@ -715,7 +1683,8 @@ pub fn render_sovereign_token_lines(
                     }
                 }
             }
-            1 => { // Smirk Left
+            1 => {
+                // Smirk Left
                 for dx in -3..=0 {
                     let x = fcx + dx;
                     if x >= 0 && (x as usize) < w {
@@ -724,7 +1693,8 @@ pub fn render_sovereign_token_lines(
                     }
                 }
             }
-            2 => { // Smirk Right
+            2 => {
+                // Smirk Right
                 for dx in 0..=3 {
                     let x = fcx + dx;
                     if x >= 0 && (x as usize) < w {
@@ -733,7 +1703,8 @@ pub fn render_sovereign_token_lines(
                     }
                 }
             }
-            3 => { // Wide Grin
+            3 => {
+                // Wide Grin
                 for dx in -3..=3 {
                     let x = fcx + dx;
                     if x >= 0 && (x as usize) < w {
@@ -742,7 +1713,8 @@ pub fn render_sovereign_token_lines(
                     }
                 }
             }
-            4 => { // Open Laughing Mouth
+            4 => {
+                // Open Laughing Mouth
                 for dx in -2..=2 {
                     let x = fcx + dx;
                     if x >= 0 && (x as usize) < w {
@@ -752,7 +1724,8 @@ pub fn render_sovereign_token_lines(
                     }
                 }
             }
-            5 => { // Tongue Blep
+            5 => {
+                // Tongue Blep
                 for dx in -2..=2 {
                     let x = fcx + dx;
                     if x >= 0 && (x as usize) < w {
@@ -770,7 +1743,8 @@ pub fn render_sovereign_token_lines(
                     }
                 }
             }
-            6 => { // Frown
+            6 => {
+                // Frown
                 for dx in -2..=2 {
                     let x = fcx + dx;
                     if x >= 0 && (x as usize) < w {
@@ -780,7 +1754,8 @@ pub fn render_sovereign_token_lines(
                     }
                 }
             }
-            7 => { // Open "O" mouth
+            7 => {
+                // Open "O" mouth
                 for dx in -1..=1 {
                     let x = fcx + dx;
                     if x >= 0 && (x as usize) < w {
@@ -790,7 +1765,8 @@ pub fn render_sovereign_token_lines(
                     }
                 }
             }
-            8 => { // Flat mouth
+            8 => {
+                // Flat mouth
                 for dx in -2..=2 {
                     let x = fcx + dx;
                     if x >= 0 && (x as usize) < w {
@@ -799,7 +1775,8 @@ pub fn render_sovereign_token_lines(
                     }
                 }
             }
-            9 => { // Zigzag teeth / grimace
+            9 => {
+                // Zigzag teeth / grimace
                 for dx in -2..=2 {
                     let x = fcx + dx;
                     if x >= 0 && (x as usize) < w {
@@ -855,12 +1832,7 @@ pub fn render_sovereign_token_lines(
 // ── Backward-compatible Isometric Head Helper ────────────────────────────────
 
 /// Backward compatibility stub: maps old caller to the new Sovereign token.
-pub fn render_isometric_head(
-    tick: usize,
-    mood: PetMood,
-    cols: usize,
-    rows: usize,
-) -> Vec<String> {
+pub fn render_isometric_head(tick: usize, mood: PetMood, cols: usize, rows: usize) -> Vec<String> {
     let telem = MascotTelemetry {
         cpu_pct: match mood {
             PetMood::Sprint => 75.0,

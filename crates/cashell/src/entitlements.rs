@@ -55,6 +55,11 @@ pub fn current() -> Entitlements {
     ent
 }
 
+/// Invalidate the cached entitlements snapshot so subsequent calls re-read disk.
+pub fn invalidate_cache() {
+    *CACHE.lock().unwrap_or_else(|p| p.into_inner()) = None;
+}
+
 fn compute() -> Entitlements {
     match license_local::load_license().ok().flatten() {
         Some(lic) => compute_from(&lic),

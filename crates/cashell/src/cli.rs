@@ -98,6 +98,9 @@ pub enum Commands {
     /// View sovereign web analytics & traffic summary across CA ecosystem sites
     Analytics(crate::commands::analytics::AnalyticsCommand),
 
+    /// Manage Telegram bot integration & setup wizard (T-01, T-02)
+    Telegram(crate::commands::telegram::TelegramCommand),
+
     /// Factory reset: wipe all data (config, database, cache)
     Reset(ResetCommand),
 }
@@ -106,7 +109,10 @@ pub enum Commands {
 
 /// Top-level `cashell pro` CLI command.
 #[derive(Parser, Debug, Clone)]
-#[command(name = "pro", about = "CAShell Pro: multi-device zero-knowledge GCC sync & device management")]
+#[command(
+    name = "pro",
+    about = "CAShell Pro: multi-device zero-knowledge GCC sync & device management"
+)]
 pub struct ProCommand {
     #[command(subcommand)]
     pub mode: ProMode,

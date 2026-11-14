@@ -74,12 +74,6 @@ fn now_unix_ts() -> i64 {
         .unwrap_or(0)
 }
 
-fn iso_timestamp(ts: i64) -> String {
-    chrono::DateTime::from_timestamp(ts, 0)
-        .map(|dt| dt.to_rfc3339())
-        .unwrap_or_else(|| format!("unix:{ts}"))
-}
-
 fn resolve_passphrase(flag_val: Option<&str>) -> Result<String> {
     if let Some(v) = flag_val {
         if !v.trim().is_empty() {
@@ -98,11 +92,23 @@ fn resolve_passphrase(flag_val: Option<&str>) -> Result<String> {
     Ok(String::new())
 }
 
-fn load_active_session(_cfg: &Config) -> Result<SessionManager> {
-    match SessionManager::load_default() {
-        Some(sm) => Ok(sm),
-        None => bail!("No active Pro session. Run `cashell pro login` first."),
-    }
+fn load_active_session(cfg: &Config) -> Result<SessionManager> {
+    let lic = match crate::license_local::load_license()? {
+        Some(l) if crate::license_local::is_license_valid(&l) => l,
+        _ => {
+            bail!("Fitur Pro memerlukan lisensi aktif. Gunakan `cashell license activate <KEY>` untuk mengaktifkan lisensi Pro.");
+        }
+    };
+
+    let api_base = if !cfg.pro.api_base.is_empty() {
+        &cfg.pro.api_base
+    } else if !cfg.license.gcc_base_url.is_empty() {
+        &cfg.license.gcc_base_url
+    } else {
+        "https://gcc.fathforce.com"
+    };
+
+    SessionManager::from_license(&lic, api_base)
 }
 
 // ── JSON output structs ───────────────────────────────────────────────────────
@@ -154,139 +160,49 @@ struct DeviceJson {
 
 // ── pro login ─────────────────────────────────────────────────────────────────
 
-fn run_login(args: &ProLoginArgs, cfg: &Config) -> Result<i32> {
-    let email = match args.email.as_deref().filter(|e| !e.is_empty()) {
-        Some(e) => e.to_string(),
-        None => {
-            let input = prompt_secret("Pro account email: ")?;
-            if input.is_empty() {
-                output::error("No email provided — login cancelled.");
-                return Ok(3);
-            }
-            input
-        }
-    };
-
-    let token = match args.token.as_deref().filter(|t| !t.is_empty()) {
-        Some(t) => t.to_string(),
-        None => {
-            if args.trial {
-                String::new()
-            } else {
-                prompt_secret("Pro license token (leave empty to activate 7-day trial): ")
-                    .map_err(|e| anyhow!("input error: {e}"))?
-            }
-        }
-    };
-
-    let api_base = args
-        .api_base
-        .clone()
-        .unwrap_or_else(|| cfg.pro.api_base.clone());
-
-    if api_base.trim().is_empty() {
-        return Err(anyhow!(
-            "pro.api_base is empty — set [pro] api_base in config or pass --api-base"
-        ));
-    }
-
-    let hwid = hwid()?;
-    let now_unix = now_unix_ts();
-
-    let sm = if token.is_empty() {
-        let secret = format!("cashell-trial-{hwid}");
-        SessionManager::create_session(&email, &hwid, &api_base, secret.as_bytes())?
-    } else {
-        SessionManager::new(token.clone(), String::new(), hwid.clone(), api_base.clone())
-    };
-
-    sm.save_default()?;
-
-    let is_trial = args.trial || token.is_empty();
-    let expiry_secs = if is_trial {
-        7 * 24 * 3600_i64
-    } else {
-        30 * 24 * 3600_i64
-    };
-    let cache = FastBootCache {
-        hwid: hwid.clone(),
-        status: 1,
-        session_expires_unix: now_unix + expiry_secs,
-        api_base: api_base.clone(),
-        last_sync: now_unix,
-    };
-    cache.save()?;
-
-    let mut updated_cfg = cfg.clone();
-    updated_cfg.pro.account_email = email.clone();
-    if args.api_base.is_some() {
-        updated_cfg.pro.api_base = api_base.clone();
-    }
-    if let Err(e) = updated_cfg.save(&Config::default_path()) {
-        eprintln!("warning: could not persist config file: {e}");
-    }
-
-    let hostname = std::env::var("HOSTNAME").unwrap_or_else(|_| "this-device".to_string());
-    let device_id = hwid.clone();
-    let label = format!("{hostname} ({email})");
-    if let Ok(db) = crate::db::Database::open() {
-        let extra =
-            serde_json::json!({ "email": &email, "api_base": &api_base, "is_trial": is_trial });
-        let _ = db.upsert_pro_device(&device_id, &label, "active", None, Some(&extra.to_string()));
-    }
-
+fn run_login(args: &ProLoginArgs, _cfg: &Config) -> Result<i32> {
     if wants_json(args.json) {
         println!(
             "{}",
             serde_json::json!({
-                "login": "ok",
-                "email": email,
-                "hwid": hwid,
-                "api_base": api_base,
-                "trial": is_trial,
-                "expires_unix": now_unix + expiry_secs,
+                "status": "deprecated",
+                "message": "Gunakan `cashell license activate` untuk mengaktifkan lisensi Pro.",
+                "hint": "cashell license activate <KEY>"
             })
         );
     } else {
-        let badge = if is_trial {
-            "★ TRIAL (7-day)".yellow().to_string()
-        } else {
-            "★ PRO".green().to_string()
-        };
         println!(
-            "{}",
-            format!("✓ Pro account activated for {email} — {badge}")
-                .green()
-                .bold()
-        );
-        println!("  {} {}", "HWID:".cyan().bold(), hwid);
-        println!(
-            "  {} {}",
-            "Expires:".cyan().bold(),
-            iso_timestamp(now_unix + expiry_secs)
+            "{} Perintah `cashell pro login` telah disatukan dengan aktivasi lisensi.",
+            "ℹ".cyan().bold()
         );
         println!(
-            "  {} {}",
-            "Session file:".cyan().bold(),
-            SessionManager::default_path().display()
+            "  Silakan gunakan: {}",
+            "cashell license activate <KEY>".green().bold()
         );
     }
-
     Ok(0)
 }
 
 // ── pro status ────────────────────────────────────────────────────────────────
 
 fn run_status(args: &ProStatusArgs, cfg: &Config) -> Result<i32> {
-    let fast = FastBootCache::load();
-    let fast_valid = fast.as_ref().map(|c| c.is_valid()).unwrap_or(false);
-    let session = SessionManager::load_default();
-
-    let is_pro = fast_valid || session.is_some() || !cfg.pro.account_email.is_empty();
-    let hwid_val = fast
+    let lic = crate::license_local::load_license().ok().flatten();
+    let is_lic_valid = lic
         .as_ref()
-        .map(|c| c.hwid.clone())
-        .unwrap_or_else(|| hwid().unwrap_or_else(|_| "unknown".to_string()));
+        .map(crate::license_local::is_license_valid)
+        .unwrap_or(false);
+    let session = lic.as_ref().filter(|_| is_lic_valid).and_then(|l| {
+        let api_base = if !cfg.pro.api_base.is_empty() {
+            &cfg.pro.api_base
+        } else if !cfg.license.gcc_base_url.is_empty() {
+            &cfg.license.gcc_base_url
+        } else {
+            "https://gcc.fathforce.com"
+        };
+        SessionManager::from_license(l, api_base).ok()
+    });
+
+    let hwid_val = hwid().unwrap_or_else(|_| "unknown".to_string());
 
     if wants_json(args.json) {
         let session_json = session.as_ref().map(|sm| SessionJson {
@@ -300,62 +216,68 @@ fn run_status(args: &ProStatusArgs, cfg: &Config) -> Result<i32> {
             refresh_expired: sm.is_refresh_expired(),
         });
         let body = serde_json::to_string_pretty(&StatusJson {
-            pro_active: is_pro,
-            trial_active: !is_pro,
+            pro_active: is_lic_valid,
+            trial_active: false,
             hwid: hwid_val,
             account_email: cfg.pro.account_email.clone(),
-            api_base: cfg.pro.api_base.clone(),
+            api_base: if !cfg.pro.api_base.is_empty() {
+                cfg.pro.api_base.clone()
+            } else {
+                cfg.license.gcc_base_url.clone()
+            },
             auto_sync: cfg.pro.auto_sync,
             sync_interval_mins: cfg.pro.sync_interval_mins,
             session: session_json,
-            fast_boot_valid: fast_valid,
+            fast_boot_valid: is_lic_valid,
         })
         .map_err(|e| anyhow!("json: {e}"))?;
         println!("{body}");
         Ok(0)
     } else {
-        let pro_label = if is_pro {
-            "★ PRO ACTIVE".green().to_string()
+        let pro_label = if is_lic_valid {
+            let tier = lic.as_ref().map(|l| l.tier.as_str()).unwrap_or("PRO");
+            let tier_str = match tier {
+                "99" => "PRO (Lifetime)",
+                "24" => "PRO (2-Year)",
+                "12" => "PRO (Annual)",
+                "01" => "PRO (Monthly)",
+                _ => "PRO",
+            };
+            format!("★ {tier_str} ACTIVE").green().to_string()
         } else {
-            "○ FREE TIER".yellow().to_string()
+            "○ FREE TIER (unlicensed)".yellow().to_string()
         };
         println!("  Pro status:  {pro_label}");
         println!("  HWID:        {hwid_val}");
-        println!(
-            "  Email:       {}",
-            if cfg.pro.account_email.is_empty() {
-                "(unlicensed)".to_string()
+        if let Some(l) = &lic {
+            println!("  License:     {}", crate::license_gcc::mask_key(&l.key));
+            if let Some(exp) = &l.expires_at {
+                println!("  Expires:     {exp}");
             } else {
-                cfg.pro.account_email.clone()
+                println!("  Expires:     Lifetime");
             }
-        );
-        println!("  API base:    {}", cfg.pro.api_base);
+        } else {
+            println!("  License:     (no active license installed)");
+            println!("  Hint:        Use `cashell license activate <KEY>` to unlock Pro");
+        }
+        let api_base = if !cfg.pro.api_base.is_empty() {
+            &cfg.pro.api_base
+        } else {
+            &cfg.license.gcc_base_url
+        };
+        println!("  API base:    {api_base}");
         println!(
             "  Auto-sync:   {} ({})",
-            if cfg.pro.auto_sync {
-                "ON".to_string()
-            } else {
-                "OFF".to_string()
-            },
+            if cfg.pro.auto_sync { "ON" } else { "OFF" },
             cfg.pro.sync_interval_mins,
         );
         if let Some(sm) = &session {
             println!(
-                "  Session:     access={} refresh={} ({}s left)",
-                if sm.is_access_expired() {
-                    "EXPIRED".red().to_string()
-                } else {
-                    "VALID".green().to_string()
-                },
-                if sm.is_refresh_expired() {
-                    "EXPIRED".red().to_string()
-                } else {
-                    "VALID".green().to_string()
-                },
-                sm.seconds_until_access_expiry(),
+                "  Session:     token={} (valid)",
+                mask_token(sm.access_token())
             );
         } else {
-            println!("  Session:     not persisted (login required)");
+            println!("  Session:     no active Pro license");
         }
 
         if let Ok(db) = crate::db::Database::open() {
@@ -679,4 +601,80 @@ fn run_logout(args: &ProLogoutArgs, cfg: &Config) -> Result<i32> {
         );
     }
     Ok(0)
+}
+
+// ── tests (L-12) ─────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pro_login_alias_guidance() {
+        let args = ProLoginArgs {
+            email: None,
+            token: None,
+            api_base: None,
+            trial: false,
+            json: true,
+        };
+        let cfg = Config::default();
+        let res = run_login(&args, &cfg);
+        assert_eq!(res.unwrap(), 0);
+    }
+
+    #[test]
+    fn test_load_active_session_unlicensed_fails() {
+        let tmp =
+            std::env::temp_dir().join(format!("cashell-pro-unlicensed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        crate::paths::with_test_home(&tmp, || {
+            crate::entitlements::invalidate_cache();
+            let cfg = Config::default();
+            let res = load_active_session(&cfg);
+            assert!(res.is_err());
+            let err_msg = res.unwrap_err().to_string();
+            assert!(
+                err_msg.contains("Fitur Pro memerlukan lisensi aktif"),
+                "err: {err_msg}"
+            );
+        });
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_load_active_session_with_license() {
+        let tmp = std::env::temp_dir().join(format!("cashell-pro-licensed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        crate::paths::with_test_home(&tmp, || {
+            crate::entitlements::invalidate_cache();
+            let lic = crate::license_local::LicenseFile {
+                schema: 2,
+                key: "CASH99-FOUNDR-3".to_string(),
+                product: "SH".to_string(),
+                tier: "99".to_string(),
+                expires_at: None,
+                activated_at: "2026-11-13T00:00:00Z".to_string(),
+                last_verified_at: "2026-11-13T00:00:00Z".to_string(),
+                activation_token: None, // V-04: live GCC fallback when token is absent
+                devices_used: 1,
+                devices_max: 3,
+                offline_grace_until: None,
+                revoked: false,
+                expired: false,
+            };
+            crate::license_local::save_license(&lic).unwrap();
+            crate::entitlements::invalidate_cache();
+
+            let cfg = Config::default();
+            let sm = load_active_session(&cfg).expect("active session loaded");
+            assert_eq!(sm.access_token(), "CASH99-FOUNDR-3");
+            assert_eq!(sm.api_base, "https://gcc.fathforce.com");
+        });
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

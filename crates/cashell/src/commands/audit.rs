@@ -516,7 +516,11 @@ fn audit_file_body(
         while end > 0 && !content.is_char_boundary(end) {
             end -= 1;
         }
-        format!("{}\n// ... [TRUNCATED to {}KB context limit] ...", &content[..end], max_kb)
+        format!(
+            "{}\n// ... [TRUNCATED to {}KB context limit] ...",
+            &content[..end],
+            max_kb
+        )
     } else {
         content
     };
@@ -525,7 +529,8 @@ fn audit_file_body(
 
     let custom_sys_prompt;
     let effective_system_prompt = if let Some(cp) = task.custom_prompt {
-        custom_sys_prompt = format!("{AUDIT_SYSTEM_PROMPT}\n\n[USER AUDIT DIRECTIVE & QUALITY GATES]:\n{cp}");
+        custom_sys_prompt =
+            format!("{AUDIT_SYSTEM_PROMPT}\n\n[USER AUDIT DIRECTIVE & QUALITY GATES]:\n{cp}");
         custom_sys_prompt.as_str()
     } else {
         AUDIT_SYSTEM_PROMPT
@@ -752,16 +757,16 @@ pub fn run(cmd: &AuditCommand, cfg: &Config, quiet: bool) -> Result<i32> {
             .files
             .iter()
             .flat_map(|ff| {
-                ff.findings.iter().map(|f| {
-                    crate::audit_interview::ReviewedFinding {
+                ff.findings
+                    .iter()
+                    .map(|f| crate::audit_interview::ReviewedFinding {
                         severity: f.severity.label().to_string(),
                         file: ff.path.clone(),
                         line: f.line,
                         message: f.message.clone(),
                         recommendation: f.recommendation.clone(),
                         decision: crate::audit_interview::InterviewDecision::Pending,
-                    }
-                })
+                    })
             })
             .collect();
         findings
@@ -952,9 +957,9 @@ mod tests {
         assert_eq!(calculate_audit_score(&report), 100);
 
         report.total_critical = 1; // -25
-        report.total_high = 1;     // -10
-        report.total_medium = 2;   // -10
-        report.total_low = 3;      // -6
+        report.total_high = 1; // -10
+        report.total_medium = 2; // -10
+        report.total_low = 3; // -6
         assert_eq!(calculate_audit_score(&report), 49);
 
         report.total_critical = 10; // clamps to 0

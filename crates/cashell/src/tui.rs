@@ -224,7 +224,11 @@ fn draw_detail(f: &mut Frame, area: Rect, sel: Option<&ProductRow>, p: &catui::T
                 Span::styled("status     ", Style::default().fg(p.text_muted)),
                 Span::styled(
                     item.status.clone(),
-                    Style::default().fg(if item.status == "active" { p.success } else { p.warning }),
+                    Style::default().fg(if item.status == "active" {
+                        p.success
+                    } else {
+                        p.warning
+                    }),
                 ),
             ]),
             Line::from(vec![

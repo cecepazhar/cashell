@@ -158,6 +158,11 @@ fn run_app() -> Result<i32> {
             commands::analytics::run(&cmd)?;
             Ok(0)
         }
+        Some(Commands::Telegram(cmd)) => {
+            let mut cfg_mut = cfg;
+            let code = commands::telegram::run(&cmd, &mut cfg_mut)?;
+            Ok(code)
+        }
         Some(Commands::Reset(cmd)) => {
             // R-02: 0 = all removed, 1 = partial failure, 2 = cancelled.
             let code = commands::reset::run(&cmd)?;

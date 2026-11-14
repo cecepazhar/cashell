@@ -15,8 +15,8 @@ use crate::pro::SessionManager;
 
 // ── Argon2id Default Production Parameters ──────────────────────────────────
 pub const DEFAULT_M_COST_KIB: u32 = 65536; // 64 MiB memory cost
-pub const DEFAULT_T_COST: u32 = 3;         // 3 iterations
-pub const DEFAULT_P_COST: u32 = 4;         // 4-way parallelism
+pub const DEFAULT_T_COST: u32 = 3; // 3 iterations
+pub const DEFAULT_P_COST: u32 = 4; // 4-way parallelism
 
 /// Standard local file path for the zero-knowledge plaintext vault.
 ///
@@ -144,7 +144,10 @@ impl ZeroKnowledgeCrypto {
         let ciphertext = hex_decode(&payload.ciphertext)?;
 
         if nonce.len() != 12 {
-            bail!("invalid AES-GCM nonce length: expected 12 bytes, got {}", nonce.len());
+            bail!(
+                "invalid AES-GCM nonce length: expected 12 bytes, got {}",
+                nonce.len()
+            );
         }
 
         let key = self.derive_key(passphrase, &salt)?;
@@ -158,8 +161,8 @@ fn aes_gcm_encrypt(key: &[u8; 32], nonce: &[u8], pt: &[u8]) -> Result<Vec<u8>> {
     use aes_gcm::aead::{Aead, KeyInit};
     use aes_gcm::{Aes256Gcm, Nonce};
 
-    let cipher = Aes256Gcm::new_from_slice(key)
-        .map_err(|_| anyhow!("invalid AES-256 key slice length"))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(key).map_err(|_| anyhow!("invalid AES-256 key slice length"))?;
     let gcm_nonce = Nonce::from_slice(nonce);
     cipher
         .encrypt(gcm_nonce, pt)
@@ -170,8 +173,8 @@ fn aes_gcm_decrypt(key: &[u8; 32], nonce: &[u8], ct: &[u8]) -> Result<Vec<u8>> {
     use aes_gcm::aead::{Aead, KeyInit};
     use aes_gcm::{Aes256Gcm, Nonce};
 
-    let cipher = Aes256Gcm::new_from_slice(key)
-        .map_err(|_| anyhow!("invalid AES-256 key slice length"))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(key).map_err(|_| anyhow!("invalid AES-256 key slice length"))?;
     let gcm_nonce = Nonce::from_slice(nonce);
     cipher
         .decrypt(gcm_nonce, ct)
@@ -304,7 +307,10 @@ impl SyncEngine {
             .body(body_bytes.clone());
 
         let resp = match req.send() {
-            Ok(r) if r.status() == reqwest::StatusCode::NOT_FOUND && self.custom_endpoint.is_none() => {
+            Ok(r)
+                if r.status() == reqwest::StatusCode::NOT_FOUND
+                    && self.custom_endpoint.is_none() =>
+            {
                 // Try fallback gateway route
                 let fallback_url = self.api_v1_vault_url();
                 client
@@ -351,15 +357,16 @@ impl SyncEngine {
         let client = reqwest::blocking::Client::new();
         let primary_url = self.vault_url();
 
-        let req = client
-            .get(&primary_url)
-            .header(
-                "Authorization",
-                format!("Bearer {}", self.session.access_token()),
-            );
+        let req = client.get(&primary_url).header(
+            "Authorization",
+            format!("Bearer {}", self.session.access_token()),
+        );
 
         let resp = match req.send() {
-            Ok(r) if r.status() == reqwest::StatusCode::NOT_FOUND && self.custom_endpoint.is_none() => {
+            Ok(r)
+                if r.status() == reqwest::StatusCode::NOT_FOUND
+                    && self.custom_endpoint.is_none() =>
+            {
                 // Try fallback gateway route
                 let fallback_url = self.api_v1_vault_url();
                 client
@@ -436,13 +443,18 @@ mod tests {
             .unwrap();
 
         let result = crypto.decrypt("passphrase-WRONG", &payload);
-        assert!(result.is_err(), "decryption with wrong passphrase must fail");
+        assert!(
+            result.is_err(),
+            "decryption with wrong passphrase must fail"
+        );
     }
 
     #[test]
     fn test_envelope_serialization() {
         let crypto = ZeroKnowledgeCrypto::with_params(65536, 1, 1);
-        let payload = crypto.encrypt("mypass", "hwid-node-1", "sample content").unwrap();
+        let payload = crypto
+            .encrypt("mypass", "hwid-node-1", "sample content")
+            .unwrap();
 
         let json = serde_json::to_string_pretty(&payload).unwrap();
         let deserialized: EncryptedVaultPayload = serde_json::from_str(&json).unwrap();
@@ -459,6 +471,9 @@ mod tests {
         );
         let engine = SyncEngine::new(session, "master-pass".to_string());
         assert_eq!(engine.vault_url(), "https://gcc.fathforce.com/vault");
-        assert_eq!(engine.api_v1_vault_url(), "https://gcc.fathforce.com/api/v1/vault");
+        assert_eq!(
+            engine.api_v1_vault_url(),
+            "https://gcc.fathforce.com/api/v1/vault"
+        );
     }
 }

@@ -17,7 +17,9 @@ use crate::config::Config;
 use crate::systat::{snapshot_telemetry, SysSnapshot};
 use anyhow::Result;
 use clap::Parser;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -474,10 +476,19 @@ fn draw_dashboard(f: &mut Frame, app: &ChatApp, area: Rect) {
                 .borders(Borders::BOTTOM)
                 .border_style(Style::default().fg(Color::DarkGray))
                 .title(Line::from(vec![
-                    Span::styled(" CPU Usage ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        " CPU Usage ",
+                        Style::default()
+                            .fg(Color::LightGreen)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::styled(
                         format!("({:.1}%)", snap.cpu_pct),
-                        Style::default().fg(if snap.cpu_pct > 80.0 { Color::LightRed } else { Color::Green }),
+                        Style::default().fg(if snap.cpu_pct > 80.0 {
+                            Color::LightRed
+                        } else {
+                            Color::Green
+                        }),
                     ),
                 ])),
         );
@@ -514,7 +525,11 @@ fn draw_dashboard(f: &mut Frame, app: &ChatApp, area: Rect) {
             "RAM: {}% ({}/{} MB)",
             ram_pct, snap.ram_used_mb, snap.ram_total_mb
         ))
-        .gauge_style(Style::default().fg(Color::LightBlue).bg(Color::Rgb(20, 30, 45)));
+        .gauge_style(
+            Style::default()
+                .fg(Color::LightBlue)
+                .bg(Color::Rgb(20, 30, 45)),
+        );
     f.render_widget(ram_gauge, gauge_rows[0]);
 
     let swp_label = if snap.swap_total_mb > 0 {
@@ -528,7 +543,11 @@ fn draw_dashboard(f: &mut Frame, app: &ChatApp, area: Rect) {
     let swp_gauge = Gauge::default()
         .ratio((swp_pct as f64 / 100.0).clamp(0.0, 1.0))
         .label(swp_label)
-        .gauge_style(Style::default().fg(Color::Magenta).bg(Color::Rgb(35, 20, 35)));
+        .gauge_style(
+            Style::default()
+                .fg(Color::Magenta)
+                .bg(Color::Rgb(35, 20, 35)),
+        );
     f.render_widget(swp_gauge, gauge_rows[1]);
 
     let dsk_gauge = Gauge::default()
@@ -537,7 +556,11 @@ fn draw_dashboard(f: &mut Frame, app: &ChatApp, area: Rect) {
             "DSK: {}% ({}/{} GB)",
             dsk_pct, snap.disk_used_gb, snap.disk_total_gb
         ))
-        .gauge_style(Style::default().fg(Color::Yellow).bg(Color::Rgb(40, 35, 15)));
+        .gauge_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .bg(Color::Rgb(40, 35, 15)),
+        );
     f.render_widget(dsk_gauge, gauge_rows[2]);
 
     // ── 3. Telemetry Text (Temp, Fan, GPU) ────────────────────────────────────
@@ -614,7 +637,9 @@ fn draw_chat_panel(f: &mut Frame, app: &mut ChatApp, area: Rect) {
         .iter()
         .map(|l| {
             let style = if l.starts_with("User:") {
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
             } else if l.starts_with("AI:") {
                 Style::default().fg(Color::White)
             } else {
@@ -659,17 +684,34 @@ fn draw_input_bar(f: &mut Frame, app: &ChatApp, area: Rect) {
 
     let content = if app.is_processing {
         Line::from(vec![
-            Span::styled("$ ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "$ ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(&app.input, Style::default().fg(Color::White)),
             Span::styled(
                 "  ⏳ [Querying Hana AI (localhost:20128)...]",
-                Style::default().fg(Color::LightRed).add_modifier(Modifier::ITALIC),
+                Style::default()
+                    .fg(Color::LightRed)
+                    .add_modifier(Modifier::ITALIC),
             ),
         ])
     } else {
         Line::from(vec![
-            Span::styled("$ ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::styled(&app.input, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "$ ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                &app.input,
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(
                 "█",
                 Style::default().fg(if app.focus == Focus::Input {
@@ -721,7 +763,9 @@ fn draw_compact(f: &mut Frame, app: &mut ChatApp) {
     let term_lines = vec![
         Line::from(Span::styled(
             format!("$ {}", app.input),
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         Line::from(Span::styled(
@@ -739,7 +783,9 @@ fn draw_compact(f: &mut Frame, app: &mut ChatApp) {
         Line::from(""),
         Line::from(Span::styled(
             "Shortcuts:",
-            Style::default().fg(Color::Gray).add_modifier(Modifier::UNDERLINED),
+            Style::default()
+                .fg(Color::Gray)
+                .add_modifier(Modifier::UNDERLINED),
         )),
         Line::from(Span::styled(
             "• Tab / Click: Switch Panel",
@@ -778,7 +824,9 @@ fn draw_compact(f: &mut Frame, app: &mut ChatApp) {
         .iter()
         .map(|l| {
             let style = if l.starts_with("User:") {
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
             } else if l.starts_with("AI:") {
                 Style::default().fg(Color::White)
             } else {
@@ -808,7 +856,9 @@ fn draw_compact(f: &mut Frame, app: &mut ChatApp) {
 
     let status_para = Paragraph::new(Line::from(Span::styled(
         &app.stat_line,
-        Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::LightGreen)
+            .add_modifier(Modifier::BOLD),
     )));
     f.render_widget(status_para, status_inner);
 }

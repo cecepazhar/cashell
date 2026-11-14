@@ -5,7 +5,10 @@ use clap::Parser;
 use colored::Colorize;
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "analytics", about = "View sovereign web analytics & traffic summary across CA ecosystem sites")]
+#[command(
+    name = "analytics",
+    about = "View sovereign web analytics & traffic summary across CA ecosystem sites"
+)]
 pub struct AnalyticsCommand {
     /// Filter by website ID (e.g. 'docs', 'blog', 'caterm', 'fathforce')
     #[arg(short, long)]
@@ -25,7 +28,10 @@ pub fn run(cmd: &AnalyticsCommand) -> Result<()> {
         None => " (All Registered CA Sites)".to_string(),
     };
 
-    println!("\n{}", format!("📊 Sovereign Web Analytics{}", filter_label).bold());
+    println!(
+        "\n{}",
+        format!("📊 Sovereign Web Analytics{}", filter_label).bold()
+    );
     println!("  {}", "─".repeat(80).dimmed());
 
     // Overview KPIs
@@ -55,7 +61,11 @@ pub fn run(cmd: &AnalyticsCommand) -> Result<()> {
         println!("  {}", "─".repeat(70).dimmed());
 
         let mut prods = summary.product_analytics.clone();
-        prods.sort_by(|a, b| b.pageviews.cmp(&a.pageviews).then_with(|| a.name.cmp(&b.name)));
+        prods.sort_by(|a, b| {
+            b.pageviews
+                .cmp(&a.pageviews)
+                .then_with(|| a.name.cmp(&b.name))
+        });
 
         for p in prods {
             let pv_str = if p.pageviews > 0 {
@@ -91,7 +101,11 @@ pub fn run(cmd: &AnalyticsCommand) -> Result<()> {
     if !summary.top_referrers.is_empty() {
         println!("\n  {}", "Top Referrers:".bold().underline());
         for (ref_url, count) in summary.top_referrers.iter().take(cmd.limit) {
-            println!("  • {:<50} {} referrals", ref_url.yellow(), count.to_string().bold());
+            println!(
+                "  • {:<50} {} referrals",
+                ref_url.yellow(),
+                count.to_string().bold()
+            );
         }
     }
 
@@ -99,13 +113,19 @@ pub fn run(cmd: &AnalyticsCommand) -> Result<()> {
     if !summary.browser_breakdown.is_empty() || !summary.os_breakdown.is_empty() {
         println!("\n  {}", "Environment Stats:".bold().underline());
         if !summary.browser_breakdown.is_empty() {
-            let b_str: Vec<String> = summary.browser_breakdown.iter().take(5)
+            let b_str: Vec<String> = summary
+                .browser_breakdown
+                .iter()
+                .take(5)
                 .map(|b| format!("{}: {:.1}%", b.label, b.pct))
                 .collect();
             println!("  Browsers : {}", b_str.join("  |  ").dimmed());
         }
         if !summary.os_breakdown.is_empty() {
-            let os_str: Vec<String> = summary.os_breakdown.iter().take(5)
+            let os_str: Vec<String> = summary
+                .os_breakdown
+                .iter()
+                .take(5)
                 .map(|o| format!("{}: {:.1}%", o.label, o.pct))
                 .collect();
             println!("  OS       : {}", os_str.join("  |  ").dimmed());

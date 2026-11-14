@@ -280,7 +280,7 @@ pub fn verify_license(
 
 /// Set 0600 permissions on a file (Unix only; no-op elsewhere).
 #[cfg(unix)]
-fn set_permissions_0600(p: &std::path::Path) -> std::io::Result<()> {
+pub fn set_permissions_0600(p: &std::path::Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let mut perms = std::fs::metadata(p)?.permissions();
     perms.set_mode(0o600);
@@ -288,7 +288,7 @@ fn set_permissions_0600(p: &std::path::Path) -> std::io::Result<()> {
 }
 
 #[cfg(not(unix))]
-fn set_permissions_0600(_p: &std::path::Path) -> std::io::Result<()> {
+pub fn set_permissions_0600(_p: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 

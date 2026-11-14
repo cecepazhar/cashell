@@ -311,9 +311,9 @@ fn confirm(items: &[(PathBuf, &str)]) -> bool {
     input.trim() == "RESET"
 }
 
-pub fn run(cmd: &ResetCommand) -> Result<i32> {
-    // ── Inventory: only list items that actually exist (with size) ─────────
-    let mut items: Vec<(PathBuf, &str)> = Vec::new();
+/// Collect all existing resettable items with their descriptions and formatted sizes.
+pub fn collect_resettable_items() -> Vec<(PathBuf, &'static str, String)> {
+    let mut items = Vec::new();
     for p in paths::resettable_paths() {
         if !p.exists() {
             continue;
@@ -355,8 +355,19 @@ pub fn run(cmd: &ResetCommand) -> Result<i32> {
         } else {
             "Other"
         };
-        items.push((p, desc));
+        let size = human_size(&p);
+        items.push((p, desc, size));
     }
+    items
+}
+
+pub fn run(cmd: &ResetCommand) -> Result<i32> {
+    // ── Inventory: only list items that actually exist (with size) ─────────
+    let item_records = collect_resettable_items();
+    let items: Vec<(PathBuf, &str)> = item_records
+        .iter()
+        .map(|(p, desc, _)| (p.clone(), *desc))
+        .collect();
 
     if items.is_empty() {
         println!(

@@ -171,7 +171,11 @@ fn cmd_import(path: &std::path::Path) -> Result<()> {
 
     // Import [daemon.nodes]
     let mut imported_nodes = 0;
-    if let Some(nodes) = val.get("daemon").and_then(|d| d.get("nodes")).and_then(|n| n.as_table()) {
+    if let Some(nodes) = val
+        .get("daemon")
+        .and_then(|d| d.get("nodes"))
+        .and_then(|n| n.as_table())
+    {
         for (name, node_val) in nodes {
             if let Ok(node_cfg) = node_val.clone().try_into::<config::NodeConfig>() {
                 cfg.daemon.nodes.insert(name.clone(), node_cfg);
@@ -189,10 +193,19 @@ fn cmd_import(path: &std::path::Path) -> Result<()> {
 
     // Import [uptime.custom_monitors]
     let mut imported_monitors = 0;
-    if let Some(monitors) = val.get("uptime").and_then(|u| u.get("custom_monitors")).and_then(|m| m.as_array()) {
+    if let Some(monitors) = val
+        .get("uptime")
+        .and_then(|u| u.get("custom_monitors"))
+        .and_then(|m| m.as_array())
+    {
         for m_val in monitors {
             if let Ok(m_cfg) = m_val.clone().try_into::<config::UptimeMonitorConfig>() {
-                if !cfg.uptime.custom_monitors.iter().any(|existing| existing.name == m_cfg.name || existing.target == m_cfg.target) {
+                if !cfg
+                    .uptime
+                    .custom_monitors
+                    .iter()
+                    .any(|existing| existing.name == m_cfg.name || existing.target == m_cfg.target)
+                {
                     cfg.uptime.custom_monitors.push(m_cfg);
                     imported_monitors += 1;
                 }
@@ -201,7 +214,12 @@ fn cmd_import(path: &std::path::Path) -> Result<()> {
     } else if let Some(monitors) = val.get("monitors").and_then(|m| m.as_array()) {
         for m_val in monitors {
             if let Ok(m_cfg) = m_val.clone().try_into::<config::UptimeMonitorConfig>() {
-                if !cfg.uptime.custom_monitors.iter().any(|existing| existing.name == m_cfg.name || existing.target == m_cfg.target) {
+                if !cfg
+                    .uptime
+                    .custom_monitors
+                    .iter()
+                    .any(|existing| existing.name == m_cfg.name || existing.target == m_cfg.target)
+                {
                     cfg.uptime.custom_monitors.push(m_cfg);
                     imported_monitors += 1;
                 }
@@ -217,8 +235,16 @@ fn cmd_import(path: &std::path::Path) -> Result<()> {
     if let Some(sites) = val.get("analytics_websites").and_then(|s| s.as_array()) {
         if let Ok(db) = crate::db::Database::open() {
             for s in sites {
-                if let (Some(name), Some(domain)) = (s.get("name").and_then(|v| v.as_str()), s.get("domain").and_then(|v| v.as_str())) {
-                    let id = s.get("id").and_then(|v| v.as_str()).unwrap_or(name).to_lowercase().replace(' ', "-");
+                if let (Some(name), Some(domain)) = (
+                    s.get("name").and_then(|v| v.as_str()),
+                    s.get("domain").and_then(|v| v.as_str()),
+                ) {
+                    let id = s
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(name)
+                        .to_lowercase()
+                        .replace(' ', "-");
                     if db.add_analytic_site(&id, name, domain).is_ok() {
                         imported_sites += 1;
                     }

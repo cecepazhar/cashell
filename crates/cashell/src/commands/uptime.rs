@@ -5,7 +5,10 @@ use clap::Parser;
 use colored::Colorize;
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "uptime", about = "Probe and display live uptime status of all CA Ecosystem endpoints and fleet nodes")]
+#[command(
+    name = "uptime",
+    about = "Probe and display live uptime status of all CA Ecosystem endpoints and fleet nodes"
+)]
 pub struct UptimeCommand {
     /// Filter by group (e.g. 'CA Ecosystem', 'Fleet Nodes', 'Localhost')
     #[arg(short, long)]
@@ -13,7 +16,12 @@ pub struct UptimeCommand {
 }
 
 pub fn run(cmd: &UptimeCommand) -> Result<()> {
-    println!("{}", "🔍 Probing CA Ecosystem & Fleet uptime endpoints...".cyan().bold());
+    println!(
+        "{}",
+        "🔍 Probing CA Ecosystem & Fleet uptime endpoints..."
+            .cyan()
+            .bold()
+    );
 
     let mut monitors = crate::systat::probe_uptime_monitors();
 
@@ -28,9 +36,7 @@ pub fn run(cmd: &UptimeCommand) -> Result<()> {
     }
 
     // Sort by group then name
-    monitors.sort_by(|a, b| {
-        a.group.cmp(&b.group).then_with(|| a.name.cmp(&b.name))
-    });
+    monitors.sort_by(|a, b| a.group.cmp(&b.group).then_with(|| a.name.cmp(&b.name)));
 
     println!();
     println!(
@@ -49,10 +55,16 @@ pub fn run(cmd: &UptimeCommand) -> Result<()> {
     for m in &monitors {
         let status_str = if m.is_up {
             up_count += 1;
-            let code = m.status_code.map(|c| c.to_string()).unwrap_or_else(|| "200".to_string());
+            let code = m
+                .status_code
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "200".to_string());
             format!("● UP ({})", code).green().bold()
         } else {
-            let code = m.status_code.map(|c| c.to_string()).unwrap_or_else(|| "ERR".to_string());
+            let code = m
+                .status_code
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "ERR".to_string());
             format!("✖ DOWN ({})", code).red().bold()
         };
 
@@ -80,11 +92,17 @@ pub fn run(cmd: &UptimeCommand) -> Result<()> {
     println!("  {}", "─".repeat(106).dimmed());
     let pct = (up_count as f32 / total as f32) * 100.0;
     let summary_color = if pct >= 99.0 {
-        format!("{}/{} Operational ({:.1}%)", up_count, total, pct).green().bold()
+        format!("{}/{} Operational ({:.1}%)", up_count, total, pct)
+            .green()
+            .bold()
     } else if pct >= 75.0 {
-        format!("{}/{} Operational ({:.1}%)", up_count, total, pct).yellow().bold()
+        format!("{}/{} Operational ({:.1}%)", up_count, total, pct)
+            .yellow()
+            .bold()
     } else {
-        format!("{}/{} Operational ({:.1}%)", up_count, total, pct).red().bold()
+        format!("{}/{} Operational ({:.1}%)", up_count, total, pct)
+            .red()
+            .bold()
     };
 
     println!("  Summary: {}\n", summary_color);

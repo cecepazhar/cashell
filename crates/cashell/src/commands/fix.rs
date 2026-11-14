@@ -86,9 +86,8 @@ pub fn parse_embedded_findings(markdown: &str) -> Result<Vec<FindingItem>> {
         }
     }
 
-    let start_idx = start_idx.ok_or_else(|| {
-        anyhow::anyhow!("no '<!-- cashell:findings' block found in audit report")
-    })?;
+    let start_idx = start_idx
+        .ok_or_else(|| anyhow::anyhow!("no '<!-- cashell:findings' block found in audit report"))?;
 
     let content_start = start_idx + tag_len;
     let end_offset = markdown[content_start..]
@@ -754,8 +753,7 @@ pub fn run(cmd: &FixCommand, cfg: &Config) -> Result<i32> {
     let all_candidate_files: Vec<String> = file_groups.keys().cloned().collect();
 
     // 4. Filter candidate files: --files or interactive selection
-    let interactive =
-        output::is_tty() && std::io::stdin().is_terminal() && !cmd.json && !cmd.yes;
+    let interactive = output::is_tty() && std::io::stdin().is_terminal() && !cmd.json && !cmd.yes;
 
     let files_to_process = if let Some(slugs) = &cmd.files {
         let filtered = filter_by_slugs(&all_candidate_files, slugs);
@@ -837,23 +835,20 @@ pub fn run(cmd: &FixCommand, cfg: &Config) -> Result<i32> {
         );
 
         // Query AI
-        let raw_reply = match crate::ai::query_buffered(
-            &fix_cfg,
-            Some(FIX_SYSTEM_PROMPT),
-            &user_prompt,
-        ) {
-            Ok(r) => r,
-            Err(e) => {
-                output::error(&format!("AI query failed for '{file_path}': {e}"));
-                results.push(FixFileResult {
-                    file: file_path.to_string(),
-                    status: FixStatus::Failed,
-                    diff: String::new(),
-                    error: Some(format!("AI query failed: {e}")),
-                });
-                continue;
-            }
-        };
+        let raw_reply =
+            match crate::ai::query_buffered(&fix_cfg, Some(FIX_SYSTEM_PROMPT), &user_prompt) {
+                Ok(r) => r,
+                Err(e) => {
+                    output::error(&format!("AI query failed for '{file_path}': {e}"));
+                    results.push(FixFileResult {
+                        file: file_path.to_string(),
+                        status: FixStatus::Failed,
+                        diff: String::new(),
+                        error: Some(format!("AI query failed: {e}")),
+                    });
+                    continue;
+                }
+            };
 
         let cleaned_diff = extract_diff(&raw_reply);
         if cleaned_diff.is_empty() || cleaned_diff.eq_ignore_ascii_case("NONE") {
@@ -1182,10 +1177,7 @@ mod tests {
         let filtered = filter_by_slugs(&files, "fix.rs,main.rs");
         assert_eq!(
             filtered,
-            vec![
-                "src/commands/fix.rs".to_string(),
-                "src/main.rs".to_string()
-            ]
+            vec!["src/commands/fix.rs".to_string(), "src/main.rs".to_string()]
         );
 
         let filtered_stem = filter_by_slugs(&files, "ai");
@@ -1231,7 +1223,10 @@ mod tests {
 "#;
         let hunks = parse_unified_diff(diff).expect("diff should parse");
         let result = apply_diff(original, &hunks).expect("diff should apply");
-        assert_eq!(result, "line1_modified\nline2\nline3\nline4\nline5_modified\n");
+        assert_eq!(
+            result,
+            "line1_modified\nline2\nline3\nline4\nline5_modified\n"
+        );
     }
 
     #[test]
