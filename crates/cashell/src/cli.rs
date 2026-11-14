@@ -98,6 +98,9 @@ pub enum Commands {
     /// View sovereign web analytics & traffic summary across CA ecosystem sites
     Analytics(crate::commands::analytics::AnalyticsCommand),
 
+    /// Manage Telegram bot integration & setup wizard (T-01, T-02)
+    Telegram(crate::commands::telegram::TelegramCommand),
+
     /// Factory reset: wipe all data (config, database, cache)
     Reset(ResetCommand),
 }

@@ -12,6 +12,7 @@ pub mod doctor;
 pub mod fix;
 pub mod git;
 pub mod git_status;
+pub mod license;
 pub mod pro;
 pub mod product;
 pub mod product_new;
@@ -20,6 +21,7 @@ pub mod r2;
 pub mod reset;
 pub mod review;
 pub mod server;
+pub mod telegram;
 pub mod uptime;
 pub mod vault;
 pub mod version;
@@ -32,5 +34,3 @@ use std::path::Path;
 pub fn load_config(path: &Option<std::path::PathBuf>) -> Result<Config> {
     Config::load(path.as_deref().map(Path::new))
 }
-
-pub mod license;

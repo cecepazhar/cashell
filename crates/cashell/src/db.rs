@@ -475,6 +475,22 @@ impl Database {
             )?;
         }
 
+        // ── Migration 5: Telegram state & allowlist (T-01, T-02) ─────────────
+        if !applied.contains(&5) {
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS telegram_state (
+                     key TEXT PRIMARY KEY,
+                     val TEXT NOT NULL
+                 );
+                 CREATE TABLE IF NOT EXISTS telegram_allowlist (
+                     user_id INTEGER PRIMARY KEY,
+                     username TEXT,
+                     added_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                 );
+                 INSERT OR IGNORE INTO schema_migrations (version) VALUES (5);",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -536,6 +552,85 @@ impl Database {
                 error: row.get(7)?,
             })
         })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    // ── Telegram state & allowlist methods (T-01, T-02) ──────────────────────
+
+    /// Get a telegram state value by key (e.g. "offset").
+    pub fn get_telegram_state(&self, key: &str) -> Result<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT val FROM telegram_state WHERE key = ?1")?;
+        let mut rows = stmt.query(params![key])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Set a telegram state key-value pair.
+    pub fn set_telegram_state(&self, key: &str, val: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO telegram_state (key, val) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET val = excluded.val",
+            params![key, val],
+        )?;
+        Ok(())
+    }
+
+    /// Get the persisted Telegram long polling offset (0 if unset).
+    pub fn get_telegram_offset(&self) -> Result<i64> {
+        match self.get_telegram_state("offset")? {
+            Some(s) => Ok(s.parse::<i64>().unwrap_or(0)),
+            None => Ok(0),
+        }
+    }
+
+    /// Set the persisted Telegram long polling offset.
+    pub fn set_telegram_offset(&self, offset: i64) -> Result<()> {
+        self.set_telegram_state("offset", &offset.to_string())
+    }
+
+    /// Check if a Telegram user ID is present in the allowlist.
+    pub fn is_telegram_user_allowed(&self, user_id: i64) -> Result<bool> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT 1 FROM telegram_allowlist WHERE user_id = ?1")?;
+        let mut rows = stmt.query(params![user_id])?;
+        Ok(rows.next()?.is_some())
+    }
+
+    /// Add or update a Telegram user in the allowlist.
+    pub fn add_telegram_user(&self, user_id: i64, username: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO telegram_allowlist (user_id, username) VALUES (?1, ?2)
+             ON CONFLICT(user_id) DO UPDATE SET username = excluded.username",
+            params![user_id, username],
+        )?;
+        Ok(())
+    }
+
+    /// Remove a Telegram user from the allowlist.
+    pub fn remove_telegram_user(&self, user_id: i64) -> Result<bool> {
+        let count = self.conn.execute(
+            "DELETE FROM telegram_allowlist WHERE user_id = ?1",
+            params![user_id],
+        )?;
+        Ok(count > 0)
+    }
+
+    /// List all allowed Telegram users (user_id, username, added_at).
+    pub fn list_telegram_users(&self) -> Result<Vec<(i64, Option<String>, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT user_id, username, added_at FROM telegram_allowlist ORDER BY added_at ASC",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
         let mut list = Vec::new();
         for r in rows {
             list.push(r?);
@@ -2319,12 +2414,27 @@ mod tests {
 
         // Verify migrations 1..=4 applied
         let applied = db.applied_migrations()?;
-        assert_eq!(applied, vec![1, 2, 3, 4]);
+        assert_eq!(applied, vec![1, 2, 3, 4, 5]);
 
         // Idempotent migration run: running migrations second time must succeed
         db.run_migrations()?;
         let applied2 = db.applied_migrations()?;
-        assert_eq!(applied2, vec![1, 2, 3, 4]);
+        assert_eq!(applied2, vec![1, 2, 3, 4, 5]);
+
+        // Test telegram state and allowlist (T-01, T-02)
+        assert_eq!(db.get_telegram_offset()?, 0);
+        db.set_telegram_offset(42)?;
+        assert_eq!(db.get_telegram_offset()?, 42);
+
+        assert!(!db.is_telegram_user_allowed(9999)?);
+        db.add_telegram_user(9999, Some("alice"))?;
+        assert!(db.is_telegram_user_allowed(9999)?);
+        let allowed = db.list_telegram_users()?;
+        assert_eq!(allowed.len(), 1);
+        assert_eq!(allowed[0].0, 9999);
+        assert_eq!(allowed[0].1.as_deref(), Some("alice"));
+        assert!(db.remove_telegram_user(9999)?);
+        assert!(!db.is_telegram_user_allowed(9999)?);
 
         // Test audit log
         let id1 = db.log_audit(

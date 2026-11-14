@@ -21,4 +21,5 @@ pub mod pro;
 pub mod secrets;
 pub mod sync;
 pub mod systat;
+pub mod telegram;
 pub mod tui;

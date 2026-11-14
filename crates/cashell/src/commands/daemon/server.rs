@@ -119,6 +119,34 @@ pub fn run_daemon(cfg: &Config, port_opt: Option<u16>, interval_opt: Option<u64>
             });
         }
 
+        // T-01: Spawn Telegram long polling worker if bot token is configured
+        let tg_token = crate::secrets::SecretStore::load_default()
+            .ok()
+            .and_then(|s| s.telegram_bot_token)
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or_else(|| cfg.daemon.telegram_bot_token.clone());
+
+        if !tg_token.trim().is_empty() {
+            if let Ok(db) = crate::db::get_db() {
+                let db_arc = std::sync::Arc::new(std::sync::Mutex::new(db));
+                let docker = std::sync::Arc::new(crate::actions::SystemDocker);
+                let chat_id = if !cfg.daemon.telegram_chat_id.trim().is_empty() {
+                    Some(cfg.daemon.telegram_chat_id.clone())
+                } else {
+                    None
+                };
+                let poller = crate::telegram::TelegramPoller::new(
+                    tg_token,
+                    db_arc,
+                    docker,
+                    chat_id,
+                );
+                tokio::spawn(async move {
+                    poller.run().await;
+                });
+            }
+        }
+
         let mut fails: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
         println!("{} Service probe loop initialized.", "✔".green());
 
