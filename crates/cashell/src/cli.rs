@@ -391,6 +391,14 @@ pub enum AppAction {
         /// Name of the app
         name: String,
     },
+    /// Rollback an application to previous version (D-07)
+    Rollback {
+        /// Name of the app
+        name: String,
+        /// Optional target commit SHA or build ID to rollback to
+        #[arg(long)]
+        target: Option<String>,
+    },
 }
 
 #[derive(Parser, Debug, Clone)]

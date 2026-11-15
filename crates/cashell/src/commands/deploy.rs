@@ -1,4 +1,5 @@
-//! deploy command — deploy applications via Coolify API.
+//! deploy command — optional integration for external deployments via Coolify API (D-09).
+//! CAShell retains full compatibility with Coolify while providing native standalone deployments via 'cashell app'.
 
 use crate::cli::DeployCommand;
 use crate::config::Config;
@@ -224,5 +225,27 @@ mod tests {
     #[test]
     fn test_resolve_token_missing_env() {
         assert!(resolve_token("env:NONEXISTENT_VAR_12345").is_err());
+    }
+
+    #[test]
+    fn test_d09_coolify_optional_integration_dry_run() {
+        let mut cfg = Config::default();
+        cfg.deploy.apps.insert(
+            "test-coolify".to_string(),
+            crate::config::AppDeployConfig {
+                uuid: "coolify-uuid-12345".to_string(),
+                app_type: "application".to_string(),
+            },
+        );
+
+        let cmd = DeployCommand {
+            slug: "test-coolify".to_string(),
+            env: "production".to_string(),
+            dry_run: true,
+        };
+
+        let res = run(&cmd, &cfg).unwrap();
+        assert!(res.success);
+        assert!(res.error.is_none());
     }
 }
