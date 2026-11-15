@@ -126,6 +126,9 @@ pub struct AuditReportRecord {
     pub created_at: String,
 }
 
+/// Telegram user allowlist record: `(user_id, username, role, added_at)`.
+pub type TelegramUserRoleRecord = (i64, Option<String>, String, String);
+
 /// Primary SQLite persistence manager for cashell.
 pub struct Database {
     conn: Connection,
@@ -490,6 +493,36 @@ impl Database {
                  INSERT OR IGNORE INTO schema_migrations (version) VALUES (5);",
             )?;
         }
+        // ── Migration 6: Telegram allowlist roles (T-07) ─────────────────────
+        if !applied.contains(&6) {
+            let has_role: bool = self
+                .conn
+                .prepare("PRAGMA table_info(telegram_allowlist)")
+                .and_then(|mut stmt| {
+                    let mut rows = stmt.query([])?;
+                    let mut found = false;
+                    while let Some(row) = rows.next()? {
+                        let name: String = row.get(1)?;
+                        if name == "role" {
+                            found = true;
+                            break;
+                        }
+                    }
+                    Ok(found)
+                })
+                .unwrap_or(false);
+
+            if !has_role {
+                let _ = self.conn.execute(
+                    "ALTER TABLE telegram_allowlist ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'",
+                    [],
+                );
+            }
+            let _ = self.conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version) VALUES (6)",
+                [],
+            );
+        }
 
         Ok(())
     }
@@ -606,14 +639,71 @@ impl Database {
         Ok(rows.next()?.is_some())
     }
 
-    /// Add or update a Telegram user in the allowlist.
+    /// Add or update a Telegram user in the allowlist with default role 'admin'.
     pub fn add_telegram_user(&self, user_id: i64, username: Option<&str>) -> Result<()> {
+        self.add_telegram_user_with_role(user_id, username, "admin")
+    }
+
+    /// Add or update a Telegram user in the allowlist with an explicit role (T-07).
+    pub fn add_telegram_user_with_role(
+        &self,
+        user_id: i64,
+        username: Option<&str>,
+        role: &str,
+    ) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO telegram_allowlist (user_id, username) VALUES (?1, ?2)
-             ON CONFLICT(user_id) DO UPDATE SET username = excluded.username",
-            params![user_id, username],
+            "INSERT INTO telegram_allowlist (user_id, username, role) VALUES (?1, ?2, ?3)
+             ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, role = excluded.role",
+            params![user_id, username, role],
         )?;
         Ok(())
+    }
+
+    /// Get the role for a Telegram user ID ('admin', 'operator', 'viewer').
+    pub fn get_telegram_user_role(&self, user_id: i64) -> Result<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT role FROM telegram_allowlist WHERE user_id = ?1")?;
+        let mut rows = stmt.query(params![user_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Update role for an existing Telegram user.
+    pub fn set_telegram_user_role(&self, user_id: i64, role: &str) -> Result<bool> {
+        let count = self.conn.execute(
+            "UPDATE telegram_allowlist SET role = ?1 WHERE user_id = ?2",
+            params![role, user_id],
+        )?;
+        Ok(count > 0)
+    }
+
+    /// Count total registered Telegram users in allowlist.
+    pub fn count_telegram_users(&self) -> Result<usize> {
+        let count: i64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM telegram_allowlist", [], |row| {
+                    row.get(0)
+                })?;
+        Ok(count as usize)
+    }
+
+    /// List all allowed Telegram users with their roles (user_id, username, role, added_at).
+    pub fn list_telegram_users_with_role(&self) -> Result<Vec<TelegramUserRoleRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT user_id, username, role, added_at FROM telegram_allowlist ORDER BY added_at ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
     }
 
     /// Remove a Telegram user from the allowlist.
@@ -2414,12 +2504,12 @@ mod tests {
 
         // Verify migrations 1..=4 applied
         let applied = db.applied_migrations()?;
-        assert_eq!(applied, vec![1, 2, 3, 4, 5]);
+        assert_eq!(applied, vec![1, 2, 3, 4, 5, 6]);
 
         // Idempotent migration run: running migrations second time must succeed
         db.run_migrations()?;
         let applied2 = db.applied_migrations()?;
-        assert_eq!(applied2, vec![1, 2, 3, 4, 5]);
+        assert_eq!(applied2, vec![1, 2, 3, 4, 5, 6]);
 
         // Test telegram state and allowlist (T-01, T-02)
         assert_eq!(db.get_telegram_offset()?, 0);
@@ -2427,6 +2517,19 @@ mod tests {
         assert_eq!(db.get_telegram_offset()?, 42);
 
         assert!(!db.is_telegram_user_allowed(9999)?);
+        // Test telegram roles (T-07)
+        db.add_telegram_user_with_role(8888, Some("viewer_bob"), "viewer")?;
+        assert_eq!(db.get_telegram_user_role(8888)?.as_deref(), Some("viewer"));
+        assert_eq!(db.count_telegram_users()?, 1);
+        db.set_telegram_user_role(8888, "operator")?;
+        assert_eq!(
+            db.get_telegram_user_role(8888)?.as_deref(),
+            Some("operator")
+        );
+        let with_roles = db.list_telegram_users_with_role()?;
+        assert_eq!(with_roles.len(), 1);
+        assert_eq!(with_roles[0].2, "operator");
+        assert!(db.remove_telegram_user(8888)?);
         db.add_telegram_user(9999, Some("alice"))?;
         assert!(db.is_telegram_user_allowed(9999)?);
         let allowed = db.list_telegram_users()?;
@@ -2435,6 +2538,19 @@ mod tests {
         assert_eq!(allowed[0].1.as_deref(), Some("alice"));
         assert!(db.remove_telegram_user(9999)?);
         assert!(!db.is_telegram_user_allowed(9999)?);
+        // Test telegram roles (T-07)
+        db.add_telegram_user_with_role(8888, Some("viewer_bob"), "viewer")?;
+        assert_eq!(db.get_telegram_user_role(8888)?.as_deref(), Some("viewer"));
+        assert_eq!(db.count_telegram_users()?, 1);
+        db.set_telegram_user_role(8888, "operator")?;
+        assert_eq!(
+            db.get_telegram_user_role(8888)?.as_deref(),
+            Some("operator")
+        );
+        let with_roles = db.list_telegram_users_with_role()?;
+        assert_eq!(with_roles.len(), 1);
+        assert_eq!(with_roles[0].2, "operator");
+        assert!(db.remove_telegram_user(8888)?);
 
         // Test audit log
         let id1 = db.log_audit(

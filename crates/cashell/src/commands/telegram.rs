@@ -33,13 +33,16 @@ pub enum TelegramAction {
     /// List authorized Telegram user IDs
     List,
 
-    /// Authorize a Telegram user ID manually
+    /// Authorize a Telegram user ID manually (T-07)
     Allow {
         /// Telegram numeric user ID
         user_id: i64,
         /// Optional Telegram username
         #[arg(long)]
         username: Option<String>,
+        /// User role: admin | operator | viewer (default: operator)
+        #[arg(long)]
+        role: Option<String>,
     },
 
     /// Revoke authorization for a Telegram user ID
@@ -81,7 +84,11 @@ pub fn run(cmd: &TelegramCommand, cfg: &mut Config) -> Result<i32> {
         TelegramAction::Setup(args) => rt.block_on(run_setup(args, cfg)),
         TelegramAction::Status => rt.block_on(run_status(cfg)),
         TelegramAction::List => run_list(),
-        TelegramAction::Allow { user_id, username } => run_allow(*user_id, username.as_deref()),
+        TelegramAction::Allow {
+            user_id,
+            username,
+            role,
+        } => run_allow(*user_id, username.as_deref(), role.as_deref()),
         TelegramAction::Revoke { user_id } => run_revoke(*user_id),
     }
 }
@@ -328,16 +335,17 @@ async fn run_status(cfg: &Config) -> Result<i32> {
 
 fn run_list() -> Result<i32> {
     let db = get_db()?;
-    let users = db.list_telegram_users()?;
+    let users = db.list_telegram_users_with_role()?;
     println!("{}", "Authorized Telegram Users:".bold());
     if users.is_empty() {
         println!("  (No users in allowlist. Run 'cashell telegram setup' to add admin)");
     } else {
-        for (uid, uname, added_at) in users {
+        for (uid, uname, role, added_at) in users {
             println!(
-                "  • ID: {:<12} Username: @{:<16} Added: {}",
+                "  • ID: {:<12} Username: @{:<16} Role: {:<10} Added: {}",
                 uid,
                 uname.as_deref().unwrap_or("none"),
+                role,
                 added_at
             );
         }
@@ -345,13 +353,27 @@ fn run_list() -> Result<i32> {
     Ok(0)
 }
 
-fn run_allow(user_id: i64, username: Option<&str>) -> Result<i32> {
+fn run_allow(user_id: i64, username: Option<&str>, role_opt: Option<&str>) -> Result<i32> {
     let db = get_db()?;
-    db.add_telegram_user(user_id, username)?;
+    let role = role_opt.unwrap_or("operator");
+
+    // Pro gating: Free tier restricted to 1 user max (T-07)
+    let is_pro = crate::entitlements::current().is_pro;
+    let count = db.count_telegram_users()?;
+    if !is_pro && count >= 1 && !db.is_telegram_user_allowed(user_id)? {
+        eprintln!(
+            "{} Free tier terbatas pada 1 pengguna. Upgrade ke Pro untuk multi-pengguna.",
+            "🔒".yellow()
+        );
+        return Ok(1);
+    }
+
+    db.add_telegram_user_with_role(user_id, username, role)?;
     println!(
-        "{} User {} added to Telegram allowlist.",
+        "{} User {} added to Telegram allowlist with role '{}'.",
         "✔".green().bold(),
-        user_id
+        user_id,
+        role
     );
     Ok(0)
 }
@@ -385,7 +407,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         crate::paths::with_test_home(&tmp, || {
-            assert_eq!(run_allow(8888, Some("botadmin")).unwrap(), 0);
+            assert_eq!(run_allow(8888, Some("botadmin"), Some("admin")).unwrap(), 0);
             let db = get_db().unwrap();
             assert!(db.is_telegram_user_allowed(8888).unwrap());
             assert_eq!(run_list().unwrap(), 0);

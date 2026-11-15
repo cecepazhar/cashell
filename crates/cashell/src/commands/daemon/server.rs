@@ -148,6 +148,7 @@ pub fn run_daemon(cfg: &Config, port_opt: Option<u16>, interval_opt: Option<u64>
         }
 
         let mut fails: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+        let mut active_incidents: std::collections::BTreeMap<String, std::time::Instant> = std::collections::BTreeMap::new();
         println!("{} Service probe loop initialized.", "✔".green());
 
         loop {
@@ -162,10 +163,35 @@ pub fn run_daemon(cfg: &Config, port_opt: Option<u16>, interval_opt: Option<u64>
                         let key = format!("{node_name}.{svc_name}");
                         if r.status == ProbeStatus::Up {
                             if fails.remove(&key).is_some() {
-                                println!("{} {key} recovered (UP)", "✔".green());
-                                let rec_msg = format!("Service {key} recovered (UP)");
+                                let duration_str = if let Some(down_start) = active_incidents.remove(&key) {
+                                    let secs = down_start.elapsed().as_secs();
+                                    format_duration(secs)
+                                } else {
+                                    "0s".to_string()
+                                };
+                                println!("{} {key} recovered (UP) after {duration_str}", "✔".green());
+                                let rec_msg = format!("✅ {key} RECOVERED (UP) — Durasi gangguan: {duration_str}");
                                 if let Ok(db) = crate::db::get_db() {
                                     let _ = db.log_event("INFO", "daemon", &rec_msg);
+                                    let details = serde_json::json!({
+                                        "key": key,
+                                        "duration": duration_str,
+                                    });
+                                    let _ = db.log_audit(
+                                        "daemon",
+                                        "prober",
+                                        "incident_recovered",
+                                        Some(&details.to_string()),
+                                        Some("recovered"),
+                                        None,
+                                    );
+                                }
+                                if !cfg.daemon.telegram_bot_token.is_empty() && !cfg.daemon.telegram_chat_id.is_empty() {
+                                    let _ = send_telegram_alert(
+                                        &cfg.daemon.telegram_bot_token,
+                                        &cfg.daemon.telegram_chat_id,
+                                        &rec_msg,
+                                    ).await;
                                 }
                             }
                         } else {
@@ -173,6 +199,7 @@ pub fn run_daemon(cfg: &Config, port_opt: Option<u16>, interval_opt: Option<u64>
                             *count += 1;
                             println!("{} {key} down ({count} consecutive failures)", "⚠".yellow());
                             if *count == threshold {
+                                active_incidents.insert(key.clone(), std::time::Instant::now());
                                 let msg = format!("❌ {key} DOWN after {count} consecutive failures");
 
                                 if let Err(e) = send_telegram_alert(
@@ -189,6 +216,18 @@ pub fn run_daemon(cfg: &Config, port_opt: Option<u16>, interval_opt: Option<u64>
                                     if let Err(e) = db.log_event("ERROR", "daemon", &msg) {
                                         eprintln!("  DB log error: {e}");
                                     }
+                                    let details = serde_json::json!({
+                                        "key": key,
+                                        "threshold": threshold,
+                                    });
+                                    let _ = db.log_audit(
+                                        "daemon",
+                                        "prober",
+                                        "incident_down",
+                                        Some(&details.to_string()),
+                                        Some("down"),
+                                        None,
+                                    );
                                 }
 
                                 if let Some(cmd) = cfg.daemon.remediation.get(&key) {
@@ -376,4 +415,19 @@ pub fn run_stop_service(user: bool) -> Result<()> {
         "✔".green()
     );
     Ok(())
+}
+
+/// Format seconds into readable duration string (e.g. "1m 30s", "45s") (T-05).
+pub fn format_duration(secs: u64) -> String {
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        let m = secs / 60;
+        let s = secs % 60;
+        format!("{m}m {s}s")
+    } else {
+        let h = secs / 3600;
+        let m = (secs % 3600) / 60;
+        format!("{h}h {m}m")
+    }
 }

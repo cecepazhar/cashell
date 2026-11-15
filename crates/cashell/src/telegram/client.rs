@@ -4,7 +4,7 @@ use anyhow::{bail, Context, Result};
 use reqwest::Client;
 use std::time::Duration;
 
-use super::types::{TelegramResponse, TelegramUpdate, TelegramUser};
+use super::types::{InlineKeyboardMarkup, TelegramResponse, TelegramUpdate, TelegramUser};
 
 /// Max message length allowed in Telegram output (T-03).
 pub const MAX_TELEGRAM_MESSAGE_LEN: usize = 4000;
@@ -109,15 +109,29 @@ impl TelegramClient {
 
     /// Send a message to a chat, automatically capping length to <= 4000 chars (T-03).
     pub async fn send_message(&self, chat_id: i64, text: &str) -> Result<()> {
+        self.send_message_with_keyboard(chat_id, text, None).await
+    }
+
+    /// Send a message with optional inline keyboard buttons (T-04).
+    pub async fn send_message_with_keyboard(
+        &self,
+        chat_id: i64,
+        text: &str,
+        keyboard: Option<&InlineKeyboardMarkup>,
+    ) -> Result<()> {
         let url = format!("{}/bot{}/sendMessage", self.base_url, self.bot_token);
 
         // Cap text output at <= 4000 characters
         let safe_text = truncate_message(text, MAX_TELEGRAM_MESSAGE_LEN);
 
-        let payload = serde_json::json!({
+        let mut payload = serde_json::json!({
             "chat_id": chat_id,
             "text": safe_text,
         });
+
+        if let Some(kb) = keyboard {
+            payload["reply_markup"] = serde_json::to_value(kb)?;
+        }
 
         let resp = self
             .http
@@ -131,6 +145,44 @@ impl TelegramClient {
         if !status.is_success() {
             let err_body = resp.text().await.unwrap_or_default();
             bail!("sendMessage failed with HTTP {status}: {err_body}");
+        }
+
+        Ok(())
+    }
+
+    /// Acknowledge an incoming callback query from an inline button (T-04).
+    pub async fn answer_callback_query(
+        &self,
+        callback_query_id: &str,
+        text: Option<&str>,
+        show_alert: bool,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/bot{}/answerCallbackQuery",
+            self.base_url, self.bot_token
+        );
+
+        let mut payload = serde_json::json!({
+            "callback_query_id": callback_query_id,
+            "show_alert": show_alert,
+        });
+
+        if let Some(t) = text {
+            payload["text"] = serde_json::Value::String(t.to_string());
+        }
+
+        let resp = self
+            .http
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await
+            .context("failed to send answerCallbackQuery request")?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let err_body = resp.text().await.unwrap_or_default();
+            bail!("answerCallbackQuery failed with HTTP {status}: {err_body}");
         }
 
         Ok(())

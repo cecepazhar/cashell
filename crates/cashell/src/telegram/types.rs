@@ -35,11 +35,52 @@ pub struct TelegramMessage {
     pub text: Option<String>,
 }
 
+/// Inline keyboard button.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InlineKeyboardButton {
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub callback_data: Option<String>,
+}
+
+impl InlineKeyboardButton {
+    pub fn callback(text: impl Into<String>, data: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            callback_data: Some(data.into()),
+        }
+    }
+}
+
+/// Inline keyboard markup.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct InlineKeyboardMarkup {
+    pub inline_keyboard: Vec<Vec<InlineKeyboardButton>>,
+}
+
+impl InlineKeyboardMarkup {
+    pub fn new(rows: Vec<Vec<InlineKeyboardButton>>) -> Self {
+        Self {
+            inline_keyboard: rows,
+        }
+    }
+}
+
+/// Callback query representation for inline buttons.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TelegramCallbackQuery {
+    pub id: String,
+    pub from: TelegramUser,
+    pub message: Option<TelegramMessage>,
+    pub data: Option<String>,
+}
+
 /// Telegram update object returned by `getUpdates`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TelegramUpdate {
     pub update_id: i64,
     pub message: Option<TelegramMessage>,
+    pub callback_query: Option<TelegramCallbackQuery>,
 }
 
 /// Generic response envelope from Telegram Bot API.
