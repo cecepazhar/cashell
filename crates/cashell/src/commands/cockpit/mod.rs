@@ -756,6 +756,11 @@ pub struct CockpitApp {
     // Service restart confirmation state (AI chat command)
     pub pending_service_restart: Option<String>,
 
+    // AI Log Diagnosis state (AI-07)
+    pub show_log_diagnosis_modal: bool,
+    pub log_diagnosis_loading: bool,
+    pub log_diagnosis_result: Option<crate::ai::LogDiagnosisResult>,
+
     // Cron Job Wizard
     pub show_cron_wizard: bool,
     pub cron_schedule_buffer: String,
@@ -1036,6 +1041,9 @@ impl CockpitApp {
             pending_delete_label: String::new(),
 
             pending_service_restart: None,
+            show_log_diagnosis_modal: false,
+            log_diagnosis_loading: false,
+            log_diagnosis_result: None,
 
             show_cron_wizard: false,
             cron_schedule_buffer: "0 * * * *".to_string(),
@@ -2396,6 +2404,27 @@ impl CockpitApp {
             Err(e) => {
                 self.set_notification(format!("✗ Error restarting '{trimmed}'"));
                 self.add_ai_response(&format!("✗ Fleet: Error restarting '{trimmed}': {e}"));
+            }
+        }
+    }
+
+    pub fn diagnose_logs_with_ai(&mut self) {
+        self.show_log_diagnosis_modal = true;
+        self.set_notification("🤖 AI Log Diagnosis dispatched...");
+        match crate::ai::diagnose_logs(&self.cfg, &self.log_buffer) {
+            Ok(res) => {
+                self.log_diagnosis_result = Some(res);
+                self.set_notification("✔ AI Log Diagnosis completed");
+            }
+            Err(e) => {
+                self.log_diagnosis_result = Some(crate::ai::LogDiagnosisResult {
+                    summary: "Diagnosis error".to_string(),
+                    root_cause: format!("Failed running AI diagnosis: {e}"),
+                    proposed_fix: "Verify AI provider configuration with 'cashell ai setup'."
+                        .to_string(),
+                    proposed_action: None,
+                });
+                self.set_notification(format!("✗ Diagnosis error: {e}"));
             }
         }
     }
@@ -5429,6 +5458,47 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
     }
 
+    // 5c. AI Log Diagnosis & Remediation Modal (AI-07)
+    if app.show_log_diagnosis_modal {
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                if let Some(ref res) = app.log_diagnosis_result.clone() {
+                    if let Some(ref action) = res.proposed_action {
+                        match action {
+                            crate::actions::Action::RestartContainer { name } => {
+                                app.execute_service_restart(name);
+                                app.show_log_diagnosis_modal = false;
+                                app.set_notification(format!(
+                                    "✔ Remediated: restarted container '{name}'"
+                                ));
+                            }
+                            crate::actions::Action::StopContainer { name } => {
+                                app.execute_service_restart(name);
+                                app.show_log_diagnosis_modal = false;
+                                app.set_notification(format!(
+                                    "✔ Remediated: stopped container '{name}'"
+                                ));
+                            }
+                            _ => {
+                                app.show_log_diagnosis_modal = false;
+                                app.set_notification("✔ Remediated: action executed");
+                            }
+                        }
+                        return Ok(false);
+                    }
+                }
+                app.show_log_diagnosis_modal = false;
+                return Ok(false);
+            }
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('n') | KeyCode::Char('N') => {
+                app.show_log_diagnosis_modal = false;
+                app.set_notification("Log diagnosis dismissed without changes.");
+                return Ok(false);
+            }
+            _ => return Ok(false),
+        }
+    }
+
     // 6. Global Navigation Shortcuts
     match key.code {
         KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -6024,7 +6094,14 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             app.show_cron_wizard = true;
         }
 
-        // Log Tab shortcuts: 'r': Reload logs, 'l': Cycle log level
+        // Log Tab shortcuts: 'r': Reload logs, 'l': Cycle log level, 'e': AI Diagnosis (AI-07)
+        KeyCode::Char('e') if app.current_tab == CockpitTab::Log => {
+            app.diagnose_logs_with_ai();
+        }
+        KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.current_tab = CockpitTab::Log;
+            app.diagnose_logs_with_ai();
+        }
         KeyCode::Char('r') if app.current_tab == CockpitTab::Log => {
             app.load_logs();
             app.set_notification("Logs refreshed from active stream");
@@ -7211,6 +7288,120 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if app.show_factory_reset_modal {
         settings::draw_factory_reset_modal(f, app, area);
     }
+
+    if app.show_log_diagnosis_modal {
+        draw_log_diagnosis_modal(f, app, area);
+    }
+}
+
+fn draw_log_diagnosis_modal(f: &mut Frame, app: &CockpitApp, area: Rect) {
+    let popup_w = (area.width * 75 / 100).clamp(50, 100);
+    let popup_h = (area.height * 70 / 100).clamp(16, 30);
+    let popup_x = area.x + (area.width.saturating_sub(popup_w)) / 2;
+    let popup_y = area.y + (area.height.saturating_sub(popup_h)) / 2;
+    let popup_rect = Rect::new(popup_x, popup_y, popup_w, popup_h);
+
+    f.render_widget(Clear, popup_rect);
+
+    let palette = cockpit_theme(&app.cfg.output.theme);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 🤖 AI Log Diagnosis & Remediation [Alt+E] ")
+        .title_style(
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        )
+        .border_style(Style::default().fg(Color::Magenta));
+
+    let inner = block.inner(popup_rect);
+    f.render_widget(block, popup_rect);
+
+    let mut lines = Vec::new();
+    if let Some(ref res) = app.log_diagnosis_result {
+        lines.push(Line::from(vec![
+            Span::styled(
+                "Summary: ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(&res.summary, Style::default().fg(Color::White)),
+        ]));
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(
+                "Root Cause: ",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(&res.root_cause, Style::default().fg(palette.text)),
+        ]));
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(
+                "Proposed Fix: ",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(&res.proposed_fix, Style::default().fg(palette.text)),
+        ]));
+        lines.push(Line::from(""));
+
+        if res.proposed_action.is_some() {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "Action Required: ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "Mutating system change proposed by AI.",
+                    Style::default().fg(Color::White),
+                ),
+            ]));
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "  [Enter / Y] ",
+                    Style::default()
+                        .fg(Color::Green)
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" Confirm & Execute Remediation    "),
+                Span::styled(
+                    "  [Esc / N] ",
+                    Style::default()
+                        .fg(Color::Red)
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" Cancel"),
+            ]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "  [Esc / Enter] ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" Close Diagnosis"),
+            ]));
+        }
+    } else {
+        lines.push(Line::from(Span::styled(
+            "Analyzing log stream...",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::ITALIC),
+        )));
+    }
+
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
 }
 
 // ── Header (Calm Sovereign Cockpit Branding) ────────────────────────────────
@@ -13792,6 +13983,71 @@ mod tests {
         app.show_server_wizard = true;
         let res_modal = handle_key_event(ctrl_c, &mut app, &mut terminal);
         assert_eq!(res_modal.unwrap(), true);
+    }
+
+    #[test]
+    fn test_ai07_cockpit_log_diagnosis_and_confirmation_modal() {
+        let mut app = CockpitApp::new(&Config::default());
+        let backend = ratatui::backend::TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        // 1. Set proposed diagnosis
+        app.log_buffer.push((
+            "ERROR".to_string(),
+            "docker/api".to_string(),
+            "Container web-prod exited unexpectedly (SIGKILL)".to_string(),
+        ));
+        app.log_diagnosis_result = Some(crate::ai::LogDiagnosisResult {
+            summary: "OOM Kill detected".to_string(),
+            root_cause: "Container web-prod was killed by OOM killer".to_string(),
+            proposed_fix: "Restart container web-prod".to_string(),
+            proposed_action: Some(crate::actions::Action::RestartContainer {
+                name: "web-prod".to_string(),
+            }),
+        });
+        app.show_log_diagnosis_modal = true;
+
+        // 2. Render and verify modal contents
+        terminal
+            .draw(|f| {
+                draw(f, &mut app);
+            })
+            .expect("draw cockpit with diagnosis modal");
+
+        let buffer = terminal.backend().buffer().clone();
+        let content: String = (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(content.contains("AI Log Diagnosis"));
+        assert!(content.contains("OOM Kill detected"));
+        assert!(content.contains("Confirm & Execute Remediation"));
+
+        // 3. User cancels (presses 'n'): modal closes, NO action executed
+        let cancel_key = event::KeyEvent::new(KeyCode::Char('n'), KeyModifiers::empty());
+        let _ = handle_key_event(cancel_key, &mut app, &mut terminal);
+        assert_eq!(app.show_log_diagnosis_modal, false);
+        assert_eq!(
+            app.notification.as_ref().map(|n| n.0.as_str()),
+            Some("Log diagnosis dismissed without changes.")
+        );
+
+        // 4. User confirms (presses Enter): modal closes, remediation executed!
+        app.show_log_diagnosis_modal = true;
+        let confirm_key = event::KeyEvent::new(KeyCode::Enter, KeyModifiers::empty());
+        let _ = handle_key_event(confirm_key, &mut app, &mut terminal);
+        assert_eq!(app.show_log_diagnosis_modal, false);
+        let notif = app
+            .notification
+            .as_ref()
+            .map(|n| n.0.as_str())
+            .unwrap_or_default();
+        assert!(notif.contains("Remediated: restarted container 'web-prod'"));
     }
 }
 pub(crate) fn noop() {}

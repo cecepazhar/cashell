@@ -47,6 +47,10 @@ impl TelegramRouter {
         role: TelegramRole,
     ) -> RouterOutput {
         let trimmed = text.trim();
+        let ctx = ActionContext::new("telegram", user.id.to_string())
+            .with_docker(self.docker.clone())
+            .with_db(self.db.clone());
+
         if !trimmed.starts_with('/') {
             return RouterOutput::Text("Send /help to view available commands.".to_string());
         }
@@ -54,10 +58,6 @@ impl TelegramRouter {
         let parts: Vec<&str> = trimmed.split_whitespace().collect();
         let cmd = parts[0];
         let base_cmd = cmd.split('@').next().unwrap_or(cmd);
-
-        let ctx = ActionContext::new("telegram", user.id.to_string())
-            .with_docker(self.docker.clone())
-            .with_db(self.db.clone());
 
         match base_cmd {
             "/help" => RouterOutput::Text(Self::help_text(role)),
@@ -156,7 +156,170 @@ impl TelegramRouter {
                 }
                 self.handle_users_command(&parts[1..]).await
             }
+            "/ai" => {
+                let prompt = parts[1..].join(" ");
+                if prompt.trim().is_empty() {
+                    return RouterOutput::Text("Usage: /ai <pertanyaan atau perintah>".to_string());
+                }
+                self.handle_ai_query(&prompt, user, role, &ctx).await
+            }
             _ => RouterOutput::Text("Unknown command. Send /help for available commands.".to_string()),
+        }
+    }
+
+    pub async fn handle_ai_query(
+        &self,
+        prompt: &str,
+        user: &TelegramUser,
+        role: TelegramRole,
+        ctx: &ActionContext,
+    ) -> RouterOutput {
+        let session_id = format!("tg_{}", user.id);
+
+        // 1. Load recent conversation history (sliding window 10, AI-06)
+        let history = {
+            if let Ok(db) = self.db.lock() {
+                db.load_recent_chat_session(&session_id, 10)
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            }
+        };
+
+        // 2. Prepare tools
+        let tools = crate::ai::system_tool_definitions();
+
+        // 3. Prepare system prompt & contextual prompt
+        let sys_prompt = format!(
+            "You are Hana, the autonomous DevOps AI assistant for CAShell. \
+             You are interacting with Telegram user {} (role: {}). \
+             You have access to tools for querying system stats, logs, containers, and managing services. \
+             When the user asks to inspect or query, invoke the corresponding read tool. \
+             When the user asks to restart or modify, invoke the corresponding mutating tool.",
+            user.first_name, role.as_str()
+        );
+
+        let mut context_prompt = String::new();
+        if !history.is_empty() {
+            context_prompt.push_str("Recent conversation history:\n");
+            for (r, msg) in &history {
+                context_prompt.push_str(&format!("{r}: {msg}\n"));
+            }
+            context_prompt.push_str("\nCurrent user prompt:\n");
+        }
+        context_prompt.push_str(prompt);
+
+        // 4. Query AI using blocking call wrapped in spawn_blocking
+        let cfg = crate::config::Config::load(None).unwrap_or_default();
+        let prompt_clone = context_prompt.clone();
+        let sys_clone = sys_prompt.clone();
+        let tools_clone = tools.clone();
+
+        let ai_result = tokio::task::spawn_blocking(move || {
+            let client = reqwest::blocking::Client::builder().build()?;
+            crate::ai::query_with_tools(
+                &client,
+                &cfg,
+                Some(&sys_clone),
+                &prompt_clone,
+                &tools_clone,
+            )
+        })
+        .await;
+
+        let response = match ai_result {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(e)) => {
+                let err_str = e.to_string();
+                if err_str.contains("no AI provider configured") {
+                    return RouterOutput::Text(
+                        "🤖 [Hana AI] AI belum dikonfigurasi. Jalankan `cashell ai setup` di server untuk mengaktifkan AI BYOK.".to_string()
+                    );
+                }
+                return RouterOutput::Text(format!("🤖 [Hana AI] Gagal memproses: {err_str}"));
+            }
+            Err(join_err) => {
+                return RouterOutput::Text(format!("🤖 [Hana AI] Runtime error: {join_err}"));
+            }
+        };
+
+        // Save user message to SQLite sliding window
+        if let Ok(db) = self.db.lock() {
+            let _ = db.append_chat_and_trim(&session_id, "user", prompt, 10);
+        }
+
+        match response {
+            crate::ai::AiResponse::Text(answer) => {
+                // Save assistant reply
+                if let Ok(db) = self.db.lock() {
+                    let _ = db.append_chat_and_trim(&session_id, "assistant", &answer, 10);
+                }
+                RouterOutput::Text(format!("🤖 [Hana AI]\n{answer}"))
+            }
+            crate::ai::AiResponse::ToolCalls(calls) => {
+                if calls.is_empty() {
+                    return RouterOutput::Text(
+                        "🤖 [Hana AI] Tidak ada tindakan yang dihasilkan.".to_string(),
+                    );
+                }
+
+                // AI-03: Process tool calls.
+                // If the tool is a Read action: auto-execute immediately.
+                // If the tool is a Write action: proposal only + require confirmation (T-04)!
+                let call = &calls[0];
+                match crate::ai::tool_call_to_action(call) {
+                    Ok(action) => {
+                        match action.kind() {
+                            crate::actions::ActionKind::Read => {
+                                // Auto-execute read tool
+                                Self::log_read_action(ctx, action.action_name());
+                                let output = Self::run_action(action, ctx).await;
+                                let reply = format!(
+                                    "🤖 [Hana AI] Auto-eksekusi tool `{}`:\n\n{output}",
+                                    call.name
+                                );
+                                if let Ok(db) = self.db.lock() {
+                                    let _ = db.append_chat_and_trim(
+                                        &session_id,
+                                        "assistant",
+                                        &reply,
+                                        10,
+                                    );
+                                }
+                                RouterOutput::Text(reply)
+                            }
+                            crate::actions::ActionKind::Write => {
+                                // Mutating write action: check role and REQUIRE CONFIRMATION
+                                if !role.can_write() {
+                                    return RouterOutput::Text(
+                                        "⛔ [Hana AI] Peran 'viewer' tidak diizinkan mengeksekusi aksi modifikasi.".to_string()
+                                    );
+                                }
+                                let desc = format!(
+                                    "AI mengusulkan: `{}` dengan parameter `{}`",
+                                    call.name, call.arguments
+                                );
+                                if let Ok(db) = self.db.lock() {
+                                    let _ = db.append_chat_and_trim(
+                                        &session_id,
+                                        "assistant",
+                                        &desc,
+                                        10,
+                                    );
+                                }
+                                RouterOutput::RequireConfirmation {
+                                    action,
+                                    description: desc,
+                                }
+                            }
+                        }
+                    }
+                    Err(err) => RouterOutput::Text(format!(
+                        "🤖 [Hana AI] Gagal memetakan tool `{}`: {err}",
+                        call.name
+                    )),
+                }
+            }
         }
     }
 

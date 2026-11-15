@@ -1,5 +1,6 @@
 //! Multi-vendor Tool Calling abstraction for OpenAI, Anthropic, and Ollama (AI-02).
 
+use crate::actions::Action;
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +41,181 @@ pub enum AiResponse {
     Text(String),
     /// Model requested one or more tool calls.
     ToolCalls(Vec<ToolCall>),
+}
+
+/// Canonical system tools available to the AI across Telegram, Cockpit, and CLI.
+pub fn system_tool_definitions() -> Vec<ToolDefinition> {
+    vec![
+        // Read tools (Safe, automatically executed)
+        ToolDefinition::new(
+            "get_status",
+            "Probe system and daemon status (CPU, RAM, load, online services)",
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+            }),
+        ),
+        ToolDefinition::new(
+            "get_uptime",
+            "Query uptime monitors status summary and incident history",
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+            }),
+        ),
+        ToolDefinition::new(
+            "list_containers",
+            "List all registered or running Docker containers",
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+            }),
+        ),
+        ToolDefinition::new(
+            "get_logs",
+            "Fetch recent log lines for an application or container",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "app": { "type": "string", "description": "Target container or app name" },
+                    "lines": { "type": "integer", "description": "Number of lines (default 50, max 200)" }
+                },
+                "required": ["app"]
+            }),
+        ),
+        ToolDefinition::new(
+            "get_analytics",
+            "Query sovereign web analytics traffic metrics",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "site": { "type": "string", "description": "Website domain or ID" },
+                    "days": { "type": "integer", "description": "Number of past days (default 7)" }
+                },
+                "required": ["site"]
+            }),
+        ),
+        // Write tools (Mutating, requires interactive user confirmation)
+        ToolDefinition::new(
+            "restart_container",
+            "Restart a target container (requires user confirmation)",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Name of the container to restart" }
+                },
+                "required": ["name"]
+            }),
+        ),
+        ToolDefinition::new(
+            "stop_container",
+            "Stop a target container (requires user confirmation)",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Name of the container to stop" }
+                },
+                "required": ["name"]
+            }),
+        ),
+        ToolDefinition::new(
+            "start_container",
+            "Start a target container (requires user confirmation)",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Name of the container to start" }
+                },
+                "required": ["name"]
+            }),
+        ),
+        ToolDefinition::new(
+            "deploy_app",
+            "Trigger deployment for an application (requires user confirmation)",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "app": { "type": "string", "description": "Name of the app to deploy" }
+                },
+                "required": ["app"]
+            }),
+        ),
+    ]
+}
+
+/// Convert a generic [`ToolCall`] into a strongly-typed [`Action`].
+pub fn tool_call_to_action(call: &ToolCall) -> Result<Action> {
+    match call.name.as_str() {
+        "get_status" => Ok(Action::GetStatus),
+        "get_uptime" => Ok(Action::GetUptime),
+        "list_containers" => Ok(Action::ListContainers),
+        "get_logs" => {
+            let app = call
+                .arguments
+                .get("app")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("missing 'app' parameter for get_logs"))?
+                .to_string();
+            let lines = call
+                .arguments
+                .get("lines")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(50)
+                .min(200) as usize;
+            Ok(Action::GetLogs { app, lines })
+        }
+        "get_analytics" => {
+            let site = call
+                .arguments
+                .get("site")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let days = call
+                .arguments
+                .get("days")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(7) as u32;
+            Ok(Action::GetAnalytics { site, days })
+        }
+        "restart_container" => {
+            let name = call
+                .arguments
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("missing 'name' parameter for restart_container"))?
+                .to_string();
+            Ok(Action::RestartContainer { name })
+        }
+        "stop_container" => {
+            let name = call
+                .arguments
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("missing 'name' parameter for stop_container"))?
+                .to_string();
+            Ok(Action::StopContainer { name })
+        }
+        "start_container" => {
+            let name = call
+                .arguments
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("missing 'name' parameter for start_container"))?
+                .to_string();
+            Ok(Action::StartContainer { name })
+        }
+        "deploy_app" => {
+            let app = call
+                .arguments
+                .get("app")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("missing 'app' parameter for deploy_app"))?
+                .to_string();
+            Ok(Action::DeployApp { app })
+        }
+        unknown => bail!("unsupported tool call: {unknown}"),
+    }
 }
 
 /// Format tool definitions for OpenAI-compatible `/chat/completions` API.

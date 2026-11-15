@@ -8,6 +8,7 @@
 //! - Token and request budget rate limits (AI-05)
 //! - SSE streaming on TTY, buffered plain output in pipe mode, cumulative 45s fallback chain budget.
 
+pub mod diagnosis;
 pub mod provider;
 pub mod rate_limit;
 pub mod redact;
@@ -25,10 +26,13 @@ use reqwest::blocking::Client;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+pub use diagnosis::{diagnose_logs, LogDiagnosisResult};
 pub use provider::ProviderKind;
 pub use rate_limit::{estimate_tokens, global_budget_guard, AiBudgetGuard};
 pub use redact::redact_secrets;
-pub use tools::{AiResponse, ToolCall, ToolDefinition};
+pub use tools::{
+    system_tool_definitions, tool_call_to_action, AiResponse, ToolCall, ToolDefinition,
+};
 
 const TOTAL_BUDGET: Duration = Duration::from_secs(45);
 

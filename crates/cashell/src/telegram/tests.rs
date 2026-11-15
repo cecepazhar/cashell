@@ -705,3 +705,77 @@ fn test_alert_down_and_recovery_duration_formatting() {
     assert_eq!(format_duration(90), "1m 30s");
     assert_eq!(format_duration(3665), "1h 1m");
 }
+
+// ── Test 10: AI Tool Calling: Read Auto-Execute vs Write Requires Confirmation (AI-03) ──
+
+#[tokio::test]
+async fn test_ai03_tool_calling_read_auto_execute_write_requires_confirmation() {
+    use crate::actions::{ActionContext, ActionKind};
+    use crate::ai::tools::{tool_call_to_action, ToolCall};
+    use crate::telegram::confirm::ConfirmStore;
+
+    let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
+    let mock_docker = Arc::new(MockDocker::new(&["api-service"]));
+    let ctx = ActionContext::new("telegram", "12345")
+        .with_docker(mock_docker.clone())
+        .with_db(db.clone());
+
+    // 1. Read tool call: get_status
+    let read_call = ToolCall {
+        id: "call_read_1".to_string(),
+        name: "get_status".to_string(),
+        arguments: serde_json::json!({}),
+    };
+    let read_action = tool_call_to_action(&read_call).expect("read tool call should map");
+    assert_eq!(read_action.kind(), ActionKind::Read);
+
+    // Read action executes automatically without requiring confirmation
+    let read_result = crate::actions::execute(read_action, &ctx)
+        .await
+        .expect("read action should execute automatically");
+    assert!(read_result.ok);
+
+    // 2. Write tool call: restart_container
+    let write_call = ToolCall {
+        id: "call_write_1".to_string(),
+        name: "restart_container".to_string(),
+        arguments: serde_json::json!({ "name": "api-service" }),
+    };
+    let write_action = tool_call_to_action(&write_call).expect("write tool call should map");
+    assert_eq!(write_action.kind(), ActionKind::Write);
+
+    // Write action is NOT executed automatically: registered in ConfirmStore
+    let confirm_store = ConfirmStore::new();
+    let (action_id, keyboard) = confirm_store.create_pending(
+        12345,
+        99999,
+        write_action.clone(),
+        "AI proposes restarting api-service",
+    );
+
+    // Verify confirmation modal keyboard was generated
+    assert_eq!(keyboard.inline_keyboard.len(), 1);
+    assert_eq!(keyboard.inline_keyboard[0].len(), 2);
+    assert_eq!(keyboard.inline_keyboard[0][0].text, "✅ Ya, Lanjutkan");
+    assert_eq!(
+        keyboard.inline_keyboard[0][0].callback_data.as_deref(),
+        Some(format!("confirm:{action_id}").as_str())
+    );
+    assert_eq!(keyboard.inline_keyboard[0][1].text, "❌ Batal");
+
+    // Verify action is pending and has NOT executed yet
+    assert!(confirm_store.get(&action_id).is_some());
+
+    // User confirms: action is taken and executed
+    let pending = confirm_store
+        .take(&action_id)
+        .expect("pending action should be retrieved");
+    assert_eq!(pending.action, write_action);
+
+    let write_result = crate::actions::execute(pending.action, &ctx)
+        .await
+        .expect("confirmed write action should execute");
+    assert!(write_result.ok);
+    assert!(write_result.output.contains("api-service"));
+    assert!(write_result.output.contains("restart"));
+}

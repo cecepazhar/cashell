@@ -640,6 +640,14 @@ impl Database {
             )?;
         }
 
+        // ── Migration 9: AI chat session indexing (AI-06) ────────────────────
+        if !applied.contains(&9) {
+            self.conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_ai_chat_session_id ON ai_chat(session_id, id);
+                 INSERT OR IGNORE INTO schema_migrations (version) VALUES (9);",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -873,6 +881,45 @@ impl Database {
         }
         msgs.reverse();
         Ok(msgs)
+    }
+
+    /// Load the most recent `limit` messages for a session in chronological order (AI-06).
+    pub fn load_recent_chat_session(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT role, content FROM ai_chat WHERE session_id = ?1 ORDER BY id DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![session_id, limit as i64], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+
+        let mut msgs = Vec::new();
+        for r in rows {
+            msgs.push(r?);
+        }
+        msgs.reverse();
+        Ok(msgs)
+    }
+
+    /// Append a message to `ai_chat` and keep only the latest `keep_limit` messages for this session (AI-06).
+    pub fn append_chat_and_trim(
+        &self,
+        session_id: &str,
+        role: &str,
+        content: &str,
+        keep_limit: usize,
+    ) -> Result<()> {
+        self.save_chat_session(session_id, role, content)?;
+        self.conn.execute(
+            "DELETE FROM ai_chat WHERE session_id = ?1 AND id NOT IN (
+                 SELECT id FROM ai_chat WHERE session_id = ?1 ORDER BY id DESC LIMIT ?2
+             )",
+            params![session_id, keep_limit as i64],
+        )?;
+        Ok(())
     }
 
     /// Read the most recent `limit` `system_events` log rows, newest first.
@@ -2926,12 +2973,12 @@ mod tests {
 
         // Verify migrations 1..=4 applied
         let applied = db.applied_migrations()?;
-        assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
         // Idempotent migration run: running migrations second time must succeed
         db.run_migrations()?;
         let applied2 = db.applied_migrations()?;
-        assert_eq!(applied2, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(applied2, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
         // Test telegram state and allowlist (T-01, T-02)
         assert_eq!(db.get_telegram_offset()?, 0);
@@ -3012,6 +3059,58 @@ mod tests {
         assert_eq!(restarts.len(), 1);
         assert_eq!(restarts[0].actor, "admin");
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_ai06_chat_history_sliding_window_in_sqlite() -> Result<()> {
+        let tmp_name = format!(
+            "cashell_test_db_chat_{}.db",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let db_path = std::env::temp_dir().join(tmp_name);
+
+        {
+            let db = Database::open_path(&db_path)?;
+
+            // Insert 15 messages into session_1, keeping a sliding window of 10
+            for i in 1..=15 {
+                let role = if i % 2 == 1 { "user" } else { "assistant" };
+                db.append_chat_and_trim("session_1", role, &format!("message_{i}"), 10)?;
+            }
+
+            // Insert messages into session_2 (isolated)
+            db.append_chat_and_trim("session_2", "user", "hello from session 2", 10)?;
+
+            // Check session_1 has exactly 10 messages (message_6 to message_15)
+            let history1 = db.load_recent_chat_session("session_1", 10)?;
+            assert_eq!(history1.len(), 10);
+            assert_eq!(history1[0].1, "message_6");
+            assert_eq!(history1[9].1, "message_15");
+
+            // Check session_2 has 1 message
+            let history2 = db.load_recent_chat_session("session_2", 10)?;
+            assert_eq!(history2.len(), 1);
+            assert_eq!(history2[0].1, "hello from session 2");
+        }
+
+        // Simulate daemon restart: reopen the database from disk
+        {
+            let db_reopened = Database::open_path(&db_path)?;
+            let history1 = db_reopened.load_recent_chat_session("session_1", 10)?;
+            assert_eq!(
+                history1.len(),
+                10,
+                "chat history must persist across daemon restart"
+            );
+            assert_eq!(history1[0].1, "message_6");
+            assert_eq!(history1[9].1, "message_15");
+        }
+
+        let _ = std::fs::remove_file(&db_path);
         Ok(())
     }
 }
