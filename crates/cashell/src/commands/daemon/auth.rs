@@ -3,6 +3,8 @@
 use axum::http::HeaderMap;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 /// HTTP API shared state.
 #[derive(Clone, Debug)]
@@ -12,6 +14,22 @@ pub struct DaemonState {
     pub trusted_proxies: Vec<String>,
     /// H-05: per-node secrets for verifying signed heartbeats, keyed by node_id.
     pub node_secrets: HashMap<String, String>,
+    /// A-04: Daily random secret salt for visitor hashing.
+    pub salt_manager: DailySaltManager,
+    /// A-06: Collector rate limiter per client IP.
+    pub rate_limiter: CollectorRateLimiter,
+}
+
+impl Default for DaemonState {
+    fn default() -> Self {
+        Self {
+            token: String::new(),
+            trusted_proxies: Vec::new(),
+            node_secrets: HashMap::new(),
+            salt_manager: DailySaltManager::new(),
+            rate_limiter: CollectorRateLimiter::new(60, 60),
+        }
+    }
 }
 
 /// Constant-time comparison of two strings (hard security rule for bearer tokens).
@@ -129,4 +147,133 @@ pub fn resolve_client_ip(
         }
     }
     peer_ip_str
+}
+
+/// A-04: Daily random secret salt (not derivable from date), discarded after rotation.
+#[derive(Clone, Debug)]
+pub struct DailySaltManager {
+    inner: Arc<Mutex<DailySaltInner>>,
+}
+
+#[derive(Debug)]
+struct DailySaltInner {
+    day: String,
+    salt: String,
+}
+
+impl Default for DailySaltManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DailySaltManager {
+    pub fn new() -> Self {
+        let (day, salt) = Self::generate_new_salt();
+        Self {
+            inner: Arc::new(Mutex::new(DailySaltInner { day, salt })),
+        }
+    }
+
+    fn generate_new_salt() -> (String, String) {
+        use rand::RngCore;
+        let mut bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        let salt = hex_encode(&bytes);
+        let day = chrono::Local::now().format("%Y-%m-%d").to_string();
+        (day, salt)
+    }
+
+    pub fn get_or_rotate_salt(&self) -> String {
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let mut inner = self.inner.lock().unwrap();
+        if inner.day != today {
+            let (_, new_salt) = Self::generate_new_salt();
+            inner.day = today;
+            inner.salt = new_salt;
+        }
+        inner.salt.clone()
+    }
+
+    pub fn rotate_now(&self) -> String {
+        let mut inner = self.inner.lock().unwrap();
+        let (_, new_salt) = Self::generate_new_salt();
+        inner.salt = new_salt.clone();
+        new_salt
+    }
+
+    pub fn hash_visitor(&self, client_ip: &str) -> String {
+        let salt = self.get_or_rotate_salt();
+        let input = format!("{client_ip}_{salt}");
+        crate::commands::daemon::routes::hex_sha256(&input)
+    }
+}
+
+/// A-06: In-memory sliding-window rate limiter per client IP.
+#[derive(Clone, Debug)]
+pub struct CollectorRateLimiter {
+    inner: Arc<Mutex<HashMap<String, Vec<Instant>>>>,
+    limit: usize,
+    window_secs: u64,
+}
+
+impl Default for CollectorRateLimiter {
+    fn default() -> Self {
+        Self::new(60, 60)
+    }
+}
+
+impl CollectorRateLimiter {
+    pub fn new(limit: usize, window_secs: u64) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+            limit,
+            window_secs,
+        }
+    }
+
+    /// Check and record an incoming request hit from `ip`.
+    /// Returns `true` if allowed, `false` if rate limit exceeded.
+    pub fn check_and_record(&self, ip: &str) -> bool {
+        let now = Instant::now();
+        let cutoff = now
+            .checked_sub(std::time::Duration::from_secs(self.window_secs))
+            .unwrap_or(now);
+        let mut map = self.inner.lock().unwrap();
+        let hits = map.entry(ip.to_string()).or_default();
+        hits.retain(|&t| t > cutoff);
+        if hits.len() >= self.limit {
+            false
+        } else {
+            hits.push(now);
+            true
+        }
+    }
+}
+
+/// A-01: resolve country from CF-IPCountry only if request is from a trusted proxy.
+pub fn resolve_country(
+    peer: &SocketAddr,
+    headers: &HeaderMap,
+    trusted_proxies: &[String],
+) -> String {
+    let peer_ip_str = peer.ip().to_string();
+    let is_trusted = trusted_proxies
+        .iter()
+        .any(|t| t == &peer_ip_str || t == &peer.to_string());
+    if !is_trusted {
+        return String::new();
+    }
+    if let Some(v) = headers
+        .get("cf-ipcountry")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let code = v.to_uppercase();
+        if code.len() == 2 && code.chars().all(|c| c.is_ascii_alphabetic()) {
+            return code;
+        }
+    }
+    String::new()
 }

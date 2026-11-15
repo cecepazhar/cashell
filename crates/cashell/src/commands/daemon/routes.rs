@@ -11,7 +11,10 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use super::auth::{check_auth, resolve_client_ip, verify_heartbeat, DaemonState};
+use super::auth::{
+    check_auth, resolve_client_ip, resolve_country, verify_heartbeat, CollectorRateLimiter,
+    DaemonState, DailySaltManager,
+};
 use crate::config::Config;
 
 #[derive(Deserialize)]
@@ -231,6 +234,8 @@ pub fn build_router(cfg: &Config) -> Router {
         token: cfg.daemon.token.clone(),
         trusted_proxies: cfg.daemon.trusted_proxies.clone(),
         node_secrets,
+        salt_manager: DailySaltManager::new(),
+        rate_limiter: CollectorRateLimiter::new(60, 60),
     });
     Router::new()
         .route("/api/health", get(health_handler))
@@ -428,16 +433,51 @@ pub async fn collect_analytics_handler(
 
     let client_ip = resolve_client_ip(&connect, &headers, &state.trusted_proxies);
 
+    // A-06: Rate limit per IP in collector (60 req/minute)
+    if !state.rate_limiter.check_and_record(&client_ip) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [
+                ("access-control-allow-origin", "*"),
+                ("access-control-allow-methods", "POST, GET, OPTIONS"),
+                ("access-control-allow-headers", "*"),
+                ("retry-after", "60"),
+            ],
+            Json(serde_json::json!({
+                "error": "too_many_requests",
+                "message": "Rate limit exceeded (max 60 requests per minute per IP)"
+            })),
+        )
+            .into_response();
+    }
+
     let ua = headers
         .get("user-agent")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
+
+    // A-05: Bot filter (User-Agent blocklist + Sec-Fetch headers)
+    if is_bot(&ua, &headers) {
+        return (
+            StatusCode::OK,
+            [
+                ("access-control-allow-origin", "*"),
+                ("access-control-allow-methods", "POST, GET, OPTIONS"),
+                ("access-control-allow-headers", "*"),
+            ],
+            Json(serde_json::json!({"status": "ignored", "reason": "bot"})),
+        )
+            .into_response();
+    }
+
     let (browser, os, device) = parse_user_agent(&ua);
 
-    let today_str = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let hash_input = format!("{client_ip}_{today_str}");
-    let visitor_hash = hex_sha256(&hash_input);
+    // A-04: Daily random secret salt (not derived from date, rotated daily)
+    let visitor_hash = state.salt_manager.hash_visitor(&client_ip);
+
+    // A-01: Country resolution from CF-IPCountry only if from trusted proxy
+    let country = resolve_country(&connect.0, &headers, &state.trusted_proxies);
 
     let event_type = payload
         .get("event_type")
@@ -475,7 +515,7 @@ pub async fn collect_analytics_handler(
             &browser,
             &os,
             &device,
-            "",
+            &country,
             &visitor_hash,
             &event_type,
             event_name.as_deref(),
@@ -553,39 +593,120 @@ pub async fn analytics_summary_handler(
     }
 }
 
+/// A-05: Bot detection using User-Agent signatures and Sec-Fetch header heuristics.
+pub fn is_bot(ua: &str, headers: &HeaderMap) -> bool {
+    let ua_lower = ua.to_lowercase();
+    if ua_lower.is_empty() {
+        return false;
+    }
+    let bot_signatures = [
+        "googlebot",
+        "bingbot",
+        "slurp",
+        "duckduckbot",
+        "baiduspider",
+        "yandexbot",
+        "sogou",
+        "exabot",
+        "facebot",
+        "ia_archiver",
+        "curl/",
+        "wget/",
+        "python-requests",
+        "aiohttp",
+        "httpx",
+        "httpie",
+        "postmanruntime",
+        "insomnia",
+        "go-http-client",
+        "headlesschrome",
+        "phantomjs",
+        "selenium",
+        "bytespider",
+        "semrushbot",
+        "ahrefsbot",
+        "dotbot",
+        "rogerbot",
+        "screaming frog",
+        "petalbot",
+        "bot/",
+        "bot;",
+        "+http://",
+        "+https://",
+    ];
+    for sig in &bot_signatures {
+        if ua_lower.contains(sig) {
+            return true;
+        }
+    }
+    if let Some(dest) = headers.get("sec-fetch-dest").and_then(|v| v.to_str().ok()) {
+        let d = dest.trim().to_lowercase();
+        if d == "image" || d == "video" || d == "audio" || d == "style" || d == "font" {
+            return true;
+        }
+    }
+    false
+}
+
+/// A-02: User-Agent parser with correct OS precedence (Android before Linux, iOS before MacOS).
 pub fn parse_user_agent(ua: &str) -> (String, String, String) {
     let ua_lower = ua.to_lowercase();
-    let device = if ua_lower.contains("mobile")
+    let device = if ua_lower.contains("ipad") || ua_lower.contains("tablet") {
+        "Tablet".to_string()
+    } else if ua_lower.contains("mobile")
         || ua_lower.contains("android")
         || ua_lower.contains("iphone")
+        || ua_lower.contains("ipod")
     {
         "Mobile".to_string()
     } else {
         "Desktop".to_string()
     };
 
-    let browser = if ua_lower.contains("edge") || ua_lower.contains("edg") {
+    let browser = if ua_lower.contains("edg") || ua_lower.contains("edge") {
         "Edge".to_string()
-    } else if ua_lower.contains("chrome") && !ua_lower.contains("chromium") {
+    } else if ua_lower.contains("chrome")
+        && !ua_lower.contains("chromium")
+        && !ua_lower.contains("edg")
+    {
         "Chrome".to_string()
     } else if ua_lower.contains("firefox") {
         "Firefox".to_string()
-    } else if ua_lower.contains("safari") && !ua_lower.contains("chrome") {
+    } else if ua_lower.contains("safari")
+        && !ua_lower.contains("chrome")
+        && !ua_lower.contains("android")
+    {
         "Safari".to_string()
+    } else if ua_lower.contains("opera") || ua_lower.contains("opr/") {
+        "Opera".to_string()
     } else {
         "Unknown".to_string()
     };
 
-    let os = if ua_lower.contains("linux") {
-        "Linux".to_string()
-    } else if ua_lower.contains("mac os") {
-        "MacOS".to_string()
-    } else if ua_lower.contains("windows") {
-        "Windows".to_string()
-    } else if ua_lower.contains("android") {
+    // A-02: Check Android before Linux, and iOS before MacOS
+    let os = if ua_lower.contains("android") {
         "Android".to_string()
-    } else if ua_lower.contains("iphone") || ua_lower.contains("ipad") {
+    } else if ua_lower.contains("iphone")
+        || ua_lower.contains("ipad")
+        || ua_lower.contains("ipod")
+        || ua_lower.contains("cpu iphone os")
+        || ua_lower.contains("cpu os ")
+    {
         "iOS".to_string()
+    } else if ua_lower.contains("mac os")
+        || ua_lower.contains("macos")
+        || ua_lower.contains("macintosh")
+    {
+        "MacOS".to_string()
+    } else if ua_lower.contains("windows")
+        || ua_lower.contains("win32")
+        || ua_lower.contains("win64")
+    {
+        "Windows".to_string()
+    } else if ua_lower.contains("cros") {
+        "ChromeOS".to_string()
+    } else if ua_lower.contains("linux") {
+        "Linux".to_string()
     } else {
         "Unknown".to_string()
     };

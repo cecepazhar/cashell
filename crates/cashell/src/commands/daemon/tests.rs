@@ -92,6 +92,7 @@ fn test_check_auth_empty_token_fails_closed() {
         token: String::new(),
         trusted_proxies: vec!["127.0.0.1".to_string(), "::1".to_string()],
         node_secrets: std::collections::HashMap::new(),
+        ..Default::default()
     };
     let mut headers = HeaderMap::new();
     headers.insert("authorization", "Bearer anything".parse().unwrap());
@@ -104,6 +105,7 @@ fn test_check_auth_correct_token_passes() {
         token: "s3cret-token".to_string(),
         trusted_proxies: vec!["127.0.0.1".to_string(), "::1".to_string()],
         node_secrets: std::collections::HashMap::new(),
+        ..Default::default()
     };
     let mut headers = HeaderMap::new();
     headers.insert("authorization", "Bearer s3cret-token".parse().unwrap());
@@ -116,6 +118,7 @@ fn test_check_auth_wrong_token_fails() {
         token: "correct-token".to_string(),
         trusted_proxies: vec!["127.0.0.1".to_string(), "::1".to_string()],
         node_secrets: std::collections::HashMap::new(),
+        ..Default::default()
     };
     let mut headers = HeaderMap::new();
     headers.insert("authorization", "Bearer wrong-token".parse().unwrap());
@@ -179,6 +182,7 @@ async fn run_action_request(
         token: token.to_string(),
         trusted_proxies: vec!["127.0.0.1".to_string(), "::1".to_string()],
         node_secrets: std::collections::HashMap::new(),
+        ..Default::default()
     });
     let mut headers = HeaderMap::new();
     if let Some(auth) = auth_header {
@@ -254,6 +258,7 @@ async fn test_analytics_summary_no_token_401() {
         token: "secret123".to_string(),
         trusted_proxies: vec!["127.0.0.1".to_string(), "::1".to_string()],
         node_secrets: std::collections::HashMap::new(),
+        ..Default::default()
     });
     let headers = HeaderMap::new();
     let resp = routes::analytics_summary_handler(axum::extract::State(state), headers)
@@ -268,6 +273,7 @@ async fn test_analytics_summary_wrong_token_401() {
         token: "secret123".to_string(),
         trusted_proxies: vec!["127.0.0.1".to_string(), "::1".to_string()],
         node_secrets: std::collections::HashMap::new(),
+        ..Default::default()
     });
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -338,6 +344,7 @@ fn test_verify_heartbeat_valid_signature() {
         token: String::new(),
         trusted_proxies: Vec::new(),
         node_secrets: secrets,
+        ..Default::default()
     };
     let hb = signed_heartbeat("linux-node", "topsecret");
     assert!(verify_heartbeat(&state, &hb).is_ok());
@@ -351,6 +358,7 @@ fn test_verify_heartbeat_bad_signature_rejected() {
         token: String::new(),
         trusted_proxies: Vec::new(),
         node_secrets: secrets,
+        ..Default::default()
     };
     let hb = signed_heartbeat("linux-node", "wrongsecret");
     assert!(verify_heartbeat(&state, &hb).is_err());
@@ -364,6 +372,7 @@ fn test_verify_heartbeat_stale_timestamp_rejected() {
         token: String::new(),
         trusted_proxies: Vec::new(),
         node_secrets: secrets,
+        ..Default::default()
     };
     let mut hb = cashell_common::Heartbeat {
         node_id: "linux-node".to_string(),
@@ -398,6 +407,7 @@ fn test_verify_heartbeat_unsigned_no_secret_accepted() {
         token: String::new(),
         trusted_proxies: Vec::new(),
         node_secrets: std::collections::HashMap::new(),
+        ..Default::default()
     };
     let hb = cashell_common::Heartbeat {
         node_id: "linux-node".to_string(),
@@ -421,6 +431,7 @@ fn test_verify_heartbeat_signed_but_no_secret_rejected() {
         token: String::new(),
         trusted_proxies: Vec::new(),
         node_secrets: std::collections::HashMap::new(),
+        ..Default::default()
     };
     let hb = signed_heartbeat("linux-node", "topsecret");
     assert!(verify_heartbeat(&state, &hb).is_err());
@@ -463,4 +474,275 @@ fn test_default_trusted_proxies() {
         .trusted_proxies
         .contains(&"127.0.0.1".to_string()));
     assert!(cfg.daemon.trusted_proxies.contains(&"::1".to_string()));
+}
+
+// ── Tahap 2: Analytics Hardening (A-01..A-06) ──────────────────────────────
+
+#[test]
+fn test_a01_country_detection_trusted_proxy_and_fallback() {
+    let trusted = vec!["127.0.0.1".to_string(), "::1".to_string()];
+
+    // Untrusted peer supplying header must be ignored
+    let untrusted_peer: SocketAddr = "192.168.1.50:12345".parse().unwrap();
+    let mut headers = HeaderMap::new();
+    headers.insert("cf-ipcountry", "ID".parse().unwrap());
+    assert_eq!(
+        resolve_country(&untrusted_peer, &headers, &trusted),
+        "",
+        "Untrusted peer must not have CF-IPCountry accepted"
+    );
+
+    // Trusted peer with CF-IPCountry: US
+    let trusted_peer: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+    let mut headers_us = HeaderMap::new();
+    headers_us.insert("cf-ipcountry", "US".parse().unwrap());
+    assert_eq!(resolve_country(&trusted_peer, &headers_us, &trusted), "US");
+
+    // Trusted peer with lowercase 'sg' -> uppercased to 'SG'
+    let mut headers_sg = HeaderMap::new();
+    headers_sg.insert("cf-ipcountry", "sg".parse().unwrap());
+    assert_eq!(resolve_country(&trusted_peer, &headers_sg, &trusted), "SG");
+
+    // Database test: Event with country '' (no header) aggregates to 'Tidak diketahui', not 'ID'
+    let db = crate::db::Database::open_in_memory().unwrap();
+    db.record_analytics_event(
+        "testsite",
+        "sess1",
+        "/home",
+        "",
+        "Home",
+        "Chrome",
+        "Linux",
+        "Desktop",
+        "", // no country header
+        "visitor_hash_1",
+        "pageview",
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+
+    let summary = db.get_analytics_summary(Some("testsite")).unwrap();
+    assert!(!summary.country_breakdown.is_empty());
+    let item = &summary.country_breakdown[0];
+    assert_eq!(
+        item.label, "Tidak diketahui",
+        "Must be 'Tidak diketahui', not 'ID'"
+    );
+    assert_eq!(item.count, 1);
+}
+
+#[test]
+fn test_a02_os_detection_10_real_user_agents() {
+    // 1. Android Chrome (MUST NOT resolve to Linux!)
+    let (br, os, dev) = parse_user_agent(
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+    );
+    assert_eq!(os, "Android", "Android must be checked before Linux");
+    assert_eq!(br, "Chrome");
+    assert_eq!(dev, "Mobile");
+
+    // 2. Android Samsung Browser (MUST NOT resolve to Linux!)
+    let (_, os2, dev2) = parse_user_agent(
+        "Mozilla/5.0 (Linux; Android 13; SAMSUNG SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/25.0 Chrome/121.0.0.0 Mobile Safari/537.36",
+    );
+    assert_eq!(os2, "Android");
+    assert_eq!(dev2, "Mobile");
+
+    // 3. iPhone Safari (MUST NOT resolve to MacOS!)
+    let (br3, os3, dev3) = parse_user_agent(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1",
+    );
+    assert_eq!(os3, "iOS", "iOS must be checked before MacOS");
+    assert_eq!(br3, "Safari");
+    assert_eq!(dev3, "Mobile");
+
+    // 4. iPad Safari (MUST NOT resolve to MacOS!)
+    let (_, os4, dev4) = parse_user_agent(
+        "Mozilla/5.0 (iPad; CPU OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1",
+    );
+    assert_eq!(os4, "iOS");
+    assert_eq!(dev4, "Tablet");
+
+    // 5. macOS Safari
+    let (br5, os5, dev5) = parse_user_agent(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
+    );
+    assert_eq!(os5, "MacOS");
+    assert_eq!(br5, "Safari");
+    assert_eq!(dev5, "Desktop");
+
+    // 6. macOS Chrome
+    let (br6, os6, _) = parse_user_agent(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    );
+    assert_eq!(os6, "MacOS");
+    assert_eq!(br6, "Chrome");
+
+    // 7. Windows 11 Chrome
+    let (br7, os7, dev7) = parse_user_agent(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    );
+    assert_eq!(os7, "Windows");
+    assert_eq!(br7, "Chrome");
+    assert_eq!(dev7, "Desktop");
+
+    // 8. Windows 10 Firefox
+    let (br8, os8, _) = parse_user_agent(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    );
+    assert_eq!(os8, "Windows");
+    assert_eq!(br8, "Firefox");
+
+    // 9. Ubuntu Linux Firefox
+    let (br9, os9, dev9) = parse_user_agent(
+        "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    );
+    assert_eq!(os9, "Linux");
+    assert_eq!(br9, "Firefox");
+    assert_eq!(dev9, "Desktop");
+
+    // 10. ChromeOS
+    let (br10, os10, _) = parse_user_agent(
+        "Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    );
+    assert_eq!(os10, "ChromeOS");
+    assert_eq!(br10, "Chrome");
+}
+
+#[test]
+fn test_a03_client_ip_different_visitors() {
+    let salt_mgr = DailySaltManager::new();
+    let ip1 = "203.0.113.10";
+    let ip2 = "203.0.113.20";
+
+    let h1 = salt_mgr.hash_visitor(ip1);
+    let h2 = salt_mgr.hash_visitor(ip2);
+    assert_ne!(
+        h1, h2,
+        "Different client IPs must yield different visitor hashes"
+    );
+
+    let db = crate::db::Database::open_in_memory().unwrap();
+    db.record_analytics_event(
+        "site1", "s1", "/", "", "Home", "Chrome", "Linux", "Desktop", "ID", &h1, "pageview", None,
+        None, None, None, None, None,
+    )
+    .unwrap();
+    db.record_analytics_event(
+        "site1", "s2", "/about", "", "About", "Firefox", "Windows", "Desktop", "US", &h2,
+        "pageview", None, None, None, None, None, None,
+    )
+    .unwrap();
+
+    let summary = db.get_analytics_summary(Some("site1")).unwrap();
+    assert_eq!(
+        summary.unique_visitors, 2,
+        "Two distinct client IPs must be two unique visitors"
+    );
+}
+
+#[test]
+fn test_a04_daily_salt_random_rotation_and_not_derivable_from_date() {
+    let salt_mgr = DailySaltManager::new();
+    let salt = salt_mgr.get_or_rotate_salt();
+    assert_eq!(
+        salt.len(),
+        64,
+        "Salt must be 32 random bytes in hex (64 hex characters)"
+    );
+
+    // Must NOT be derived from date
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let date_hash = hex_sha256(&today);
+    assert_ne!(salt, date_hash, "Salt must not be derived from date");
+
+    let client_ip = "198.51.100.77";
+    let h1 = salt_mgr.hash_visitor(client_ip);
+    let h1_repeat = salt_mgr.hash_visitor(client_ip);
+    assert_eq!(
+        h1, h1_repeat,
+        "Visitor hash on same day must be deterministic"
+    );
+
+    // Rotate salt
+    let new_salt = salt_mgr.rotate_now();
+    assert_ne!(salt, new_salt, "New salt after rotation must be different");
+
+    let h2 = salt_mgr.hash_visitor(client_ip);
+    assert_ne!(
+        h1, h2,
+        "Visitor hash after rotation must be completely different (old salt discarded)"
+    );
+}
+
+#[test]
+fn test_a05_bot_filter_googlebot_curl_and_sec_fetch() {
+    let empty_headers = HeaderMap::new();
+
+    // Googlebot UA
+    let gbot = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
+    assert!(
+        is_bot(gbot, &empty_headers),
+        "Googlebot must be detected as bot"
+    );
+
+    // Curl UA
+    let curl = "curl/8.5.0";
+    assert!(is_bot(curl, &empty_headers), "curl must be detected as bot");
+
+    // Python requests UA
+    let py = "python-requests/2.31.0";
+    assert!(
+        is_bot(py, &empty_headers),
+        "python-requests must be detected as bot"
+    );
+
+    // Real browser UA with Sec-Fetch-Dest: document
+    let browser_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+    let mut doc_headers = HeaderMap::new();
+    doc_headers.insert("sec-fetch-dest", "document".parse().unwrap());
+    assert!(
+        !is_bot(browser_ua, &doc_headers),
+        "Real browser request must not be flagged as bot"
+    );
+
+    // Browser UA fetching an image resource
+    let mut img_headers = HeaderMap::new();
+    img_headers.insert("sec-fetch-dest", "image".parse().unwrap());
+    assert!(
+        is_bot(browser_ua, &img_headers),
+        "Image resource fetch should be filtered"
+    );
+}
+
+#[test]
+fn test_a06_rate_limit_per_ip_60_ok_61_too_many_requests() {
+    let limiter = CollectorRateLimiter::new(60, 60);
+    let test_ip = "203.0.113.88";
+
+    // First 60 requests must succeed
+    for i in 1..=60 {
+        assert!(
+            limiter.check_and_record(test_ip),
+            "Request #{i} should be permitted within rate limit"
+        );
+    }
+
+    // 61st request must be rejected
+    assert!(
+        !limiter.check_and_record(test_ip),
+        "Request #61 must be rejected by rate limiter"
+    );
+
+    // Another IP must still succeed on its first hit
+    let other_ip = "203.0.113.99";
+    assert!(
+        limiter.check_and_record(other_ip),
+        "Different IP must have its own bucket"
+    );
 }

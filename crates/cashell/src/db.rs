@@ -2232,7 +2232,7 @@ impl Database {
         // Country breakdown
         let mut country_breakdown: Vec<crate::systat::AnalyticsBreakdown> = Vec::new();
         let mut stmt = self.conn.prepare(
-            "SELECT COALESCE(NULLIF(country, ''), 'ID') as co, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) GROUP BY co ORDER BY c DESC LIMIT 5",
+            "SELECT COALESCE(NULLIF(country, ''), 'Tidak diketahui') as co, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) GROUP BY co ORDER BY c DESC LIMIT 5",
         )?;
         let mut rows = stmt.query(params![ref_val])?;
         while let Some(row) = rows.next()? {
