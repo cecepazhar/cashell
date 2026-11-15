@@ -648,6 +648,24 @@ impl Database {
             )?;
         }
 
+        // ── Migration 10: App deployment build queue & logs (D-05) ─────────────
+        if !applied.contains(&10) {
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS deploy_builds (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     app_name TEXT NOT NULL,
+                     commit_hash TEXT NOT NULL,
+                     status TEXT NOT NULL, -- queued, building, success, failed
+                     started_at INTEGER,
+                     finished_at INTEGER,
+                     log_output TEXT NOT NULL DEFAULT '',
+                     created_at INTEGER NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_deploy_builds_app ON deploy_builds(app_name, created_at DESC);
+                 INSERT OR IGNORE INTO schema_migrations (version) VALUES (10);",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -2616,6 +2634,135 @@ pub fn vacuum() -> Result<()> {
     Database::open()?.vacuum()
 }
 
+/// Record representing a deployment build job stored in SQLite (D-05).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct DeployBuildRecord {
+    pub id: i64,
+    pub app_name: String,
+    pub commit_hash: String,
+    pub status: String, // "queued", "building", "success", "failed"
+    pub started_at: Option<i64>,
+    pub finished_at: Option<i64>,
+    pub log_output: String,
+    pub created_at: i64,
+}
+
+impl Database {
+    /// Create a new build record with status `queued` (D-05).
+    pub fn create_deploy_build(&self, app_name: &str, commit_hash: &str) -> Result<i64> {
+        let now = chrono::Utc::now().timestamp();
+        self.conn.execute(
+            "INSERT INTO deploy_builds (app_name, commit_hash, status, started_at, finished_at, log_output, created_at)
+             VALUES (?1, ?2, 'queued', NULL, NULL, '', ?3)",
+            params![app_name, commit_hash, now],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Update status, start/finish timestamps, and optional full log output.
+    pub fn update_deploy_build_status(
+        &self,
+        id: i64,
+        status: &str,
+        started_at: Option<i64>,
+        finished_at: Option<i64>,
+        log_output: Option<&str>,
+    ) -> Result<()> {
+        if let Some(logs) = log_output {
+            self.conn.execute(
+                "UPDATE deploy_builds SET status = ?1, started_at = COALESCE(?2, started_at), finished_at = COALESCE(?3, finished_at), log_output = ?4 WHERE id = ?5",
+                params![status, started_at, finished_at, logs, id],
+            )?;
+        } else {
+            self.conn.execute(
+                "UPDATE deploy_builds SET status = ?1, started_at = COALESCE(?2, started_at), finished_at = COALESCE(?3, finished_at) WHERE id = ?4",
+                params![status, started_at, finished_at, id],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Append chunk of logs to the build record.
+    pub fn append_deploy_build_log(&self, id: i64, chunk: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE deploy_builds SET log_output = log_output || ?1 WHERE id = ?2",
+            params![chunk, id],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve a single deploy build record by ID.
+    pub fn get_deploy_build(&self, id: i64) -> Result<Option<DeployBuildRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, app_name, commit_hash, status, started_at, finished_at, log_output, created_at
+             FROM deploy_builds WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query(params![id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(DeployBuildRecord {
+                id: row.get(0)?,
+                app_name: row.get(1)?,
+                commit_hash: row.get(2)?,
+                status: row.get(3)?,
+                started_at: row.get(4)?,
+                finished_at: row.get(5)?,
+                log_output: row.get(6)?,
+                created_at: row.get(7)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// List recent builds for an application (or all apps).
+    pub fn list_deploy_builds(
+        &self,
+        app_name: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DeployBuildRecord>> {
+        let limit_i64 = limit as i64;
+        let mut records = Vec::new();
+        if let Some(app) = app_name {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, app_name, commit_hash, status, started_at, finished_at, log_output, created_at
+                 FROM deploy_builds WHERE app_name = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2",
+            )?;
+            let mut rows = stmt.query(params![app, limit_i64])?;
+            while let Some(row) = rows.next()? {
+                records.push(DeployBuildRecord {
+                    id: row.get(0)?,
+                    app_name: row.get(1)?,
+                    commit_hash: row.get(2)?,
+                    status: row.get(3)?,
+                    started_at: row.get(4)?,
+                    finished_at: row.get(5)?,
+                    log_output: row.get(6)?,
+                    created_at: row.get(7)?,
+                });
+            }
+        } else {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, app_name, commit_hash, status, started_at, finished_at, log_output, created_at
+                 FROM deploy_builds ORDER BY created_at DESC, id DESC LIMIT ?1",
+            )?;
+            let mut rows = stmt.query(params![limit_i64])?;
+            while let Some(row) = rows.next()? {
+                records.push(DeployBuildRecord {
+                    id: row.get(0)?,
+                    app_name: row.get(1)?,
+                    commit_hash: row.get(2)?,
+                    status: row.get(3)?,
+                    started_at: row.get(4)?,
+                    finished_at: row.get(5)?,
+                    log_output: row.get(6)?,
+                    created_at: row.get(7)?,
+                });
+            }
+        }
+        Ok(records)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2973,12 +3120,12 @@ mod tests {
 
         // Verify migrations 1..=4 applied
         let applied = db.applied_migrations()?;
-        assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 
         // Idempotent migration run: running migrations second time must succeed
         db.run_migrations()?;
         let applied2 = db.applied_migrations()?;
-        assert_eq!(applied2, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(applied2, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 
         // Test telegram state and allowlist (T-01, T-02)
         assert_eq!(db.get_telegram_offset()?, 0);

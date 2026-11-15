@@ -230,12 +230,21 @@ pub async fn container_exists(name: &str) -> bool {
 
 pub fn build_router(cfg: &Config) -> Router {
     let node_secrets = cfg.daemon.node_secrets.clone();
+    let build_queue = match crate::db::Database::open() {
+        Ok(db) => {
+            let (q, _) = crate::deploy::BuildQueue::new(db, None);
+            Some(q)
+        }
+        Err(_) => None,
+    };
     let state = Arc::new(DaemonState {
         token: cfg.daemon.token.clone(),
         trusted_proxies: cfg.daemon.trusted_proxies.clone(),
         node_secrets,
         salt_manager: DailySaltManager::new(),
         rate_limiter: CollectorRateLimiter::new(60, 60),
+        cfg: cfg.clone(),
+        build_queue,
     });
     Router::new()
         .route("/api/health", get(health_handler))
@@ -243,6 +252,7 @@ pub fn build_router(cfg: &Config) -> Router {
         .route("/api/containers", get(containers_handler))
         .route("/api/action", post(action_handler))
         .route("/api/node/heartbeat", post(node_heartbeat_handler))
+        .route("/api/v1/deploy/{app}", post(deploy_webhook_handler))
         .route("/tracker.js", get(tracker_js_handler))
         .route("/ca-track.js", get(tracker_js_handler))
         .route(
@@ -798,4 +808,173 @@ pub async fn node_heartbeat_handler(
         })),
     )
         .into_response()
+}
+
+/// Webhook receiver for automatic git deployments with HMAC verification (D-06).
+pub async fn deploy_webhook_handler(
+    axum::extract::Path(app_name): axum::extract::Path<String>,
+    State(state): State<Arc<DaemonState>>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> impl IntoResponse {
+    let app_opt = state.cfg.apps.iter().find(|a| a.name == app_name);
+    let app = match app_opt {
+        Some(a) => a,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": format!("Application '{app_name}' not configured in [[apps]]")
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let secret_store = crate::secrets::SecretStore::load_default().ok();
+    let secret = secret_store
+        .as_ref()
+        .and_then(|s| {
+            s.webhook_secrets
+                .get(&app_name)
+                .cloned()
+                .or_else(|| {
+                    s.get_secret(&format!("WEBHOOK_SECRET_{}", app_name.to_uppercase()))
+                        .map(String::from)
+                })
+                .or_else(|| s.get_secret("WEBHOOK_SECRET").map(String::from))
+        })
+        .or_else(|| std::env::var(format!("WEBHOOK_SECRET_{}", app_name.to_uppercase())).ok())
+        .or_else(|| state.node_secrets.get(&app_name).cloned());
+
+    let secret_val = match secret {
+        Some(s) if !s.trim().is_empty() => s,
+        _ => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({
+                    "error": "No webhook secret configured for this application"
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    if !crate::deploy::verify_webhook_signature(&headers, &body, &secret_val) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "error": "Invalid webhook HMAC signature or token"
+            })),
+        )
+            .into_response();
+    }
+
+    let commit_hash =
+        crate::deploy::extract_commit_from_payload(&body).unwrap_or_else(|| "HEAD".to_string());
+
+    let build_id = if let Some(ref queue) = state.build_queue {
+        match queue.enqueue(&app_name, &commit_hash, &app.branch).await {
+            Ok(id) => id,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "error": format!("Failed to enqueue build: {e}")
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    } else if let Ok(db) = crate::db::get_db() {
+        db.create_deploy_build(&app_name, &commit_hash).unwrap_or(0)
+    } else {
+        0
+    };
+
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({
+            "ok": true,
+            "status": "queued",
+            "build_id": build_id,
+            "app": app_name,
+            "commit": commit_hash,
+            "branch": app.branch
+        })),
+    )
+        .into_response()
+}
+
+#[cfg(test)]
+mod deploy_route_tests {
+    use super::*;
+    use axum::http::StatusCode;
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    #[tokio::test]
+    async fn test_d06_webhook_route_signature_acceptance_and_rejection() {
+        let mut cfg = Config::default();
+        cfg.apps = vec![crate::config::AppConfig {
+            name: "test-app".to_string(),
+            repo: "https://github.com/cecepazhar/test.git".to_string(),
+            branch: "main".to_string(),
+            compose_path: "docker-compose.yml".to_string(),
+            secrets: vec![],
+            env: Default::default(),
+        }];
+
+        let secret = "webhook-test-secret-12345";
+        let mut node_secrets = std::collections::HashMap::new();
+        node_secrets.insert("test-app".to_string(), secret.to_string());
+
+        let mem_db = crate::db::Database::open_in_memory().unwrap();
+        let (queue, _) = crate::deploy::BuildQueue::new(mem_db, None);
+
+        let state = Arc::new(DaemonState {
+            token: "daemon-token".to_string(),
+            trusted_proxies: vec![],
+            node_secrets,
+            salt_manager: DailySaltManager::new(),
+            rate_limiter: CollectorRateLimiter::new(60, 60),
+            cfg,
+            build_queue: Some(queue),
+        });
+
+        let payload = br#"{"ref":"refs/heads/main","after":"1234567890abcdef"}"#;
+
+        // 1. Request with invalid signature -> 401
+        let mut headers_invalid = HeaderMap::new();
+        headers_invalid.insert("x-hub-signature-256", "sha256=invalidhex".parse().unwrap());
+        let res_invalid = deploy_webhook_handler(
+            axum::extract::Path("test-app".to_string()),
+            State(state.clone()),
+            headers_invalid,
+            axum::body::Bytes::copy_from_slice(payload),
+        )
+        .await
+        .into_response();
+        assert_eq!(res_invalid.status(), StatusCode::UNAUTHORIZED);
+
+        // 2. Request with valid HMAC signature -> 202 Accepted
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(payload);
+        let valid_hex = crate::deploy::webhook::hex_encode(&mac.finalize().into_bytes());
+
+        let mut headers_valid = HeaderMap::new();
+        headers_valid.insert(
+            "x-hub-signature-256",
+            format!("sha256={valid_hex}").parse().unwrap(),
+        );
+        let res_valid = deploy_webhook_handler(
+            axum::extract::Path("test-app".to_string()),
+            State(state),
+            headers_valid,
+            axum::body::Bytes::copy_from_slice(payload),
+        )
+        .await
+        .into_response();
+        assert_eq!(res_valid.status(), StatusCode::ACCEPTED);
+    }
 }

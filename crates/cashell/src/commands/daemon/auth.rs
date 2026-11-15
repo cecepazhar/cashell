@@ -18,6 +18,10 @@ pub struct DaemonState {
     pub salt_manager: DailySaltManager,
     /// A-06: Collector rate limiter per client IP.
     pub rate_limiter: CollectorRateLimiter,
+    /// System configuration for app lookups (D-02, D-06).
+    pub cfg: crate::config::Config,
+    /// Sequential build queue for webhooks (D-05, D-06).
+    pub build_queue: Option<Arc<crate::deploy::BuildQueue>>,
 }
 
 impl Default for DaemonState {
@@ -28,6 +32,8 @@ impl Default for DaemonState {
             node_secrets: HashMap::new(),
             salt_manager: DailySaltManager::new(),
             rate_limiter: CollectorRateLimiter::new(60, 60),
+            cfg: crate::config::Config::default(),
+            build_queue: None,
         }
     }
 }

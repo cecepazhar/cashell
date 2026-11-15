@@ -160,6 +160,16 @@ pub fn data_dir() -> PathBuf {
     data_root().join("cashell")
 }
 
+/// `~/.local/share/cashell/apps/` (cloned application repositories for engine deploy)
+pub fn apps_dir() -> PathBuf {
+    data_dir().join("apps")
+}
+
+/// Directory for a specific application repository: `~/.local/share/cashell/apps/<app_name>`
+pub fn app_dir(app_name: &str) -> PathBuf {
+    apps_dir().join(app_name)
+}
+
 /// `~/.local/share/cashell/license.json` (license key — sensitive)
 pub fn license_path() -> PathBuf {
     data_dir().join("license.json")

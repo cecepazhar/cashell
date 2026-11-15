@@ -10,6 +10,7 @@ pub mod config;
 pub mod cron;
 pub mod daemon;
 pub mod db;
+pub mod deploy;
 pub mod entitlements;
 pub mod license_gcc;
 pub mod license_local;
