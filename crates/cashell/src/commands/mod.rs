@@ -1,6 +1,7 @@
 //! Subcommand implementations.
 
 pub mod analytics;
+pub mod app;
 pub mod audit;
 pub mod auth;
 pub mod chat;

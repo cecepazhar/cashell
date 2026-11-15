@@ -63,6 +63,8 @@ pub struct Config {
     pub mascot: MascotConfig,
     #[serde(default)]
     pub license: LicenseConfig,
+    #[serde(default)]
+    pub apps: Vec<AppConfig>,
 }
 
 /// Daemon & multi-node orchestration configuration.
@@ -332,6 +334,51 @@ pub struct AppDeployConfig {
 
 fn default_app_type() -> String {
     "application".to_string()
+}
+
+/// Configuration for an application managed directly by CAShell deploy engine (D-02).
+/// Configured via `[[apps]]` in config.toml.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct AppConfig {
+    pub name: String,
+    #[serde(default)]
+    pub repo: String,
+    #[serde(default = "default_app_branch")]
+    pub branch: String,
+    #[serde(default = "default_compose_path")]
+    pub compose_path: String,
+    /// List of secret names resolved from `SecretStore` (F-02)
+    #[serde(default)]
+    pub secrets: Vec<String>,
+    /// Additional static environment variables
+    #[serde(default)]
+    pub env: std::collections::HashMap<String, String>,
+}
+
+fn default_app_branch() -> String {
+    "main".to_string()
+}
+
+fn default_compose_path() -> String {
+    "docker-compose.yml".to_string()
+}
+
+impl AppConfig {
+    /// Resolve environment variables by reading static `env` and overlaying secrets from `SecretStore`.
+    pub fn resolve_env(
+        &self,
+        store: Option<&crate::secrets::SecretStore>,
+    ) -> std::collections::HashMap<String, String> {
+        let mut resolved = self.env.clone();
+        if let Some(store) = store {
+            for secret_key in &self.secrets {
+                if let Some(val) = store.get_secret(secret_key) {
+                    resolved.insert(secret_key.clone(), val.to_string());
+                }
+            }
+        }
+        resolved
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -872,5 +919,50 @@ mod tests {
         let cfg: Config = toml::from_str(toml_str).expect("deserialize failed");
         assert_eq!(cfg.ai.audit_max_context_kb, 64);
         assert_eq!(cfg.ai.audit_context_limit_tokens, 16000);
+    }
+
+    #[test]
+    fn test_d02_apps_config_deserialization_and_secrets() {
+        let toml_str = r#"
+            [[apps]]
+            name = "api-service"
+            repo = "https://github.com/cecepazhar/api.git"
+            branch = "develop"
+            compose_path = "docker-compose.prod.yml"
+            secrets = ["DATABASE_URL", "JWT_SECRET"]
+            [apps.env]
+            PORT = "8080"
+            NODE_ENV = "production"
+
+            [[apps]]
+            name = "web-frontend"
+            repo = "https://github.com/cecepazhar/web.git"
+        "#;
+        let cfg: Config = toml::from_str(toml_str).expect("deserialize [[apps]] failed");
+        assert_eq!(cfg.apps.len(), 2);
+
+        let api = &cfg.apps[0];
+        assert_eq!(api.name, "api-service");
+        assert_eq!(api.repo, "https://github.com/cecepazhar/api.git");
+        assert_eq!(api.branch, "develop");
+        assert_eq!(api.compose_path, "docker-compose.prod.yml");
+        assert_eq!(api.secrets, vec!["DATABASE_URL", "JWT_SECRET"]);
+        assert_eq!(api.env.get("PORT").map(|s| s.as_str()), Some("8080"));
+
+        let web = &cfg.apps[1];
+        assert_eq!(web.name, "web-frontend");
+        assert_eq!(web.branch, "main"); // default
+        assert_eq!(web.compose_path, "docker-compose.yml"); // default
+        assert!(web.secrets.is_empty());
+
+        // Test resolve_env with SecretStore
+        let mut store = crate::secrets::SecretStore::new();
+        store.set_secret("DATABASE_URL", "postgres://user:pass@localhost/db");
+        let resolved = api.resolve_env(Some(&store));
+        assert_eq!(
+            resolved.get("DATABASE_URL").map(|s| s.as_str()),
+            Some("postgres://user:pass@localhost/db")
+        );
+        assert_eq!(resolved.get("PORT").map(|s| s.as_str()), Some("8080"));
     }
 }

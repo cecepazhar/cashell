@@ -89,6 +89,10 @@ fn run_app() -> Result<i32> {
             let code = commands::git_status::run(&cmd, &cfg)?;
             Ok(code)
         }
+        Some(Commands::App(cmd)) => {
+            let code = commands::app::run(&cmd, &cfg)?;
+            Ok(code)
+        }
         Some(Commands::Deploy(cmd)) => {
             let result = commands::deploy::run(&cmd, &cfg)?;
             if !result.success {

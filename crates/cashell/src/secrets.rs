@@ -33,6 +33,11 @@ pub struct SecretStore {
 }
 
 impl SecretStore {
+    /// Create a new empty SecretStore in memory.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Return the standard file path: `~/.config/cashell/secrets.enc`.
     pub fn default_path() -> PathBuf {
         paths::secrets_path()

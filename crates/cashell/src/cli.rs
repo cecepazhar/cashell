@@ -50,6 +50,9 @@ pub enum Commands {
     #[command(name = "git-status")]
     GitStatus(GitStatusCommand),
 
+    /// Manage applications configured via [[apps]] (D-02, D-03)
+    App(AppCommand),
+
     /// Deploy an application via Coolify
     Deploy(DeployCommand),
 
@@ -349,6 +352,45 @@ pub struct DeployCommand {
     /// Show what would be done without executing
     #[arg(long)]
     pub dry_run: bool,
+}
+
+#[derive(Parser, Debug, Clone)]
+#[command(
+    name = "app",
+    about = "Application management & deployment engine (D-02, D-03)"
+)]
+pub struct AppCommand {
+    #[command(subcommand)]
+    pub action: AppAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum AppAction {
+    /// List all configured applications from config [[apps]]
+    List,
+    /// Start or bring up an application
+    Up {
+        /// Name of the app
+        name: String,
+    },
+    /// Stop or bring down an application
+    Down {
+        /// Name of the app
+        name: String,
+    },
+    /// Fetch container logs for an application
+    Logs {
+        /// Name of the app
+        name: String,
+        /// Number of lines of logs to show
+        #[arg(short, long, default_value = "50")]
+        lines: usize,
+    },
+    /// Restart an application
+    Restart {
+        /// Name of the app
+        name: String,
+    },
 }
 
 #[derive(Parser, Debug, Clone)]
