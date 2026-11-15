@@ -505,10 +505,16 @@ pub struct AiConfig {
     pub audit_max_context_kb: usize,
     #[serde(default = "default_audit_context_limit_tokens")]
     pub audit_context_limit_tokens: usize,
+    #[serde(default = "default_daily_token_limit")]
+    pub daily_token_limit: u64,
+    #[serde(default = "default_requests_per_minute_limit")]
+    pub requests_per_minute_limit: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct AiProviderConfig {
+    #[serde(default)]
+    pub kind: String,
     #[serde(default)]
     pub base_url: String,
     #[serde(default)]
@@ -537,6 +543,12 @@ pub fn default_audit_max_context_kb() -> usize {
 pub fn default_audit_context_limit_tokens() -> usize {
     8000
 }
+pub fn default_daily_token_limit() -> u64 {
+    0
+}
+pub fn default_requests_per_minute_limit() -> u32 {
+    0
+}
 fn default_providers() -> std::collections::HashMap<String, AiProviderConfig> {
     // H-09: no default providers or URLs. All [ai] provider entries must come
     // from user config; no private hosts are ever baked in.
@@ -553,6 +565,8 @@ impl Default for AiConfig {
             providers: default_providers(),
             audit_max_context_kb: default_audit_max_context_kb(),
             audit_context_limit_tokens: default_audit_context_limit_tokens(),
+            daily_token_limit: default_daily_token_limit(),
+            requests_per_minute_limit: default_requests_per_minute_limit(),
         }
     }
 }

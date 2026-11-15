@@ -360,6 +360,33 @@ pub struct DoctorCommand {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum AiMode {
+    /// Setup AI provider interactively or via flags with connection test
+    Setup {
+        /// Provider name / identifier (e.g. openai, anthropic, ollama, custom)
+        #[arg(long)]
+        name: Option<String>,
+        /// Provider kind (openai, anthropic, ollama, generic)
+        #[arg(long)]
+        kind: Option<String>,
+        /// Base URL (e.g. https://api.openai.com/v1, http://localhost:11434)
+        #[arg(long)]
+        base_url: Option<String>,
+        /// Default model name (e.g. gpt-4o-mini, claude-3-5-sonnet-20241022)
+        #[arg(long)]
+        model: Option<String>,
+        /// API key or env:VAR
+        #[arg(long)]
+        api_key: Option<String>,
+        /// Skip connection test
+        #[arg(long)]
+        skip_test: bool,
+        /// Set as default provider
+        #[arg(long)]
+        set_default: bool,
+        /// Non-interactive mode (fail if required args are missing)
+        #[arg(long)]
+        non_interactive: bool,
+    },
     /// Chat with AI (streaming on TTY, buffer in pipe)
     Chat {
         /// Prompt text (remainder of args)
