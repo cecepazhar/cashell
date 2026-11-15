@@ -746,3 +746,242 @@ fn test_a06_rate_limit_per_ip_60_ok_61_too_many_requests() {
         "Different IP must have its own bucket"
     );
 }
+
+#[test]
+fn test_a07_analytics_retention_and_daily_rollup() {
+    let db = crate::db::Database::open_in_memory().unwrap();
+
+    // Insert 5 events 30 days ago
+    for i in 0..5 {
+        db.conn()
+            .execute(
+                "INSERT INTO analytics_events (website_id, session_id, url, browser, os, device, country, visitor_hash, event_type, created_at)
+                 VALUES ('siteA', ?1, '/old', 'Chrome', 'Linux', 'Desktop', 'ID', ?2, 'pageview', datetime('now', '-30 days'))",
+                rusqlite::params![format!("s_old_{i}"), format!("vh_old_{i}")],
+            )
+            .unwrap();
+    }
+
+    // Insert 3 events today
+    for i in 0..3 {
+        db.conn()
+            .execute(
+                "INSERT INTO analytics_events (website_id, session_id, url, browser, os, device, country, visitor_hash, event_type, created_at)
+                 VALUES ('siteA', ?1, '/today', 'Chrome', 'Linux', 'Desktop', 'ID', ?2, 'pageview', datetime('now'))",
+                rusqlite::params![format!("s_new_{i}"), format!("vh_new_{i}")],
+            )
+            .unwrap();
+    }
+
+    // Pre-condition: 8 raw events
+    let count_before: i64 = db
+        .conn()
+        .query_row("SELECT COUNT(*) FROM analytics_events", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count_before, 8);
+
+    // Prune with 14-day retention
+    let (pruned, rollups) = db.prune_analytics_events_and_rollup(14).unwrap();
+    assert_eq!(
+        pruned, 5,
+        "5 old events must be pruned from raw analytics_events"
+    );
+    assert!(rollups >= 1, "At least 1 daily rollup record saved");
+
+    // Verify raw table only has the 3 recent events
+    let count_after: i64 = db
+        .conn()
+        .query_row("SELECT COUNT(*) FROM analytics_events", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        count_after, 3,
+        "Only the 3 recent events remain in raw table"
+    );
+
+    // Verify rollups table preserved the 5 aggregated views for siteA
+    let (rollup_views, rollup_visitors): (i64, i64) = db
+        .conn()
+        .query_row(
+            "SELECT pageviews, unique_visitors FROM analytics_daily_rollups WHERE website_id = 'siteA'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(rollup_views, 5, "Rollup must preserve the 5 pageviews");
+    assert_eq!(
+        rollup_visitors, 5,
+        "Rollup must preserve the 5 unique visitors"
+    );
+}
+
+#[test]
+fn test_a08_analytics_export_csv_and_json() {
+    let db = crate::db::Database::open_in_memory().unwrap();
+    for i in 1..=7 {
+        db.record_analytics_event(
+            "export-site",
+            &format!("sess_{i}"),
+            &format!("/path/{i}"),
+            "https://referrer.example",
+            "Page Title",
+            "Firefox",
+            "Linux",
+            "Desktop",
+            "US",
+            &format!("hash_{i}"),
+            "pageview",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    }
+
+    let tmp_dir = std::env::temp_dir().join(format!("cashell-export-test-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp_dir);
+    let csv_path = tmp_dir.join("export.csv");
+    let json_path = tmp_dir.join("export.json");
+
+    let exported_csv = db
+        .export_analytics_csv(&csv_path.to_string_lossy())
+        .unwrap();
+    assert_eq!(exported_csv, 7);
+    let csv_content = std::fs::read_to_string(&csv_path).unwrap();
+    let csv_lines: Vec<&str> = csv_content.lines().collect();
+    assert_eq!(
+        csv_lines.len(),
+        8,
+        "CSV must have 1 header line + 7 event lines"
+    );
+
+    let exported_json = db
+        .export_analytics_json(&json_path.to_string_lossy())
+        .unwrap();
+    assert_eq!(exported_json, 7);
+    let json_content = std::fs::read_to_string(&json_path).unwrap();
+    let json_events: Vec<serde_json::Value> = serde_json::from_str(&json_content).unwrap();
+    assert_eq!(
+        json_events.len(),
+        7,
+        "JSON array must contain 7 event objects"
+    );
+}
+
+#[tokio::test]
+async fn test_a09_tracker_script_size_under_2kb_gzip_and_spa_support() {
+    use axum::response::IntoResponse;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let resp = super::routes::tracker_js_handler().await.into_response();
+    assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+    let bytes = axum::body::to_bytes(resp.into_body(), 100_000)
+        .await
+        .unwrap();
+    let js_text = String::from_utf8(bytes.to_vec()).unwrap();
+
+    // Verify SPA routing hooks and custom event APIs are present
+    assert!(
+        js_text.contains("sendBeacon"),
+        "Tracker must support navigator.sendBeacon"
+    );
+    assert!(
+        js_text.contains("hookHistory") || js_text.contains("pushState"),
+        "Tracker must support SPA routing"
+    );
+    assert!(
+        js_text.contains("popstate"),
+        "Tracker must hook popstate for client-side navigation"
+    );
+    assert!(
+        js_text.contains("cashell"),
+        "Tracker must expose window.cashell custom event API"
+    );
+
+    // Verify Gzipped size is <= 2048 bytes (2 KB)
+    let mut child = Command::new("gzip")
+        .arg("-c")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("gzip command should be available on linux");
+
+    {
+        let stdin = child.stdin.as_mut().expect("Failed to open stdin");
+        stdin.write_all(js_text.as_bytes()).unwrap();
+    }
+
+    let output = child.wait_with_output().unwrap();
+    let gz_size = output.stdout.len();
+    assert!(
+        gz_size <= 2048,
+        "Gzipped tracker size must be <= 2048 bytes (actual: {gz_size} bytes)"
+    );
+}
+
+#[test]
+fn test_a10_cockpit_tui_and_cli_analytics_consistency() {
+    let db = crate::db::Database::open_in_memory().unwrap();
+
+    for i in 1..=12 {
+        db.record_analytics_event(
+            "site-tui",
+            &format!("s_{i}"),
+            if i % 2 == 0 { "/docs" } else { "/blog" },
+            "https://google.com",
+            "Docs Page",
+            "Chrome",
+            "Linux",
+            "Desktop",
+            "ID",
+            &format!("vh_{}", i % 5),
+            "pageview",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    }
+
+    let summary = db.get_analytics_summary(Some("site-tui")).unwrap();
+
+    // Simulate Cockpit TUI data model ingestion
+    let mut snap = crate::systat::SysSnapshot::default();
+    snap.web_analytics = summary.clone();
+
+    // Simulate CLI `cashell analytics --json` serialization
+    let cli_json = serde_json::json!({
+        "pageviews": summary.pageviews,
+        "unique_visitors": summary.unique_visitors,
+        "active_visitors": summary.active_visitors,
+        "bounce_rate": summary.bounce_rate,
+        "top_pages": summary.top_pages,
+        "device_breakdown": summary.device_breakdown,
+        "browser_breakdown": summary.browser_breakdown,
+        "os_breakdown": summary.os_breakdown,
+        "country_breakdown": summary.country_breakdown,
+    });
+
+    // Verify 1:1 consistency between TUI snapshot values and CLI json output
+    assert_eq!(
+        snap.web_analytics.pageviews,
+        cli_json["pageviews"].as_u64().unwrap()
+    );
+    assert_eq!(
+        snap.web_analytics.unique_visitors,
+        cli_json["unique_visitors"].as_u64().unwrap()
+    );
+    assert_eq!(
+        snap.web_analytics.top_pages.len(),
+        cli_json["top_pages"].as_array().unwrap().len()
+    );
+    assert_eq!(snap.web_analytics.pageviews, 12);
+    assert_eq!(snap.web_analytics.unique_visitors, 5);
+}

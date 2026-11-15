@@ -244,6 +244,7 @@ pub fn build_router(cfg: &Config) -> Router {
         .route("/api/action", post(action_handler))
         .route("/api/node/heartbeat", post(node_heartbeat_handler))
         .route("/tracker.js", get(tracker_js_handler))
+        .route("/ca-track.js", get(tracker_js_handler))
         .route(
             "/api/collect",
             post(collect_analytics_handler).options(collect_cors_preflight),
@@ -391,6 +392,35 @@ pub async fn tracker_js_handler() -> impl axum::response::IntoResponse {
   }
   document.addEventListener('visibilitychange', onVisibilityChange);
   window.addEventListener('beforeunload', function(){ flushDwell(); });
+
+  // SPA navigation hook (A-09)
+  function hookHistory(){
+    var push = history.pushState;
+    if (push) {
+      history.pushState = function(){
+        push.apply(this, arguments);
+        sendPageview();
+      };
+    }
+    var replace = history.replaceState;
+    if (replace) {
+      history.replaceState = function(){
+        replace.apply(this, arguments);
+        sendPageview();
+      };
+    }
+    window.addEventListener('popstate', sendPageview);
+  }
+  hookHistory();
+
+  // Custom event API (A-09)
+  window.cashell = window.cashell || function(name, data){
+    var d = base();
+    d.event_type = 'custom';
+    d.event_name = name;
+    d.event_data = typeof data === 'object' ? JSON.stringify(data) : (data ? String(data) : '');
+    beacon(d);
+  };
 
   if (document.readyState === 'complete') sendPageview();
   else window.addEventListener('load', sendPageview);

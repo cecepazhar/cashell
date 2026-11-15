@@ -625,6 +625,21 @@ impl Database {
             }
         }
 
+        // ── Migration 8: Analytics daily rollups (A-07) ───────────────────────
+        if !applied.contains(&8) {
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS analytics_daily_rollups (
+                     day TEXT NOT NULL,
+                     website_id TEXT NOT NULL,
+                     pageviews INTEGER NOT NULL DEFAULT 0,
+                     unique_visitors INTEGER NOT NULL DEFAULT 0,
+                     PRIMARY KEY (day, website_id)
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_analytics_daily_rollups_day ON analytics_daily_rollups(day);
+                 INSERT OR IGNORE INTO schema_migrations (version) VALUES (8);",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -921,6 +936,12 @@ impl Database {
             "DELETE FROM pet_action_logs WHERE created_at < datetime('now', ?1)",
             params![modifier],
         )?;
+        let (pruned_events, _) = self.prune_analytics_events_and_rollup(days)?;
+        deleted += pruned_events;
+        let _ = self.conn.execute(
+            "DELETE FROM analytics_daily_rollups WHERE day < date('now', '-365 days')",
+            [],
+        );
         Ok(deleted)
     }
 
@@ -1882,6 +1903,31 @@ impl Database {
     }
 
     /// Export all analytics events to a JSON file.
+    /// A-07: Prune raw analytics events older than `retention_days` after rolling them up into `analytics_daily_rollups`.
+    /// Returns `(events_pruned, rollups_saved)`.
+    pub fn prune_analytics_events_and_rollup(&self, retention_days: u32) -> Result<(usize, usize)> {
+        let modifier = format!("-{} days", retention_days);
+
+        let rollups_saved = self.conn.execute(
+            "INSERT INTO analytics_daily_rollups (day, website_id, pageviews, unique_visitors)
+             SELECT date(created_at) as d, website_id, COUNT(*), COUNT(DISTINCT visitor_hash)
+             FROM analytics_events
+             WHERE created_at < date('now', ?1)
+             GROUP BY d, website_id
+             ON CONFLICT(day, website_id) DO UPDATE SET
+                 pageviews = pageviews + excluded.pageviews,
+                 unique_visitors = MAX(unique_visitors, excluded.unique_visitors)",
+            params![modifier],
+        )?;
+
+        let events_pruned = self.conn.execute(
+            "DELETE FROM analytics_events WHERE created_at < date('now', ?1)",
+            params![modifier],
+        )?;
+
+        Ok((events_pruned, rollups_saved))
+    }
+
     pub fn export_analytics_json(&self, path: &str) -> Result<u64> {
         let events: Vec<serde_json::Value> = {
             let mut stmt = self.conn.prepare(
@@ -2880,12 +2926,12 @@ mod tests {
 
         // Verify migrations 1..=4 applied
         let applied = db.applied_migrations()?;
-        assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8]);
 
         // Idempotent migration run: running migrations second time must succeed
         db.run_migrations()?;
         let applied2 = db.applied_migrations()?;
-        assert_eq!(applied2, vec![1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(applied2, vec![1, 2, 3, 4, 5, 6, 7, 8]);
 
         // Test telegram state and allowlist (T-01, T-02)
         assert_eq!(db.get_telegram_offset()?, 0);

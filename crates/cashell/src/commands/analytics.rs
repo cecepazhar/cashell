@@ -1,8 +1,9 @@
 //! `cashell analytics` command — view sovereign web analytics & traffic summary across CA ecosystem sites.
 
-use anyhow::Result;
-use clap::Parser;
+use anyhow::{bail, Context, Result};
+use clap::{Parser, Subcommand};
 use colored::Colorize;
+use std::path::PathBuf;
 
 #[derive(Parser, Debug, Clone)]
 #[command(
@@ -10,18 +11,82 @@ use colored::Colorize;
     about = "View sovereign web analytics & traffic summary across CA ecosystem sites"
 )]
 pub struct AnalyticsCommand {
+    #[command(subcommand)]
+    pub action: Option<AnalyticsAction>,
+
     /// Filter by website ID (e.g. 'docs', 'blog', 'caterm', 'fathforce')
     #[arg(short, long)]
     pub site: Option<String>,
+
     /// Limit number of top pages / referrers to show (default: 10)
     #[arg(short, long, default_value = "10")]
     pub limit: usize,
+
+    /// Output full analytics summary as JSON (A-10)
+    #[arg(long)]
+    pub json: bool,
+
+    /// Direct export format: 'csv' or 'json' (A-08)
+    #[arg(long)]
+    pub format: Option<String>,
+
+    /// Direct export output file destination (A-08)
+    #[arg(long)]
+    pub out: Option<PathBuf>,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum AnalyticsAction {
+    /// Export analytics raw data to CSV or JSON (A-08)
+    Export {
+        /// Format: 'csv' or 'json' (default: 'csv')
+        #[arg(short, long, default_value = "csv")]
+        format: String,
+
+        /// Output destination file path
+        #[arg(short, long)]
+        out: PathBuf,
+    },
+    /// Output summary data (default view)
+    Summary,
 }
 
 pub fn run(cmd: &AnalyticsCommand) -> Result<()> {
-    let db = crate::db::Database::open()?;
+    // Check if export subcommand or direct export flags given (A-08)
+    if let Some(AnalyticsAction::Export { format, out }) = &cmd.action {
+        return do_export(format, out);
+    }
+    if let (Some(format), Some(out)) = (&cmd.format, &cmd.out) {
+        return do_export(format, out);
+    }
 
+    let db = crate::db::Database::open()?;
     let summary = db.get_analytics_summary(cmd.site.as_deref())?;
+
+    // A-10: JSON output matching Cockpit TUI data model
+    if cmd.json {
+        let json_val = serde_json::to_string_pretty(&serde_json::json!({
+            "pageviews": summary.pageviews,
+            "unique_visitors": summary.unique_visitors,
+            "active_visitors": summary.active_visitors,
+            "bounce_rate": summary.bounce_rate,
+            "avg_session_secs": summary.avg_session_secs,
+            "top_pages": summary.top_pages,
+            "top_referrers": summary.top_referrers,
+            "device_breakdown": summary.device_breakdown,
+            "browser_breakdown": summary.browser_breakdown,
+            "os_breakdown": summary.os_breakdown,
+            "country_breakdown": summary.country_breakdown,
+            "daily_traffic": summary.daily_traffic,
+            "product_analytics": summary.product_analytics,
+            "scroll_funnel": summary.scroll_funnel,
+            "top_cta_events": summary.top_cta_events,
+            "rage_clicks": summary.rage_clicks,
+            "avg_dwell_time_secs": summary.avg_dwell_time_secs,
+        }))?;
+        println!("{json_val}");
+        return Ok(());
+    }
 
     let filter_label = match &cmd.site {
         Some(s) => format!(" (Filtered by site: {})", s.cyan()),
@@ -135,5 +200,37 @@ pub fn run(cmd: &AnalyticsCommand) -> Result<()> {
     println!("\n  {} Embed script in your HTML: {}", "Tip:".cyan().bold(), r#"<script defer src="https://cashell.fathforce.com/tracker.js" data-site="<id>"></script>"#.dimmed());
     println!();
 
+    Ok(())
+}
+
+fn do_export(format: &str, out: &std::path::Path) -> Result<()> {
+    let db = crate::db::Database::open()?;
+    let out_str = out.to_string_lossy();
+    let fmt_lower = format.to_lowercase();
+    match fmt_lower.as_str() {
+        "csv" => {
+            let count = db
+                .export_analytics_csv(&out_str)
+                .with_context(|| format!("Failed to export CSV to {out_str}"))?;
+            println!(
+                "✅ Successfully exported {} analytics events to CSV: {}",
+                count,
+                out_str.green()
+            );
+        }
+        "json" => {
+            let count = db
+                .export_analytics_json(&out_str)
+                .with_context(|| format!("Failed to export JSON to {out_str}"))?;
+            println!(
+                "✅ Successfully exported {} analytics events to JSON: {}",
+                count,
+                out_str.green()
+            );
+        }
+        other => {
+            bail!("Unsupported export format '{other}'. Supported formats: 'csv', 'json'.");
+        }
+    }
     Ok(())
 }
