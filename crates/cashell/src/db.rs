@@ -129,6 +129,44 @@ pub struct AuditReportRecord {
 /// Telegram user allowlist record: `(user_id, username, role, added_at)`.
 pub type TelegramUserRoleRecord = (i64, Option<String>, String, String);
 
+/// An uptime incident record (U-02).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct IncidentRecord {
+    pub id: i64,
+    pub monitor: String,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub cause: Option<String>,
+}
+
+/// An individual uptime probe check record (U-04).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UptimeCheckRecord {
+    pub id: i64,
+    pub monitor: String,
+    pub is_up: bool,
+    pub latency_ms: Option<u64>,
+    pub status_code: Option<u16>,
+    pub error: Option<String>,
+    pub cert_expires_at: Option<String>,
+    pub checked_at: String,
+}
+
+/// A custom endpoint monitor stored in DB (U-01, U-05).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UptimeMonitorRecord {
+    pub id: i64,
+    pub name: String,
+    pub target: String,
+    pub monitor_type: String,
+    pub interval_secs: u64,
+    pub expected_status: Option<u16>,
+    pub expected_keyword: Option<String>,
+    pub public: bool,
+    pub group_name: String,
+    pub created_at: String,
+}
+
 /// Primary SQLite persistence manager for cashell.
 pub struct Database {
     conn: Connection,
@@ -522,6 +560,69 @@ impl Database {
                 "INSERT OR IGNORE INTO schema_migrations (version) VALUES (6)",
                 [],
             );
+        }
+
+        // ── Migration 7: Uptime Engine tables (U-01..U-07) ────────────────────
+        if !applied.contains(&7) {
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS incidents (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     monitor TEXT NOT NULL,
+                     started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                     ended_at DATETIME,
+                     cause TEXT
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_incidents_mon ON incidents(monitor, started_at);
+                 CREATE TABLE IF NOT EXISTS uptime_checks (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     monitor TEXT NOT NULL,
+                     is_up INTEGER NOT NULL,
+                     latency_ms INTEGER,
+                     status_code INTEGER,
+                     error TEXT,
+                     cert_expires_at DATETIME,
+                     checked_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_uptime_checks_mon ON uptime_checks(monitor, checked_at);
+                 CREATE TABLE IF NOT EXISTS uptime_hourly_rollups (
+                     monitor TEXT NOT NULL,
+                     hour_bucket TEXT NOT NULL,
+                     total_checks INTEGER NOT NULL,
+                     up_checks INTEGER NOT NULL,
+                     avg_latency_ms INTEGER,
+                     PRIMARY KEY (monitor, hour_bucket)
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_uptime_rollups_mon ON uptime_hourly_rollups(monitor, hour_bucket);
+                 CREATE TABLE IF NOT EXISTS uptime_ssl_alerts (
+                     monitor TEXT NOT NULL,
+                     alert_tier TEXT NOT NULL,
+                     alerted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                     PRIMARY KEY (monitor, alert_tier)
+                 );
+                 INSERT OR IGNORE INTO schema_migrations (version) VALUES (7);",
+            )?;
+
+            // Upgrade uptime_monitors table with additional columns if missing
+            let mut col_stmt = self.conn.prepare("PRAGMA table_info(uptime_monitors)")?;
+            let existing_cols: Vec<String> = col_stmt
+                .query_map([], |row| row.get::<_, String>(1))?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            let extra_cols = [
+                ("monitor_type", "ALTER TABLE uptime_monitors ADD COLUMN monitor_type TEXT NOT NULL DEFAULT 'http'"),
+                ("interval_secs", "ALTER TABLE uptime_monitors ADD COLUMN interval_secs INTEGER NOT NULL DEFAULT 60"),
+                ("expected_status", "ALTER TABLE uptime_monitors ADD COLUMN expected_status INTEGER DEFAULT 200"),
+                ("expected_keyword", "ALTER TABLE uptime_monitors ADD COLUMN expected_keyword TEXT"),
+                ("public", "ALTER TABLE uptime_monitors ADD COLUMN public INTEGER NOT NULL DEFAULT 0"),
+                ("group_name", "ALTER TABLE uptime_monitors ADD COLUMN group_name TEXT NOT NULL DEFAULT 'Custom'"),
+            ];
+
+            for (col, sql) in extra_cols {
+                if !existing_cols.contains(&col.to_string()) {
+                    let _ = self.conn.execute(sql, []);
+                }
+            }
         }
 
         Ok(())
@@ -1231,6 +1332,281 @@ impl Database {
         let mut stmt = self
             .conn
             .prepare("SELECT name, target FROM uptime_monitors ORDER BY name")?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    /// Record an individual uptime check result (U-04).
+    pub fn record_uptime_check(
+        &self,
+        monitor: &str,
+        is_up: bool,
+        latency_ms: Option<u64>,
+        status_code: Option<u16>,
+        error: Option<&str>,
+        cert_expires_at: Option<&str>,
+    ) -> Result<()> {
+        let is_up_num = if is_up { 1 } else { 0 };
+        self.conn.execute(
+            "INSERT INTO uptime_checks (monitor, is_up, latency_ms, status_code, error, cert_expires_at, checked_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))",
+            params![
+                monitor,
+                is_up_num,
+                latency_ms.map(|l| l as i64),
+                status_code.map(|s| s as i64),
+                error,
+                cert_expires_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Roll up checks older than 7 days into hourly summaries, purge raw checks > 7 days, and purge rollups > 90 days (U-04).
+    pub fn prune_uptime_checks_and_rollup(&self) -> Result<()> {
+        // Roll up checks older than 7 days
+        self.conn.execute(
+            "INSERT INTO uptime_hourly_rollups (monitor, hour_bucket, total_checks, up_checks, avg_latency_ms)
+             SELECT monitor,
+                    strftime('%Y-%m-%d %H:00:00', checked_at) AS bucket,
+                    COUNT(*),
+                    SUM(CASE WHEN is_up = 1 THEN 1 ELSE 0 END),
+                    AVG(latency_ms)
+             FROM uptime_checks
+             WHERE checked_at < datetime('now', '-7 days')
+             GROUP BY monitor, bucket
+             ON CONFLICT(monitor, hour_bucket) DO UPDATE SET
+                 total_checks = total_checks + excluded.total_checks,
+                 up_checks = up_checks + excluded.up_checks,
+                 avg_latency_ms = excluded.avg_latency_ms",
+            [],
+        )?;
+
+        // Delete raw checks older than 7 days
+        self.conn.execute(
+            "DELETE FROM uptime_checks WHERE checked_at < datetime('now', '-7 days')",
+            [],
+        )?;
+
+        // Delete hourly rollups older than 90 days
+        self.conn.execute(
+            "DELETE FROM uptime_hourly_rollups WHERE hour_bucket < datetime('now', '-90 days')",
+            [],
+        )?;
+
+        Ok(())
+    }
+
+    /// Calculate percentage of uptime over the specified duration in days (U-04).
+    pub fn get_uptime_percentage(&self, monitor: &str, days: u32) -> Result<f32> {
+        let days_str = format!("-{days} days");
+
+        // Sum raw checks
+        let (raw_up, raw_total): (i64, i64) = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(SUM(CASE WHEN is_up = 1 THEN 1 ELSE 0 END), 0),
+                    COALESCE(COUNT(*), 0)
+             FROM uptime_checks
+             WHERE monitor = ?1 AND checked_at >= datetime('now', ?2)",
+                params![monitor, days_str],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap_or((0, 0));
+
+        // Sum hourly rollups
+        let (rollup_up, rollup_total): (i64, i64) = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(SUM(up_checks), 0),
+                    COALESCE(SUM(total_checks), 0)
+             FROM uptime_hourly_rollups
+             WHERE monitor = ?1 AND hour_bucket >= datetime('now', ?2)",
+                params![monitor, days_str],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap_or((0, 0));
+
+        let total = raw_total + rollup_total;
+        if total == 0 {
+            return Ok(100.0);
+        }
+
+        let up = raw_up + rollup_up;
+        let pct = (up as f32 / total as f32) * 100.0;
+        Ok(pct)
+    }
+
+    /// Retrieve the most recent N probe results (true = up, false = down) ordered chronologically (U-04).
+    pub fn get_monitor_history_bits(&self, monitor: &str, count: usize) -> Result<Vec<bool>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT is_up FROM uptime_checks WHERE monitor = ?1 ORDER BY checked_at DESC, id DESC LIMIT ?2"
+        )?;
+        let rows = stmt.query_map(params![monitor, count as i64], |row| {
+            let num: i64 = row.get(0)?;
+            Ok(num == 1)
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        list.reverse(); // Chronological order: oldest to newest
+        Ok(list)
+    }
+
+    /// Record the start of a service outage incident (U-02). Returns incident ID.
+    pub fn record_incident_start(&self, monitor: &str, cause: Option<&str>) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO incidents (monitor, started_at, cause) VALUES (?1, datetime('now'), ?2)",
+            params![monitor, cause],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Mark an ongoing incident as resolved/ended (U-02).
+    pub fn record_incident_end(&self, incident_id: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE incidents SET ended_at = datetime('now') WHERE id = ?1 AND ended_at IS NULL",
+            params![incident_id],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve any currently open (unresolved) incident for a monitor (U-02).
+    pub fn get_open_incident(&self, monitor: &str) -> Result<Option<IncidentRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, monitor, started_at, ended_at, cause FROM incidents
+             WHERE monitor = ?1 AND ended_at IS NULL ORDER BY id DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map(params![monitor], |row| {
+            Ok(IncidentRecord {
+                id: row.get(0)?,
+                monitor: row.get(1)?,
+                started_at: row.get(2)?,
+                ended_at: row.get(3)?,
+                cause: row.get(4)?,
+            })
+        })?;
+
+        if let Some(r) = rows.next() {
+            Ok(Some(r?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// List recent incidents for status reporting and status page (U-02, U-05).
+    pub fn list_incidents(&self, limit: usize) -> Result<Vec<IncidentRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, monitor, started_at, ended_at, cause FROM incidents ORDER BY started_at DESC, id DESC LIMIT ?1"
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(IncidentRecord {
+                id: row.get(0)?,
+                monitor: row.get(1)?,
+                started_at: row.get(2)?,
+                ended_at: row.get(3)?,
+                cause: row.get(4)?,
+            })
+        })?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    /// Check if an SSL expiry alert should be sent for a given tier ("14d" or "3d") (U-03).
+    /// Ensures alerts are only sent once per tier.
+    pub fn should_alert_ssl(&self, monitor: &str, tier: &str) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM uptime_ssl_alerts WHERE monitor = ?1 AND alert_tier = ?2",
+            params![monitor, tier],
+            |row| row.get(0),
+        )?;
+        Ok(count == 0)
+    }
+
+    /// Record that an SSL alert has been dispatched (U-03).
+    pub fn record_ssl_alert(&self, monitor: &str, tier: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO uptime_ssl_alerts (monitor, alert_tier, alerted_at)
+             VALUES (?1, ?2, datetime('now'))",
+            params![monitor, tier],
+        )?;
+        Ok(())
+    }
+
+    /// Add an endpoint monitor with full options (U-01, U-05).
+    pub fn add_uptime_monitor_record(&self, record: &UptimeMonitorRecord) -> Result<()> {
+        let pub_num = if record.public { 1 } else { 0 };
+        self.conn.execute(
+            "INSERT INTO uptime_monitors (name, target, monitor_type, interval_secs, expected_status, expected_keyword, public, group_name)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(name) DO UPDATE SET
+                 target = excluded.target,
+                 monitor_type = excluded.monitor_type,
+                 interval_secs = excluded.interval_secs,
+                 expected_status = excluded.expected_status,
+                 expected_keyword = excluded.expected_keyword,
+                 public = excluded.public,
+                 group_name = excluded.group_name",
+            params![
+                record.name,
+                record.target,
+                record.monitor_type,
+                record.interval_secs as i64,
+                record.expected_status.map(|s| s as i64),
+                record.expected_keyword,
+                pub_num,
+                record.group_name,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// List all custom monitors with full details (U-01, U-05).
+    pub fn get_all_uptime_monitors_full(&self) -> Result<Vec<UptimeMonitorRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, target, monitor_type, interval_secs, expected_status, expected_keyword, public, group_name, created_at
+             FROM uptime_monitors ORDER BY name"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(UptimeMonitorRecord {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                target: row.get(2)?,
+                monitor_type: row
+                    .get::<_, Option<String>>(3)?
+                    .unwrap_or_else(|| "http".to_string()),
+                interval_secs: row.get::<_, Option<i64>>(4)?.unwrap_or(60) as u64,
+                expected_status: row.get::<_, Option<i64>>(5)?.map(|s| s as u16),
+                expected_keyword: row.get(6)?,
+                public: row.get::<_, Option<i64>>(7)?.unwrap_or(0) == 1,
+                group_name: row
+                    .get::<_, Option<String>>(8)?
+                    .unwrap_or_else(|| "Custom".to_string()),
+                created_at: row.get(9)?,
+            })
+        })?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    /// List only monitors marked as public (U-05).
+    pub fn list_public_monitors(&self) -> Result<Vec<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name, target FROM uptime_monitors WHERE public = 1 ORDER BY name")?;
         let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
         let mut list = Vec::new();
         for r in rows {
@@ -2504,12 +2880,12 @@ mod tests {
 
         // Verify migrations 1..=4 applied
         let applied = db.applied_migrations()?;
-        assert_eq!(applied, vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7]);
 
         // Idempotent migration run: running migrations second time must succeed
         db.run_migrations()?;
         let applied2 = db.applied_migrations()?;
-        assert_eq!(applied2, vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(applied2, vec![1, 2, 3, 4, 5, 6, 7]);
 
         // Test telegram state and allowlist (T-01, T-02)
         assert_eq!(db.get_telegram_offset()?, 0);

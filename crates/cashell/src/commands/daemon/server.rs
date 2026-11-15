@@ -147,6 +147,18 @@ pub fn run_daemon(cfg: &Config, port_opt: Option<u16>, interval_opt: Option<u64>
             }
         }
 
+        // U-01..U-07: Spawn background Uptime Engine worker
+        if let Ok(db) = crate::db::get_db() {
+            let db_uptime = std::sync::Arc::new(std::sync::Mutex::new(db));
+            let uptime_engine = std::sync::Arc::new(crate::uptime::UptimeEngine::new(
+                cfg.clone(),
+                db_uptime,
+            ));
+            tokio::spawn(async move {
+                uptime_engine.run_loop().await;
+            });
+        }
+
         let mut fails: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
         let mut active_incidents: std::collections::BTreeMap<String, std::time::Instant> = std::collections::BTreeMap::new();
         println!("{} Service probe loop initialized.", "✔".green());

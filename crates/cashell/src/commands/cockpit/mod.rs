@@ -1674,6 +1674,7 @@ impl CockpitApp {
                 name: new_name.clone(),
                 target: monitor.target.clone(),
                 group: monitor.group.clone(),
+                ..Default::default()
             });
         self.save_config_silent();
         self.set_notification(format!("✓ Cloned uptime monitor as '{new_name}'"));
@@ -4039,6 +4040,7 @@ impl CockpitApp {
                     name: name.clone(),
                     target: url.clone(),
                     group: group.clone(),
+                    ..Default::default()
                 });
         }
         self.save_config_silent();
@@ -4475,6 +4477,7 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
                                 name: name.clone(),
                                 target: url.clone(),
                                 group: group.clone(),
+                                ..Default::default()
                             });
                     }
                     app.save_config_silent();

@@ -182,6 +182,27 @@ impl NotificationDispatcher {
     }
 }
 
+/// Convenience helper to dispatch a notification event to all configured channels (F-04).
+pub async fn send_alert(cfg: &crate::config::Config, event: &NotificationEvent) -> Result<()> {
+    let token = if !cfg.uptime.telegram_bot_token.is_empty() {
+        &cfg.uptime.telegram_bot_token
+    } else {
+        &cfg.daemon.telegram_bot_token
+    };
+    let chat_id = if !cfg.uptime.telegram_chat_id.is_empty() {
+        &cfg.uptime.telegram_chat_id
+    } else {
+        &cfg.daemon.telegram_chat_id
+    };
+
+    if !token.is_empty() && !chat_id.is_empty() {
+        let tg = TelegramNotifier::new(token, chat_id);
+        let _ = tg.send(event).await;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

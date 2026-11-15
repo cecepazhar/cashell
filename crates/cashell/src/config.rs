@@ -386,6 +386,9 @@ pub struct UptimeConfig {
     /// Whether Telegram notifications are enabled on status change.
     #[serde(default = "default_telegram_alerts_enabled")]
     pub telegram_alerts_enabled: bool,
+    /// Outgoing heartbeat / dead-man switch configuration (U-06).
+    #[serde(default)]
+    pub heartbeat: HeartbeatConfig,
 }
 
 impl Default for UptimeConfig {
@@ -396,12 +399,26 @@ impl Default for UptimeConfig {
             telegram_bot_token: String::new(),
             telegram_chat_id: String::new(),
             telegram_alerts_enabled: default_telegram_alerts_enabled(),
+            heartbeat: HeartbeatConfig::default(),
         }
     }
 }
 
 fn default_telegram_alerts_enabled() -> bool {
     false
+}
+
+/// Outgoing heartbeat / dead-man switch configuration (U-06).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HeartbeatConfig {
+    #[serde(default)]
+    pub url: String,
+    #[serde(default = "default_heartbeat_interval_mins")]
+    pub interval_mins: u64,
+}
+
+fn default_heartbeat_interval_mins() -> u64 {
+    5
 }
 
 /// A custom Uptime Kuma style endpoint monitor definition.
@@ -411,10 +428,43 @@ pub struct UptimeMonitorConfig {
     pub target: String,
     #[serde(default = "default_monitor_group")]
     pub group: String,
+    #[serde(default = "default_monitor_type_str")]
+    pub monitor_type: String,
+    #[serde(default = "default_monitor_interval_secs")]
+    pub interval_secs: u64,
+    #[serde(default)]
+    pub expected_status: Option<u16>,
+    #[serde(default)]
+    pub expected_keyword: Option<String>,
+    #[serde(default)]
+    pub public: bool,
 }
 
 pub fn default_monitor_group() -> String {
     "Custom".to_string()
+}
+
+pub fn default_monitor_type_str() -> String {
+    "http".to_string()
+}
+
+pub fn default_monitor_interval_secs() -> u64 {
+    60
+}
+
+impl Default for UptimeMonitorConfig {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            target: String::new(),
+            group: default_monitor_group(),
+            monitor_type: default_monitor_type_str(),
+            interval_secs: default_monitor_interval_secs(),
+            expected_status: None,
+            expected_keyword: None,
+            public: false,
+        }
+    }
 }
 
 /// Docker container runtime configuration.

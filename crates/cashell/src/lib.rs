@@ -23,3 +23,4 @@ pub mod sync;
 pub mod systat;
 pub mod telegram;
 pub mod tui;
+pub mod uptime;
