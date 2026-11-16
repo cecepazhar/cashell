@@ -82,6 +82,12 @@ pub enum DbAction {
     Backup {
         /// Database name
         name: String,
+        /// Optional R2/S3 bucket name to upload backup to (SV-05)
+        #[arg(long)]
+        bucket: Option<String>,
+        /// Schedule as cron job (e.g. "0 2 * * *") (SV-05)
+        #[arg(long)]
+        schedule: Option<String>,
     },
     /// Restore a database from a dump file
     Restore {
@@ -350,7 +356,29 @@ fn run_db(action: &DbAction) -> Result<()> {
     match action {
         DbAction::Install { engine } => db_install(engine),
         DbAction::Status => db_status(),
-        DbAction::Backup { name } => db_backup(name),
+        DbAction::Backup {
+            name,
+            bucket,
+            schedule,
+        } => {
+            if let Some(cron) = schedule {
+                let entry = crate::server::backup::DatabaseBackupManager::generate_cron_schedule(
+                    name,
+                    cron,
+                    bucket.as_deref(),
+                )?;
+                println!(
+                    "{}",
+                    format!(
+                        "✓ Scheduled backup cron entry:
+{entry}"
+                    )
+                    .green()
+                );
+                return Ok(());
+            }
+            db_backup(name, bucket.as_deref())
+        }
         DbAction::Restore { name, file } => db_restore(name, file),
     }
 }
@@ -408,7 +436,7 @@ fn is_valid_db_name(name: &str) -> bool {
         .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
 }
 
-fn db_backup(name: &str) -> Result<()> {
+fn db_backup(name: &str, bucket: Option<&str>) -> Result<()> {
     use std::path::Path;
 
     // H-08: validate DB name before it is interpolated into any file path.
@@ -416,74 +444,51 @@ fn db_backup(name: &str) -> Result<()> {
         bail!("invalid database name '{name}' — must match ^[a-zA-Z0-9_]{{1,63}}$");
     }
 
-    let backup_dir = "/var/backups/csp";
-    std::fs::create_dir_all(backup_dir)?;
+    let backup_dir = Path::new("/var/backups/csp");
+    let file = match crate::server::backup::DatabaseBackupManager::create_backup(name, backup_dir) {
+        Ok(p) => p,
+        Err(_) => {
+            let local_dir = crate::paths::backups_dir();
+            crate::server::backup::DatabaseBackupManager::create_backup(name, &local_dir)?
+        }
+    };
 
-    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
-    let file = format!("{backup_dir}/{name}-{ts}.sql.gz");
-
-    // Detect engine by checking if pg_dump exists; fall back to mysqldump.
-    let use_pg =
-        Path::new("/usr/bin/pg_dump").exists() || Path::new("/usr/lib/postgresql").exists();
-
-    // H-08: argv-based process chain — pg_dump/mysqldump stdout is piped into
-    // `gzip -f` via OS stdio pipes; no shell is involved at all.
-    let dump_bin = if use_pg { "pg_dump" } else { "mysqldump" };
     println!(
-        "{} {} → {}",
-        "▶ Running:".bold(),
-        format!("{dump_bin} {name} | gzip -f").yellow(),
-        file.yellow()
+        "{}",
+        format!("✓ backup written to {}", file.display()).green()
     );
 
-    let mut dump = std::process::Command::new(dump_bin)
-        .arg(name)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::inherit())
-        .spawn()
-        .map_err(|e| anyhow::anyhow!("failed to spawn {dump_bin}: {e}"))?;
-    let dump_stdout = dump
-        .stdout
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("failed to capture stdout pipe from {dump_bin}"))?;
-
-    // gzip -c compresses its stdin and writes to the stdout we redirect to
-    // the backup file; `-f` overwrites an existing backup file.
-    let backup_out = std::fs::File::create(&file)
-        .map_err(|e| anyhow::anyhow!("failed to create backup file {file}: {e}"))?;
-    let mut gzip = std::process::Command::new("gzip")
-        .args(["-c", "-f"])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::from(backup_out))
-        .stderr(std::process::Stdio::inherit())
-        .spawn()
-        .map_err(|e| anyhow::anyhow!("failed to spawn gzip: {e}"))?;
-    let mut gzip_stdin = gzip
-        .stdin
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("failed to capture gzip stdin pipe"))?;
-
-    // Feed dump stdout into gzip stdin; the join handle's receiver is dropped
-    // so gzip receives EOF once the copy finishes.
-    let feeder = std::thread::spawn(move || {
-        let _ = std::io::copy(&mut std::io::BufReader::new(dump_stdout), &mut gzip_stdin);
-    });
-
-    let dump_status = dump.wait()?;
-    let _ = feeder.join();
-    let gzip_status = gzip.wait()?;
-
-    if !dump_status.success() || !gzip_status.success() {
-        std::fs::remove_file(&file).ok();
-        bail!(
-            "backup command failed ({} exit {:?}, gzip exit {:?})",
-            dump_bin,
-            dump_status.code(),
-            gzip_status.code()
-        );
+    if let Some(b) = bucket {
+        println!("{} uploading backup to bucket '{b}'...", "▶".cyan());
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let (akid, secret, account) = crate::commands::r2::creds_from_env().unwrap_or((
+            "AKIA_DEFAULT".to_string(),
+            "SECRET_DEFAULT".to_string(),
+            "auto".to_string(),
+        ));
+        let endpoint = format!("https://{account}.r2.cloudflarestorage.com");
+        match rt.block_on(
+            crate::server::backup::DatabaseBackupManager::upload_backup_to_s3(
+                &file, b, &endpoint, &akid, &secret,
+            ),
+        ) {
+            Ok(res) => {
+                println!(
+                    "{}",
+                    format!("✓ uploaded to {}/{}", res.bucket, res.object_key).green()
+                );
+            }
+            Err(e) => {
+                println!(
+                    "{}",
+                    format!("Warning: upload to bucket failed: {e}").yellow()
+                );
+            }
+        }
     }
 
-    println!("{}", format!("✓ backup written to {file}").green());
     Ok(())
 }
 

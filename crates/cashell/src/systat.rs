@@ -2019,13 +2019,29 @@ fn query_smartctl_json(dev: &str) -> Option<DiskHealthInfo> {
 }
 
 pub fn parse_smartctl_json(json: &serde_json::Value, fallback_dev: &str) -> Option<DiskHealthInfo> {
-    // If smartctl reported permission denied / open failed without SMART log
+    // Check if smart_support indicates SMART is unavailable on disk (SV-04)
+    if let Some(support) = json.get("smart_support") {
+        let available = support
+            .get("available")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        if !available
+            && json.get("nvme_smart_health_information_log").is_none()
+            && json.get("ata_smart_attributes").is_none()
+        {
+            return None;
+        }
+    }
+
+    // If smartctl reported permission denied / open failed / no SMART support without SMART log
     if let Some(messages) = json.get("messages").and_then(|m| m.as_array()) {
         for msg in messages {
             if let Some(s) = msg.get("string").and_then(|s| s.as_str()) {
                 if (s.contains("Permission denied")
                     || s.contains("failed")
-                    || s.contains("Cannot open"))
+                    || s.contains("Cannot open")
+                    || s.contains("lacks SMART")
+                    || s.contains("No SMART"))
                     && json.get("nvme_smart_health_information_log").is_none()
                     && json.get("ata_smart_attributes").is_none()
                 {

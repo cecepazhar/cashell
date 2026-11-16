@@ -371,6 +371,7 @@ dependencies = [
  "futures-util",
  "git2",
  "hmac",
+ "libc",
  "machine-uid",
  "rand 0.8.8",
  "ratatui",

@@ -53,6 +53,7 @@ pub fn periodic_license_verify(cfg: &Config) {
 }
 
 pub fn run_daemon(cfg: &Config, port_opt: Option<u16>, interval_opt: Option<u64>) -> Result<()> {
+    crate::server::hardening::verify_daemon_execution_user()?;
     periodic_license_verify(cfg);
 
     let port = port_opt.unwrap_or(cfg.daemon.port);
@@ -300,21 +301,11 @@ WantedBy=default.target
 "#
         .to_string()
     } else {
-        r#"[Unit]
-Description=CAShell 24/7 Fleet & Health Monitoring Daemon
-After=network.target tailscaled.service
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/cashell daemon run
-Restart=always
-RestartSec=10
-Environment=PATH=/usr/local/bin:/usr/bin:/bin
-
-[Install]
-WantedBy=multi-user.target
-"#
-        .to_string()
+        crate::server::hardening::generate_hardened_systemd_unit(
+            "cashell",
+            "cashell",
+            "/usr/local/bin/cashell",
+        )
     }
 }
 
