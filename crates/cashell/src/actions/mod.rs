@@ -36,6 +36,12 @@ pub enum Action {
     GetUptime,
     /// Query sovereign web analytics traffic metrics.
     GetAnalytics { site: String, days: u32 },
+    /// Add reverse proxy domain with automated SSL (SV-01).
+    AddDomain { domain: String, proxy_port: u16 },
+    /// Remove reverse proxy domain (SV-01).
+    RemoveDomain { domain: String },
+    /// List configured reverse proxy domains (SV-01).
+    ListDomains,
 }
 
 /// Action classification: Read (safe) vs Write (mutating / state-changing).
@@ -53,11 +59,14 @@ impl Action {
             | Action::GetLogs { .. }
             | Action::ListContainers
             | Action::GetUptime
-            | Action::GetAnalytics { .. } => ActionKind::Read,
+            | Action::GetAnalytics { .. }
+            | Action::ListDomains => ActionKind::Read,
             Action::RestartContainer { .. }
             | Action::StopContainer { .. }
             | Action::StartContainer { .. }
-            | Action::DeployApp { .. } => ActionKind::Write,
+            | Action::DeployApp { .. }
+            | Action::AddDomain { .. }
+            | Action::RemoveDomain { .. } => ActionKind::Write,
         }
     }
 
@@ -73,6 +82,9 @@ impl Action {
             Action::DeployApp { .. } => "deploy_app",
             Action::GetUptime => "get_uptime",
             Action::GetAnalytics { .. } => "get_analytics",
+            Action::AddDomain { .. } => "add_domain",
+            Action::RemoveDomain { .. } => "remove_domain",
+            Action::ListDomains => "list_domains",
         }
     }
 }
@@ -287,6 +299,51 @@ pub async fn execute(action: Action, ctx: &ActionContext) -> Result<ActionResult
                 ok: true,
                 output: format!("Analytics summary for '{site}' (last {days} days)."),
                 data: Some(serde_json::json!({ "site": site, "days": days })),
+            })
+        }
+        Action::AddDomain { domain, proxy_port } => {
+            crate::server::caddy::validate_domain(domain)?;
+            if let Some(ref db_lock) = ctx.db {
+                if let Ok(db) = db_lock.lock() {
+                    db.upsert_server_domain(domain, *proxy_port, "active")?;
+                }
+            }
+            Ok(ActionResult {
+                ok: true,
+                output: format!(
+                    "Domain '{domain}' configured to reverse proxy 127.0.0.1:{proxy_port}"
+                ),
+                data: Some(serde_json::json!({ "domain": domain, "proxy_port": proxy_port })),
+            })
+        }
+        Action::RemoveDomain { domain } => {
+            crate::server::caddy::validate_domain(domain)?;
+            let mut removed = false;
+            if let Some(ref db_lock) = ctx.db {
+                if let Ok(db) = db_lock.lock() {
+                    removed = db.remove_server_domain(domain)?;
+                }
+            }
+            Ok(ActionResult {
+                ok: true,
+                output: format!("Domain '{domain}' removed (found in DB: {removed})"),
+                data: Some(serde_json::json!({ "domain": domain, "removed": removed })),
+            })
+        }
+        Action::ListDomains => {
+            let domains = if let Some(ref db_lock) = ctx.db {
+                if let Ok(db) = db_lock.lock() {
+                    db.list_server_domains()?
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            };
+            Ok(ActionResult {
+                ok: true,
+                output: format!("Configured virtual host domains: {}", domains.len()),
+                data: Some(serde_json::json!(domains)),
             })
         }
     };

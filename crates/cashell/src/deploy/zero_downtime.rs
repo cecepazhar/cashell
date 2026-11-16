@@ -5,6 +5,7 @@
 //! 2. Healthcheck probes new container until 100% healthy.
 //! 3. Upstream traffic is switched in Caddy to the new container.
 //! 4. Old container is gracefully stopped only after the switch succeeds.
+//!
 //! Result: Continuous curl requests experience 0 errors throughout the deployment.
 
 use anyhow::{anyhow, Result};

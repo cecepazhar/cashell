@@ -1560,7 +1560,7 @@ pub fn render_sovereign_token_lines(
     if expr.has_glasses {
         // Pixel Cyber Sunglasses
         // Top brow line of shades
-        if fcy - 1 >= 0 && ((fcy - 1) as usize) < h {
+        if fcy > 0 && ((fcy - 1) as usize) < h {
             let r = (fcy - 1) as usize;
             for dx in -4..=4 {
                 let x = fcx + dx;
@@ -1590,7 +1590,7 @@ pub fn render_sovereign_token_lines(
     } else {
         // Non-glasses expressions: Render Eyebrows & Eyes
         // Eyebrows
-        if fcy - 1 >= 0 && ((fcy - 1) as usize) < h {
+        if fcy > 0 && ((fcy - 1) as usize) < h {
             let r = (fcy - 1) as usize;
             match expr.brow_type {
                 1 => {

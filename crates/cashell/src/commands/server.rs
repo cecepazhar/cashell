@@ -1,6 +1,7 @@
 //! `cashell server` command group — stats, db, firewall, docker, tui, ai.
 
 use crate::config::Config;
+use crate::server::FirewallRunner;
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
@@ -31,12 +32,22 @@ pub enum ServerAction {
         action: DbAction,
     },
 
-    /// Firewall rule via ufw (allow/deny <port>)
+    /// Caddy virtual host reverse proxy & automatic SSL management (SV-01)
+    Domain {
+        #[command(subcommand)]
+        action: DomainAction,
+    },
+
+    /// Firewall rule via ufw (status, allow, deny, delete) (SV-02)
     Firewall {
-        /// Action: allow or deny
-        action: String,
-        /// Port number
-        port: u16,
+        #[command(subcommand)]
+        action: FirewallAction,
+    },
+
+    /// SSH brute-force auto-ban inspection and unban operations (SV-03)
+    Autoban {
+        #[command(subcommand)]
+        action: AutobanAction,
     },
 
     /// Docker container management
@@ -81,6 +92,73 @@ pub enum DbAction {
     },
 }
 
+#[derive(Subcommand, Debug, Clone)]
+pub enum DomainAction {
+    /// Add reverse proxy domain with automated SSL (SV-01)
+    Add {
+        /// Domain name (e.g. app.example.com)
+        domain: String,
+        /// Upstream proxy port
+        #[arg(short, long)]
+        proxy: u16,
+    },
+    /// Remove reverse proxy domain
+    Remove {
+        /// Domain name to remove
+        domain: String,
+    },
+    /// List all configured virtual host domains
+    List,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum FirewallAction {
+    /// Show numbered firewall rules (`ufw status numbered`) (SV-02)
+    List,
+    /// Allow incoming traffic on port (SV-02)
+    Allow {
+        /// Port number
+        port: u16,
+        /// Optional protocol (tcp or udp)
+        #[arg(short, long)]
+        proto: Option<String>,
+    },
+    /// Deny incoming traffic on port (SV-02)
+    Deny {
+        /// Port number
+        port: u16,
+        /// Optional protocol (tcp or udp)
+        #[arg(short, long)]
+        proto: Option<String>,
+    },
+    /// Delete rule by number or port specification (SV-02)
+    Delete {
+        /// Rule number or specification (e.g. '1' or '80')
+        rule: String,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum AutobanAction {
+    /// Inspect recent SSH authentication logs and auto-ban brute-force attackers (SV-03)
+    Check {
+        /// Number of recent log lines to inspect
+        #[arg(short, long, default_value_t = 200)]
+        lines: usize,
+    },
+    /// List currently banned IP addresses (SV-03)
+    List {
+        /// Include historical unbanned records
+        #[arg(short, long)]
+        all: bool,
+    },
+    /// Manually unban an IP address (SV-03)
+    Unban {
+        /// IP address to unban
+        ip: String,
+    },
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 pub fn run(cmd: &ServerCommand, cfg: &Config) -> Result<()> {
@@ -88,7 +166,9 @@ pub fn run(cmd: &ServerCommand, cfg: &Config) -> Result<()> {
         ServerAction::Stats => run_stats(),
         ServerAction::Disk => run_disk_health(),
         ServerAction::Db { action } => run_db(action),
-        ServerAction::Firewall { action, port } => run_firewall(action, *port),
+        ServerAction::Domain { action } => run_domain(action),
+        ServerAction::Firewall { action } => run_firewall(action),
+        ServerAction::Autoban { action } => run_autoban(action),
         ServerAction::Docker { action, name } => run_docker(action, name.as_deref()),
         ServerAction::Tui => {
             println!(
@@ -468,34 +548,150 @@ fn db_restore(name: &str, file: &str) -> Result<()> {
     Ok(())
 }
 
-// ── Firewall ──────────────────────────────────────────────────────────────────
+// ── Domain / Caddy (SV-01) ───────────────────────────────────────────────────
 
-fn run_firewall(action: &str, port: u16) -> Result<()> {
-    let action_lc = action.to_lowercase();
-    if action_lc != "allow" && action_lc != "deny" {
-        bail!("action must be 'allow' or 'deny', got '{action}'");
-    }
-    let port_str = port.to_string();
-    println!(
-        "{} ufw {} {}",
-        "▶ Running:".bold(),
-        action_lc.yellow(),
-        port_str.yellow()
-    );
-    let status = std::process::Command::new("ufw")
-        .args([action_lc.as_str(), &port_str])
-        .status();
-    match status {
-        Ok(s) if s.success() => {
-            println!("{}", format!("✓ ufw {action_lc} {port}").green());
-            Ok(())
+fn run_domain(action: &DomainAction) -> Result<()> {
+    let db = crate::db::Database::open()?;
+    let caddy = crate::server::CaddyManager::default();
+
+    match action {
+        DomainAction::Add { domain, proxy } => {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(caddy.add_domain_route(domain, *proxy))?;
+            db.upsert_server_domain(domain, *proxy, "active")?;
+            println!(
+                "{}",
+                format!(
+                    "✓ Domain {domain} configured → 127.0.0.1:{proxy} (SSL automated by Caddy)"
+                )
+                .green()
+            );
         }
-        Ok(s) => bail!("ufw exited with {:?}", s.code()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            bail!("ufw not found — install with: sudo apt-get install ufw");
+        DomainAction::Remove { domain } => {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(caddy.remove_domain_route(domain))?;
+            let removed = db.remove_server_domain(domain)?;
+            if removed {
+                println!("{}", format!("✓ Domain {domain} removed").green());
+            } else {
+                println!(
+                    "{}",
+                    format!("✓ Domain {domain} removed from Caddy").yellow()
+                );
+            }
         }
-        Err(e) => bail!("failed to run ufw: {e}"),
+        DomainAction::List => {
+            let domains = db.list_server_domains()?;
+            if domains.is_empty() {
+                println!("No virtual host domains configured.");
+            } else {
+                println!("{:<30} {:<12} {:<15}", "DOMAIN", "PROXY PORT", "SSL STATUS");
+                println!("{}", "-".repeat(60));
+                for d in domains {
+                    println!("{:<30} {:<12} {:<15}", d.domain, d.proxy_port, d.ssl_status);
+                }
+            }
+        }
     }
+    Ok(())
+}
+
+// ── Firewall (SV-02) ──────────────────────────────────────────────────────────
+
+fn run_firewall(action: &FirewallAction) -> Result<()> {
+    let fw = crate::server::FirewallManager::default();
+    match action {
+        FirewallAction::List => {
+            let status = fw.list_rules()?;
+            print!("{status}");
+        }
+        FirewallAction::Allow { port, proto } => {
+            let res = fw.allow_port(*port, proto.as_deref())?;
+            println!("{}", format!("✓ {res}").green());
+        }
+        FirewallAction::Deny { port, proto } => {
+            let res = fw.deny_port(*port, proto.as_deref())?;
+            println!("{}", format!("✓ {res}").green());
+        }
+        FirewallAction::Delete { rule } => {
+            let res = fw.delete_rule(rule)?;
+            println!("{}", format!("✓ {res}").green());
+        }
+    }
+    Ok(())
+}
+
+// ── Autoban SSH (SV-03) ───────────────────────────────────────────────────────
+
+fn run_autoban(action: &AutobanAction) -> Result<()> {
+    let db = crate::db::Database::open()?;
+    let fw = crate::server::SystemFirewallRunner;
+    let engine = crate::server::SshAutobanEngine::default();
+
+    match action {
+        AutobanAction::Check { lines } => {
+            println!(
+                "{} inspecting recent {lines} SSH log entries...",
+                "▶".cyan()
+            );
+            let logs = crate::server::SshAutobanEngine::read_recent_logs(*lines)?;
+            if logs.is_empty() {
+                println!("No readable SSH logs found in journalctl or auth.log.");
+            } else {
+                let banned = engine.process_log_content(&logs, &db, &fw)?;
+                if banned.is_empty() {
+                    println!(
+                        "{}",
+                        "✓ No brute-force threshold violations detected.".green()
+                    );
+                } else {
+                    for ip in &banned {
+                        println!("{}", format!("✓ Banned brute-force IP: {ip}").red().bold());
+                    }
+                }
+            }
+            // Check for unban expirations
+            let now = chrono::Utc::now().timestamp();
+            let unbanned = engine.check_and_unban_expired(&db, &fw, now)?;
+            for ip in unbanned {
+                println!("{}", format!("✓ Expired ban removed: {ip}").yellow());
+            }
+        }
+        AutobanAction::List { all } => {
+            let bans = db.list_ssh_bans(!all)?;
+            if bans.is_empty() {
+                println!("No banned IPs found.");
+            } else {
+                println!(
+                    "{:<18} {:<10} {:<22} {:<22} {:<10}",
+                    "IP", "ATTEMPTS", "BANNED AT", "UNBAN AT", "STATUS"
+                );
+                println!("{}", "-".repeat(86));
+                for b in bans {
+                    let banned_dt = chrono::DateTime::from_timestamp(b.banned_at, 0)
+                        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                        .unwrap_or_else(|| b.banned_at.to_string());
+                    let unban_dt = chrono::DateTime::from_timestamp(b.unban_at, 0)
+                        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                        .unwrap_or_else(|| b.unban_at.to_string());
+                    println!(
+                        "{:<18} {:<10} {:<22} {:<22} {:<10}",
+                        b.ip, b.attempts, banned_dt, unban_dt, b.status
+                    );
+                }
+            }
+        }
+        AutobanAction::Unban { ip } => {
+            let res = fw.execute_ufw(&["delete", "deny", "from", ip.trim(), "to", "any"])?;
+            db.update_ssh_ban_status(ip.trim(), "unbanned")?;
+            println!("{}", format!("✓ Unbanned IP {ip}: {res}").green());
+        }
+    }
+    Ok(())
 }
 
 // ── Docker ────────────────────────────────────────────────────────────────────
@@ -564,4 +760,90 @@ fn run_ai(prompt: &[String], cfg: &Config) -> Result<()> {
         println!("{answer}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sv01_domain_action_cli_parse() {
+        use clap::Parser;
+        #[derive(Parser, Debug)]
+        struct TestCli {
+            #[command(subcommand)]
+            action: ServerAction,
+        }
+
+        let cli = TestCli::try_parse_from([
+            "server",
+            "domain",
+            "add",
+            "app.example.com",
+            "--proxy",
+            "3000",
+        ])
+        .unwrap();
+        match cli.action {
+            ServerAction::Domain {
+                action: DomainAction::Add { domain, proxy },
+            } => {
+                assert_eq!(domain, "app.example.com");
+                assert_eq!(proxy, 3000);
+            }
+            _ => panic!("Expected DomainAction::Add"),
+        }
+    }
+
+    #[test]
+    fn test_sv02_firewall_action_cli_parse() {
+        use clap::Parser;
+        #[derive(Parser, Debug)]
+        struct TestCli {
+            #[command(subcommand)]
+            action: ServerAction,
+        }
+
+        let cli1 =
+            TestCli::try_parse_from(["server", "firewall", "allow", "443", "--proto", "tcp"])
+                .unwrap();
+        match cli1.action {
+            ServerAction::Firewall {
+                action: FirewallAction::Allow { port, proto },
+            } => {
+                assert_eq!(port, 443);
+                assert_eq!(proto.as_deref(), Some("tcp"));
+            }
+            _ => panic!("Expected FirewallAction::Allow"),
+        }
+
+        let cli2 = TestCli::try_parse_from(["server", "firewall", "list"]).unwrap();
+        match cli2.action {
+            ServerAction::Firewall {
+                action: FirewallAction::List,
+            } => {}
+            _ => panic!("Expected FirewallAction::List"),
+        }
+    }
+
+    #[test]
+    fn test_sv03_autoban_action_cli_parse() {
+        use clap::Parser;
+        #[derive(Parser, Debug)]
+        struct TestCli {
+            #[command(subcommand)]
+            action: ServerAction,
+        }
+
+        let cli =
+            TestCli::try_parse_from(["server", "autoban", "check", "--lines", "100"]).unwrap();
+        match cli.action {
+            ServerAction::Autoban {
+                action: AutobanAction::Check { lines },
+            } => {
+                assert_eq!(lines, 100);
+            }
+            _ => panic!("Expected AutobanAction::Check"),
+        }
+    }
 }

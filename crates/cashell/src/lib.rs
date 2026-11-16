@@ -20,6 +20,7 @@ pub mod paths;
 pub mod pet;
 pub mod pro;
 pub mod secrets;
+pub mod server;
 pub mod sync;
 pub mod systat;
 pub mod telegram;

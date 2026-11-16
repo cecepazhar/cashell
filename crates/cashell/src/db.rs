@@ -666,6 +666,28 @@ impl Database {
             )?;
         }
 
+        // ── Migration 11: Server domains (SV-01) & SSH brute-force bans (SV-03) ──
+        if !applied.contains(&11) {
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS server_domains (
+                     domain TEXT PRIMARY KEY,
+                     proxy_port INTEGER NOT NULL,
+                     ssl_status TEXT NOT NULL DEFAULT 'active',
+                     created_at INTEGER NOT NULL
+                 );
+                 CREATE TABLE IF NOT EXISTS ssh_bans (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     ip TEXT NOT NULL UNIQUE,
+                     attempts INTEGER NOT NULL,
+                     banned_at INTEGER NOT NULL,
+                     unban_at INTEGER NOT NULL,
+                     status TEXT NOT NULL DEFAULT 'banned'
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_ssh_bans_status ON ssh_bans(status, unban_at);
+                 INSERT OR IGNORE INTO schema_migrations (version) VALUES (11);",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -2763,6 +2785,159 @@ impl Database {
     }
 }
 
+/// Record for a server domain proxy mapping (SV-01).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ServerDomainRecord {
+    pub domain: String,
+    pub proxy_port: u16,
+    pub ssl_status: String,
+    pub created_at: i64,
+}
+
+/// Record for a banned SSH IP (SV-03).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SshBanRecord {
+    pub id: i64,
+    pub ip: String,
+    pub attempts: u32,
+    pub banned_at: i64,
+    pub unban_at: i64,
+    pub status: String,
+}
+
+impl Database {
+    /// Add or update a server domain reverse proxy (SV-01).
+    pub fn upsert_server_domain(
+        &self,
+        domain: &str,
+        proxy_port: u16,
+        ssl_status: &str,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        self.conn.execute(
+            "INSERT INTO server_domains (domain, proxy_port, ssl_status, created_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(domain) DO UPDATE SET proxy_port = ?2, ssl_status = ?3",
+            params![domain, proxy_port as i64, ssl_status, now],
+        )?;
+        Ok(())
+    }
+
+    /// Remove a server domain (SV-01). Returns true if deleted, false if not found.
+    pub fn remove_server_domain(&self, domain: &str) -> Result<bool> {
+        let count = self.conn.execute(
+            "DELETE FROM server_domains WHERE domain = ?1",
+            params![domain],
+        )?;
+        Ok(count > 0)
+    }
+
+    /// List all configured server domains (SV-01).
+    pub fn list_server_domains(&self) -> Result<Vec<ServerDomainRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT domain, proxy_port, ssl_status, created_at FROM server_domains ORDER BY domain ASC",
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut list = Vec::new();
+        while let Some(row) = rows.next()? {
+            let port_i64: i64 = row.get(1)?;
+            list.push(ServerDomainRecord {
+                domain: row.get(0)?,
+                proxy_port: port_i64 as u16,
+                ssl_status: row.get(2)?,
+                created_at: row.get(3)?,
+            });
+        }
+        Ok(list)
+    }
+
+    /// Get a specific server domain.
+    pub fn get_server_domain(&self, domain: &str) -> Result<Option<ServerDomainRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT domain, proxy_port, ssl_status, created_at FROM server_domains WHERE domain = ?1",
+        )?;
+        let mut rows = stmt.query(params![domain])?;
+        if let Some(row) = rows.next()? {
+            let port_i64: i64 = row.get(1)?;
+            Ok(Some(ServerDomainRecord {
+                domain: row.get(0)?,
+                proxy_port: port_i64 as u16,
+                ssl_status: row.get(2)?,
+                created_at: row.get(3)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Record or update an SSH brute-force ban (SV-03).
+    pub fn record_ssh_ban(&self, ip: &str, attempts: u32, duration_secs: i64) -> Result<i64> {
+        let now = chrono::Utc::now().timestamp();
+        let unban_at = now + duration_secs;
+        self.conn.execute(
+            "INSERT INTO ssh_bans (ip, attempts, banned_at, unban_at, status)
+             VALUES (?1, ?2, ?3, ?4, 'banned')
+             ON CONFLICT(ip) DO UPDATE SET attempts = attempts + ?2, banned_at = ?3, unban_at = ?4, status = 'banned'",
+            params![ip, attempts as i64, now, unban_at],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// List SSH bans (active only or all).
+    pub fn list_ssh_bans(&self, active_only: bool) -> Result<Vec<SshBanRecord>> {
+        let sql = if active_only {
+            "SELECT id, ip, attempts, banned_at, unban_at, status FROM ssh_bans WHERE status = 'banned' ORDER BY banned_at DESC"
+        } else {
+            "SELECT id, ip, attempts, banned_at, unban_at, status FROM ssh_bans ORDER BY banned_at DESC"
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let mut rows = stmt.query([])?;
+        let mut list = Vec::new();
+        while let Some(row) = rows.next()? {
+            let attempts_i64: i64 = row.get(2)?;
+            list.push(SshBanRecord {
+                id: row.get(0)?,
+                ip: row.get(1)?,
+                attempts: attempts_i64 as u32,
+                banned_at: row.get(3)?,
+                unban_at: row.get(4)?,
+                status: row.get(5)?,
+            });
+        }
+        Ok(list)
+    }
+
+    /// Find expired bans that need to be unbanned.
+    pub fn get_expired_ssh_bans(&self, now: i64) -> Result<Vec<SshBanRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, ip, attempts, banned_at, unban_at, status FROM ssh_bans WHERE status = 'banned' AND unban_at <= ?1",
+        )?;
+        let mut rows = stmt.query(params![now])?;
+        let mut list = Vec::new();
+        while let Some(row) = rows.next()? {
+            let attempts_i64: i64 = row.get(2)?;
+            list.push(SshBanRecord {
+                id: row.get(0)?,
+                ip: row.get(1)?,
+                attempts: attempts_i64 as u32,
+                banned_at: row.get(3)?,
+                unban_at: row.get(4)?,
+                status: row.get(5)?,
+            });
+        }
+        Ok(list)
+    }
+
+    /// Update status of an SSH ban (e.g. 'unbanned').
+    pub fn update_ssh_ban_status(&self, ip: &str, status: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE ssh_bans SET status = ?1 WHERE ip = ?2",
+            params![status, ip],
+        )?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3120,12 +3295,12 @@ mod tests {
 
         // Verify migrations 1..=4 applied
         let applied = db.applied_migrations()?;
-        assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 
         // Idempotent migration run: running migrations second time must succeed
         db.run_migrations()?;
         let applied2 = db.applied_migrations()?;
-        assert_eq!(applied2, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(applied2, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 
         // Test telegram state and allowlist (T-01, T-02)
         assert_eq!(db.get_telegram_offset()?, 0);
