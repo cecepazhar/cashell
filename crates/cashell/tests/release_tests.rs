@@ -6,8 +6,8 @@ use std::path::Path;
 fn test_rl01_version_synchronization_across_manifests() {
     let pkg_version = env!("CARGO_PKG_VERSION");
     assert_eq!(
-        pkg_version, "2.0.0",
-        "CAShell Cargo package version must be 2.0.0"
+        pkg_version, "2.0.1",
+        "CAShell Cargo package version must be 2.0.1"
     );
 
     let workspace_cargo = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -20,8 +20,8 @@ fn test_rl01_version_synchronization_across_manifests() {
         std::fs::read_to_string(&workspace_cargo).expect("must read workspace Cargo.toml");
 
     assert!(
-        content.contains("version = \"2.0.0\""),
-        "workspace Cargo.toml must declare version = 2.0.0"
+        content.contains("version = \"2.0.1\""),
+        "workspace Cargo.toml must declare version = 2.0.1"
     );
 }
 
@@ -76,12 +76,12 @@ fn test_rl03_readme_free_pro_matrix_and_measured_ram_integrity() {
 
     // Verify Version
     assert!(
-        readme.contains("version-2.0.0"),
-        "README must display version 2.0.0 badge"
+        readme.contains("version-2.0.1"),
+        "README must display version 2.0.1 badge"
     );
     assert!(
-        readme.contains("# CAShell (`cas`) v2.0.0"),
-        "README title must display v2.0.0"
+        readme.contains("# CAShell (`cas`) v2.0.1"),
+        "README title must display v2.0.1"
     );
 
     // Verify Measured RAM from V-02 (no unmeasured claims)
