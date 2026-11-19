@@ -2681,6 +2681,13 @@ impl CockpitApp {
     }
 
     pub fn ingest_snapshot(&mut self, snap: SysSnapshot) {
+        // Fast snapshots (`snapshot_telemetry`) leave slow-probe fields
+        // (Docker, fleet, services, uptime, analytics, GPU) at their defaults.
+        // Carry them over from the previous snapshot so tables don't blank out
+        // every fast tick until the next ~60s slow refresh.
+        let mut snap = snap;
+        snap.merge_slow(std::mem::take(&mut self.latest_snap));
+
         self.cpu_history.push_back(snap.cpu_pct);
         if self.cpu_history.len() > MAX_CPU_SAMPLES {
             self.cpu_history.pop_front();
@@ -7475,7 +7482,7 @@ pub fn get_header_license_badge(palette: &catui::Theme, app: &CockpitApp) -> Spa
 
 fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let palette = cockpit_theme(&app.cfg.output.theme);
-    let title = format!("CAShell v{} · Isometric Cockpit", env!("CARGO_PKG_VERSION"));
+    let title = format!("CAShell v{}", env!("CARGO_PKG_VERSION"));
     let time_str = chrono::Local::now().format("%H:%M:%S").to_string();
 
     // Dynamic L-11 Header badge: FREE / PRO · Lifetime / PRO · N hari (yellow <= 14d, red if expired)
@@ -10240,8 +10247,7 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             .iter()
             .filter(|p| p.is_dirty)
             .count(),
-        turbo_active: app.turbo_profile_active != "ECO_BALANCED"
-            && !app.turbo_profile_active.is_empty(),
+        turbo_active: crate::pet::is_turbo_profile_engaged(&app.turbo_profile_active),
         transient_action: if app.pet_is_stopped {
             Some(crate::pet::PetActionState::Death)
         } else if let Some((st, _)) = app.pet_transient_action {
@@ -11541,7 +11547,7 @@ fn draw_compact_fallback(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let snap = &app.latest_snap;
     let lines = vec![
         Line::from(Span::styled(
-            format!("CAShell v{} · Isometric Cockpit (Compact Mode)", env!("CARGO_PKG_VERSION")),
+            format!("CAShell v{} (Compact Mode)", env!("CARGO_PKG_VERSION")),
             Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
         )),
         Line::from(format!(

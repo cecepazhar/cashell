@@ -52,8 +52,7 @@ pub fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             .iter()
             .filter(|p| p.is_dirty)
             .count(),
-        turbo_active: app.turbo_profile_active != "ECO_BALANCED"
-            && !app.turbo_profile_active.is_empty(),
+        turbo_active: crate::pet::is_turbo_profile_engaged(&app.turbo_profile_active),
         transient_action: if app.is_chat_processing {
             Some(crate::pet::PetActionState::Run)
         } else {

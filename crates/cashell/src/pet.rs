@@ -1234,22 +1234,19 @@ pub const SOVEREIGN_EXPRESSIONS: [MascotExpression; 100] = [
     },
 ];
 
+/// Returns true only for Turbo profiles that keep the machine in a boosted
+/// state. `PURGE_CACHE` is a one-shot action and `BALANCED` / `ECO_BALANCED`
+/// are the resting profiles, so none of those count as "turbo engaged".
+pub fn is_turbo_profile_engaged(profile: &str) -> bool {
+    matches!(profile, "MAX_TURBO" | "BUILD_ACCEL")
+}
+
 /// Deterministically selects the exact expression from the 100 expressions
 /// based on real-time CAShell telemetry.
 pub fn select_expression(telem: &MascotTelemetry) -> &'static MascotExpression {
-    let tick_scaled = match telem.speed.as_str() {
-        "Fast" => telem.tick.saturating_mul(2),
-        "Slow" => telem.tick / 2,
-        "Zen" => telem.tick / 4,
-        _ => telem.tick,
-    };
-
-    // 1. High Priority: Explicit Turbo mode engaged
-    if telem.turbo_active {
-        let v = (tick_scaled / 12) % 10;
-        return &SOVEREIGN_EXPRESSIONS[90 + v];
-    }
-
+    // One stable expression per situation: the face only changes when the
+    // machine or CAShell state changes, never on a timer. Liveliness comes
+    // from the subtle blink in `blink_active` instead.
     if telem.condition_tracking {
         // Sensitivity thresholds
         let (temp_thr, cpu_thr, ram_thr) = match telem.sensitivity.as_str() {
@@ -1258,77 +1255,61 @@ pub fn select_expression(telem: &MascotTelemetry) -> &'static MascotExpression {
             _ => (80.0f32, 85.0f32, 85u8), // Balanced
         };
 
-        // 2. High Priority: Thermal Overheat or CPU Overload
+        // 1. Thermal overheat or CPU overload -> Annoyed Frown
         if telem.cpu_temp_c > temp_thr || telem.cpu_pct > cpu_thr {
-            let v = (tick_scaled / 10) % 10;
-            return &SOVEREIGN_EXPRESSIONS[60 + v];
+            return &SOVEREIGN_EXPRESSIONS[60];
         }
 
-        // 3. High Priority: RAM / Swap pressure
+        // 2. RAM / Swap pressure -> Annoyed Frown
         if telem.ram_pct >= ram_thr || telem.swap_pct >= 80 {
-            let v = (tick_scaled / 14) % 10;
-            return &SOVEREIGN_EXPRESSIONS[60 + v];
+            return &SOVEREIGN_EXPRESSIONS[60];
         }
 
-        // 4. Critical: Node or Container Down (Surprise / Anomaly)
+        // 3. Node, container or uptime monitor down -> Wide Eyes
         if telem.fleet_nodes_down > 0 || telem.containers_down > 0 || telem.uptime_monitors_down > 0
         {
-            let v = (tick_scaled / 16) % 10;
-            return &SOVEREIGN_EXPRESSIONS[70 + v];
+            return &SOVEREIGN_EXPRESSIONS[70];
         }
     }
 
-    // 5. User Interaction Actions
+    // 4. Explicit Turbo mode engaged (after health alerts) -> Matrix Code Eyes
+    if telem.turbo_active {
+        return &SOVEREIGN_EXPRESSIONS[90];
+    }
+
+    // 5. User Interaction Actions (transient, set by real events)
     if let Some(action) = telem.transient_action {
         match action {
-            PetActionState::Attack | PetActionState::Dash => {
-                let v = (tick_scaled / 6) % 10;
-                return &SOVEREIGN_EXPRESSIONS[90 + v]; // Turbo / Cyber
-            }
-            PetActionState::Jump => {
-                let v = (tick_scaled / 8) % 10;
-                return &SOVEREIGN_EXPRESSIONS[40 + v]; // Tongue Blep
-            }
-            PetActionState::Run => {
-                let v = (tick_scaled / 10) % 10;
-                return &SOVEREIGN_EXPRESSIONS[10 + v]; // Wink
-            }
-            PetActionState::Death => {
-                let v = (tick_scaled / 16) % 10;
-                return &SOVEREIGN_EXPRESSIONS[80 + v]; // Zen Sleep
-            }
+            PetActionState::Attack | PetActionState::Dash => return &SOVEREIGN_EXPRESSIONS[90],
+            PetActionState::Jump => return &SOVEREIGN_EXPRESSIONS[40],
+            PetActionState::Run => return &SOVEREIGN_EXPRESSIONS[10],
+            PetActionState::Death => return &SOVEREIGN_EXPRESSIONS[80],
             _ => {}
         }
     }
 
     if telem.condition_tracking {
-        // 6. Alert state: Uncommitted git or medium CPU (50..80%)
+        // 6. Uncommitted git work or medium CPU load -> Watchful Gaze
         if telem.git_dirty_count > 0 || telem.cpu_pct > 50.0 {
-            let v = (tick_scaled / 14) % 10;
-            return &SOVEREIGN_EXPRESSIONS[50 + v];
+            return &SOVEREIGN_EXPRESSIONS[50];
         }
 
-        // 7. Idle / Night / Very low CPU
-        if telem.cpu_pct < 8.0 && (tick_scaled / 24) % 5 == 4 {
-            let v = (tick_scaled / 20) % 10;
-            return &SOVEREIGN_EXPRESSIONS[80 + v];
+        // 7. Machine idle -> Slumber Slits
+        if telem.cpu_pct < 5.0 {
+            return &SOVEREIGN_EXPRESSIONS[80];
         }
     }
 
-    // 8. High XP Celebration
-    if telem.xp_level >= 3 && (tick_scaled / 30) % 4 == 3 {
-        let v = (tick_scaled / 12) % 10;
-        return &SOVEREIGN_EXPRESSIONS[30 + v];
-    }
+    // 8. Nominal -> Classic Shades
+    &SOVEREIGN_EXPRESSIONS[0]
+}
 
-    // 9. Standard nominal: Cycle between Shades (0..9), Wink (10..19), Grin (20..29)
-    let cycle = (tick_scaled / 32) % 3;
-    let v = (tick_scaled / 8) % 10;
-    match cycle {
-        0 => &SOVEREIGN_EXPRESSIONS[v],      // Shades
-        1 => &SOVEREIGN_EXPRESSIONS[10 + v], // Wink
-        _ => &SOVEREIGN_EXPRESSIONS[20 + v], // Grin
-    }
+/// Subtle blink: eyes close for one frame roughly every 4–5 seconds
+/// (cockpit loop ticks ~100ms). Sleeping or winking faces don't blink.
+pub fn blink_active(tick: usize, expr: &MascotExpression) -> bool {
+    const BLINK_PERIOD_TICKS: usize = 45;
+    let blinkable = expr.has_glasses || matches!(expr.eye_type, 3 | 4 | 5 | 6 | 8 | 9);
+    blinkable && tick % BLINK_PERIOD_TICKS == BLINK_PERIOD_TICKS - 1
 }
 
 // ── 3D Extruded Isometric Sovereign Token Renderer ───────────────────────────
@@ -1345,6 +1326,7 @@ pub fn render_sovereign_token_lines(
     matrix_rain: bool,
 ) -> (Vec<Line<'static>>, &'static MascotExpression) {
     let expr = select_expression(telem);
+    let blink = blink_active(telem.tick, expr);
 
     let w = width.max(12);
     let h = height.max(6);
@@ -1421,23 +1403,29 @@ pub fn render_sovereign_token_lines(
     };
 
     // 3. Coin Geometry & 3D Extrusion with Scale Control
-    let cx = (w as f64) / 2.0;
-    let cy = ((h as f64) / 2.0 - 1.2 + (bob as f64)).max(2.0);
-
-    let (base_rx, base_ry) = match telem.render_scale.as_str() {
-        "Large" => (
-            ((w as f64) / 2.0 - 1.2).max(4.0),
-            ((h as f64) / 2.8).max(2.0),
-        ),
-        "Compact" => (((w as f64) / 2.8).max(3.5), ((h as f64) / 4.2).max(1.5)),
-        _ => (
-            ((w as f64) / 2.0 - 2.8).max(4.0),
-            ((h as f64) / 3.4).max(1.8),
-        ), // "Auto-Fit" / "Standard"
+    // Terminal cells are roughly twice as tall as they are wide, so a coin
+    // seen slightly from above needs rx ≈ 2.4 × ry to read as round instead
+    // of a flat pancake stretched across the whole panel.
+    const COIN_ASPECT: f64 = 2.4;
+    // Slightly inside the unit ellipse so the exact top tip isn't a lone pixel.
+    const DISC_EDGE: f64 = 0.97;
+    let thickness: i32 = if h >= 12 { 2 } else { 1 };
+    let (ry_scale, aspect) = match telem.render_scale.as_str() {
+        "Large" => (1.0f64, COIN_ASPECT * 1.15),
+        "Compact" => (0.8f64, COIN_ASPECT),
+        _ => (1.0f64, COIN_ASPECT), // "Auto-Fit" / "Standard"
     };
-    let rx = (base_rx * spin_mult * scale_mult).max(2.5);
-    let ry = (base_ry * scale_mult).max(1.5);
-    let thickness = (h / 4).clamp(2, 4) as i32;
+    let ry_fit = ((h as f64) - 1.0 - thickness as f64) / 2.0;
+    let ry = (ry_fit * ry_scale * scale_mult).max(1.5);
+    let rx = ((ry * aspect).min((w as f64) / 2.0 - 1.5) * spin_mult).max(2.5);
+
+    let cx = (w as f64) / 2.0;
+    // Vertically center the disc + extrusion, then apply bobbing within bounds.
+    let extent = 2.0 * ry + 1.0 + thickness as f64;
+    let top = (((h as f64) - extent) / 2.0).max(0.0);
+    let cy_min = ry;
+    let cy_max = ((h as f64) - 1.0 - thickness as f64 - ry).max(cy_min);
+    let cy = (top + ry + bob as f64).clamp(cy_min, cy_max);
 
     // 4. Color Scheme Configuration
     let (neon_bright, neon_mid, neon_dim) = match telem.color_scheme.as_str() {
@@ -1503,7 +1491,8 @@ pub fn render_sovereign_token_lines(
             let dx = (x as f64 - cx) / rx;
             if dx.abs() <= 1.0 {
                 let dy = (1.0 - dx * dx).max(0.0).sqrt() * ry;
-                let y_bot = (cy_ext + dy).round() as i32;
+                // floor(+0.3) instead of round() avoids a lone pixel under the coin tip.
+                let y_bot = (cy_ext + dy + 0.3).floor() as i32;
                 if y_bot >= 0 && (y_bot as usize) < h {
                     let y_idx = y_bot as usize;
                     char_grid[y_idx][x] = if t_step == thickness { '█' } else { '▓' };
@@ -1537,8 +1526,22 @@ pub fn render_sovereign_token_lines(
             let dx = (x as f64 - cx) / rx;
             let dy = (y as f64 - cy) / ry;
             let val = dx * dx + dy * dy;
-            if val <= 1.0 {
-                if val >= 0.72 {
+            if val <= DISC_EDGE {
+                // Continuous outline: a cell is rim when a neighbour lies
+                // outside the disc (2 cells sideways to match cell aspect).
+                let outside = |nx: f64, ny: f64| {
+                    let ddx = (nx - cx) / rx;
+                    let ddy = (ny - cy) / ry;
+                    ddx * ddx + ddy * ddy > DISC_EDGE
+                };
+                let (xf, yf) = (x as f64, y as f64);
+                let is_rim = outside(xf - 1.0, yf)
+                    || outside(xf + 1.0, yf)
+                    || outside(xf - 2.0, yf)
+                    || outside(xf + 2.0, yf)
+                    || outside(xf, yf - 1.0)
+                    || outside(xf, yf + 1.0);
+                if is_rim {
                     // Outer rim of the top disc
                     char_grid[y][x] = '█';
                     fg_grid[y][x] = neon_bright;
@@ -1579,6 +1582,8 @@ pub fn render_sovereign_token_lines(
                 if x >= 0 && (x as usize) < w {
                     if dx == 0 {
                         char_grid[r][x as usize] = '▀'; // bridge
+                    } else if blink {
+                        char_grid[r][x as usize] = '▄'; // lenses dip for one frame (blink)
                     } else {
                         char_grid[r][x as usize] = '█'; // solid dark neon lenses
                     }
@@ -1643,6 +1648,7 @@ pub fn render_sovereign_token_lines(
             let rx_e = fcx + 3;
 
             let (l_ch, r_ch) = match expr.eye_type {
+                _ if blink => ('─', '─'), // Subtle blink
                 1 => ('─', '█'), // Wink Left
                 2 => ('█', '─'), // Wink Right
                 3 => ('█', '█'), // Normal open eyes
@@ -1970,6 +1976,86 @@ mod tests {
     }
 
     #[test]
+    fn test_turbo_profile_engaged_only_for_boost_profiles() {
+        assert!(is_turbo_profile_engaged("MAX_TURBO"));
+        assert!(is_turbo_profile_engaged("BUILD_ACCEL"));
+        // Initial cockpit state is "BALANCED"; it must not lock the avatar into turbo.
+        assert!(!is_turbo_profile_engaged("BALANCED"));
+        assert!(!is_turbo_profile_engaged("ECO_BALANCED"));
+        assert!(!is_turbo_profile_engaged("PURGE_CACHE"));
+        assert!(!is_turbo_profile_engaged(""));
+    }
+
+    #[test]
+    fn test_expression_is_stable_across_ticks_for_same_state() {
+        for cpu in [2.0f32, 30.0, 60.0, 95.0] {
+            let at = |tick: usize| {
+                select_expression(&MascotTelemetry {
+                    cpu_pct: cpu,
+                    tick,
+                    ..Default::default()
+                })
+                .id
+            };
+            let first = at(0);
+            assert!((1..2000).all(|t| at(t) == first), "cpu={cpu} drifted");
+        }
+    }
+
+    #[test]
+    fn test_token_is_round_not_flat_in_dashboard_panel() {
+        // Dashboard mascot screen is ~52x8 cells; the coin used to span ~48x8.
+        let telem = MascotTelemetry {
+            cpu_pct: 20.0,
+            animation_style: "Stationary".to_string(),
+            ..Default::default()
+        };
+        let (lines, _) = render_sovereign_token_lines(52, 8, &telem, false);
+        let rows: Vec<String> = lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        let used: Vec<(usize, usize)> = rows
+            .iter()
+            .filter_map(|r| {
+                let chars: Vec<char> = r.chars().collect();
+                let first = chars.iter().position(|c| *c != ' ')?;
+                let last = chars.iter().rposition(|c| *c != ' ')?;
+                Some((first, last))
+            })
+            .collect();
+        let width = used.iter().map(|(_, l)| *l).max().unwrap_or(0)
+            - used.iter().map(|(f, _)| *f).min().unwrap_or(0)
+            + 1;
+        let height = used.len();
+        assert!(height >= 6, "coin too short: {height} rows");
+        // ~2:1 cell aspect → width ≤ 3 × height reads as round.
+        assert!(width <= 3 * height, "coin too flat: {width}x{height}");
+    }
+
+    #[test]
+    fn test_blink_is_brief_and_periodic() {
+        let shades = &SOVEREIGN_EXPRESSIONS[0];
+        let blinks = (0..450).filter(|t| blink_active(*t, shades)).count();
+        assert_eq!(blinks, 10);
+        // Sleeping face never blinks.
+        let sleep = &SOVEREIGN_EXPRESSIONS[80];
+        assert!((0..450).all(|t| !blink_active(t, sleep)));
+    }
+
+    #[test]
+    fn test_thermal_alert_outranks_turbo_expression() {
+        let telem = MascotTelemetry {
+            turbo_active: true,
+            cpu_temp_c: 90.0,
+            cpu_pct: 83.0,
+            tick: 0,
+            ..Default::default()
+        };
+        assert!((60..=69).contains(&select_expression(&telem).id));
+    }
+
+    #[test]
     fn test_expression_selection_responsiveness() {
         // 1. Turbo mode active -> returns CYBER archetype (90..99)
         let turbo_telem = MascotTelemetry {
@@ -2020,3 +2106,4 @@ mod tests {
         assert_eq!(clean_lines.len(), 12);
     }
 }
+

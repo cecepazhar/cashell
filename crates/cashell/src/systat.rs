@@ -2653,6 +2653,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_merge_slow_carries_slow_fields_into_fast_snapshot() {
+        let prev = SysSnapshot {
+            gpu_label: "Intel Iris".to_string(),
+            fleet_nodes: vec![FleetNodeResume {
+                ip: "127.0.0.1".to_string(),
+                ..Default::default()
+            }],
+            service_health: vec![DaemonHealthInfo::default()],
+            ..Default::default()
+        };
+        let mut fast = SysSnapshot {
+            cpu_pct: 42.0,
+            ram_used_mb: 512,
+            ram_total_mb: 1024,
+            gpu_label: "No GPU".to_string(),
+            ..Default::default()
+        };
+        fast.merge_slow(prev);
+
+        assert_eq!(fast.cpu_pct, 42.0);
+        assert_eq!(fast.gpu_label, "Intel Iris");
+        assert_eq!(fast.service_health.len(), 1);
+        let local = fast.fleet_nodes.first().map(|n| (n.cpu_pct, n.ram_pct));
+        assert_eq!(local, Some((Some(42.0), Some(50))));
+    }
+
+    #[test]
     fn test_assign_role_classification() {
         assert_eq!(
             assign_role(
