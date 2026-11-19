@@ -227,14 +227,20 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 /// Verify an activation token signed with HMAC-SHA256 using the
-/// `JWT_SECRET`-equivalent key. The token format is:
-/// `{payload}.{signature_hex}` where `signature_hex` is the hex-encoded
-/// HMAC-SHA256 of `payload` keyed with `LICENSE_HMAC_KEY`.
+/// `JWT_SECRET`-equivalent key.
+///
+/// GCC token format (since L-03):
+/// ```text
+/// {base64url("key:device_id:sku:activated_at_unix")}.{hmac_sha256_hex}
+/// ```
+/// where `hmac_sha256_hex` is the hex-encoded HMAC-SHA256 of the raw
+/// (non-base64) payload string, keyed with `JWT_SECRET`.
 ///
 /// Returns `true` when the token verifies, `false` otherwise.
 pub fn verify_activation_token(token: &str, key: &str, device_id: &str) -> bool {
-    // Token format: `{key}.{device_id}.{sig_hex}`
-    // Split from the right to handle the two dots in the payload.
+    use base64::Engine;
+
+    // Token format: `{base64url_payload}.{sig_hex}`
     let dot_idx = match token.rfind('.') {
         Some(i) => i,
         None => return false,
@@ -242,11 +248,23 @@ pub fn verify_activation_token(token: &str, key: &str, device_id: &str) -> bool 
     if dot_idx == 0 {
         return false;
     }
-    let payload = &token[..dot_idx];
+    let payload_b64 = &token[..dot_idx];
     let sig_hex = &token[dot_idx + 1..];
 
-    let expected_payload = format!("{key}.{device_id}");
-    if payload != expected_payload.as_str() {
+    // Decode base64url payload → raw "key:device_id:sku:activated_at_unix"
+    let payload_bytes: Vec<u8> = match base64::engine::general_purpose::URL_SAFE
+        .decode(payload_b64) {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    let payload_str = match std::str::from_utf8(&payload_bytes) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    // Verify payload starts with "key:device_id:" (4-field format)
+    let expected_prefix = format!("{key}:{device_id}:");
+    if !payload_str.starts_with(&expected_prefix) {
         return false;
     }
 
@@ -256,7 +274,7 @@ pub fn verify_activation_token(token: &str, key: &str, device_id: &str) -> bool 
         .unwrap_or_else(|| "cashell-license-hmac-v1".to_string());
 
     let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC key valid");
-    mac.update(payload.as_bytes());
+    mac.update(payload_str.as_bytes());
     let expected_sig = mac.finalize().into_bytes();
     let expected_hex = hex_encode(&expected_sig);
 
@@ -575,7 +593,18 @@ mod tests {
         );
     }
 
-    // ── HMAC token verification tests ──────────────────────────────────────
+    // ── HMAC token verification tests (GCC base64url 4-field format) ─────
+
+    /// Build a GCC-format activation token: base64url("key:dev:sku:ts") + "." + hex(HMAC-SHA256(secret, raw_payload))
+    fn make_gcc_token(key: &str, dev: &str, sku: &str, ts: i64, secret: &str) -> String {
+        use base64::Engine;
+        let raw = format!("{key}:{dev}:{sku}:{ts}");
+        let payload_b64 = base64::engine::general_purpose::URL_SAFE.encode(raw.as_bytes());
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC key valid");
+        mac.update(raw.as_bytes());
+        let sig = mac.finalize().into_bytes();
+        format!("{payload_b64}.{}", hex_encode(&sig))
+    }
 
     #[test]
     fn test_activation_token_valid() {
@@ -583,22 +612,14 @@ mod tests {
         let dev = "dev-1";
         let secret = "cashell-license-hmac-v1";
 
-        let payload = format!("{key}.{dev}");
-        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC key valid");
-        mac.update(payload.as_bytes());
-        let sig = mac.finalize().into_bytes();
-        let sig_hex = hex_encode(&sig);
-        let token = format!("{payload}.{sig_hex}");
+        let token = make_gcc_token(key, dev, "SW-CASHLL-PRO", 1795059027, secret);
 
-        // Set JWT_SECRET so verify_activation_token uses the exact secret we
-        // signed with. This is safe because no other test in this module
-        // reads or writes JWT_SECRET.
         std::env::set_var("JWT_SECRET", secret);
         let valid = verify_activation_token(&token, key, dev);
         std::env::remove_var("JWT_SECRET");
         assert!(
             valid,
-            "valid token must verify when JWT_SECRET matches the signing key"
+            "valid GCC-format token must verify when JWT_SECRET matches the signing key"
         );
     }
 
@@ -606,22 +627,49 @@ mod tests {
     fn test_activation_token_invalid_sig() {
         let key = "CASH99-ABCDEF-2";
         let dev = "dev-1";
-        // Token with zeroed signature — payload is correct, sig is wrong.
-        let token =
-            format!("{key}.{dev}.0000000000000000000000000000000000000000000000000000000000000000");
+        let secret = "cashell-license-hmac-v1";
+
+        let token = make_gcc_token(key, dev, "SW-CASHLL-PRO", 1795059027, secret);
+        // Corrupt the signature
+        let corrupted = format!("{}0", token);
+        let _ = corrupted; // just to show we built it
+        let mut chars: Vec<char> = token.chars().collect();
+        // Flip one hex char in the signature portion
+        let dot = token.rfind('.').unwrap();
+        let sig_start = dot + 1;
+        chars[sig_start] = if chars[sig_start] == 'a' { 'b' } else { 'a' };
+        let bad_token = chars.into_iter().collect::<String>();
+
+        std::env::set_var("JWT_SECRET", secret);
         assert!(
-            !verify_activation_token(&token, key, dev),
-            "zeroed signature must fail"
+            !verify_activation_token(&bad_token, key, dev),
+            "corrupted signature must fail"
         );
+        std::env::remove_var("JWT_SECRET");
+    }
+
+    #[test]
+    fn test_activation_token_wrong_device() {
+        let key = "CASH99-ABCDEF-2";
+        let secret = "cashell-license-hmac-v1";
+
+        let token = make_gcc_token(key, "dev-1", "SW-CASHLL-PRO", 1795059027, secret);
+
+        std::env::set_var("JWT_SECRET", secret);
+        assert!(
+            !verify_activation_token(&token, key, "dev-999"),
+            "token for dev-1 must fail when verifying against dev-999"
+        );
+        std::env::remove_var("JWT_SECRET");
     }
 
     #[test]
     fn test_activation_token_malformed() {
-        // No dot at all → rfind returns None → dot_idx=0 → payload="" → mismatch
+        // No dot at all
         assert!(!verify_activation_token("garbage", "key", "dev"));
-        // Empty string → dot_idx=0, payload="", sig="" → payload mismatch
+        // Empty string
         assert!(!verify_activation_token("", "key", "dev"));
-        // Only one dot → payload="key", sig="" → expected_payload mismatch
-        assert!(!verify_activation_token("key.dev", "key", "dev"));
+        // Invalid base64url
+        assert!(!verify_activation_token("!!!notbase64.sig", "key", "dev"));
     }
 }
