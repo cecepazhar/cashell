@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 // ── GCC Ed25519 public key ──────────────────────────────────────────────────
 /// GCC server's Ed25519 public key, hex-encoded (32 bytes = 64 hex characters).
 pub const GCC_ED25519_PUBLIC_KEY: &str =
-    "4aed277ac7b92ee58778d3c5233ebda741c652c753e3dae7127f367dbb58d92f";
+    "ac5b9954c8dc7648131e9682a90999de4d38a15deb00095eee4f6be9521e1dcf";
 
 /// Standard token lifetimes:
 /// - JWT access token: 15 minutes (900 seconds)
@@ -447,7 +447,7 @@ impl SessionManager {
 
 /// Verifies Ed25519 signatures produced by the GCC server.
 /// Default initialized with GCC public key:
-/// `4aed277ac7b92ee58778d3c5233ebda741c652c753e3dae7127f367dbb58d92f`
+/// `ac5b9954c8dc7648131e9682a90999de4d38a15deb00095eee4f6be9521e1dcf`
 #[derive(Debug, Clone)]
 pub struct Ed25519Verifier {
     key: VerifyingKey,

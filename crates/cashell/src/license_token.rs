@@ -60,7 +60,7 @@ pub enum TokenError {
 
 /// Default V1 public key (hex). Override at build time with `CA_LICENSE_PUBKEY_V1`.
 /// Must match the public key GCC logs at startup for `GCC_LICENSE_SEED_HEX`.
-const DEFAULT_PUBKEY_V1: &str = "4aed277ac7b92ee58778d3c5233ebda741c652c753e3dae7127f367dbb58d92f";
+const DEFAULT_PUBKEY_V1: &str = "ac5b9954c8dc7648131e9682a90999de4d38a15deb00095eee4f6be9521e1dcf";
 
 /// Public key for `version`, compiled in. Old versions stay listed after a rotation.
 pub fn public_key(version: u32) -> Option<VerifyingKey> {
