@@ -51,6 +51,12 @@ pub struct LicenseFile {
     /// Set when the local or GCC status reports the subscription expired (L-08).
     #[serde(default)]
     pub expired: bool,
+    /// GCC License v2 Ed25519 token (the only thing that grants Pro). `None` = Free.
+    #[serde(default)]
+    pub signed_token: Option<crate::license_token::SignedToken>,
+    /// Latest wall clock this licence was checked at (clock-rollback ratchet).
+    #[serde(default)]
+    pub last_seen_unix: i64,
 }
 
 fn default_schema_v2() -> u32 {
@@ -88,7 +94,6 @@ pub fn save_license(license: &LicenseFile) -> Result<PathBuf> {
 /// Returns `Ok(None)` when:
 /// - no file exists
 /// - the file is schema v1 (legacy) — prints "needs re-activation" message
-/// - the file is schema v2 but the `activation_token` fails HMAC verification
 /// - the file cannot be parsed
 pub fn load_license() -> Result<Option<LicenseFile>> {
     let p = license_path()?;
@@ -107,18 +112,7 @@ pub fn load_license() -> Result<Option<LicenseFile>> {
         return Ok(None);
     }
 
-    // Verify activation token when present (V-04 L-03).
-    if let Some(token) = &lic.activation_token {
-        let device = crate::license_gcc::device_id();
-        if !crate::license_gcc::verify_activation_token(token, &lic.key, &device) {
-            eprintln!(
-                "warning: activation token HMAC-SHA256 verification failed for {} — treating as unlicensed; please re-activate",
-                crate::license_gcc::mask_key(&lic.key)
-            );
-            return Ok(None);
-        }
-    }
-
+    // Entitlement is decided by `is_license_valid` (Ed25519 signed_token), not at load time.
     Ok(Some(lic))
 }
 
@@ -131,35 +125,23 @@ pub fn remove_license() -> Result<()> {
     Ok(())
 }
 
-/// Returns true when the license is valid right now.
-/// Lifetime tier (99) or `expires_at = None` never expires;
-/// others are checked against the current timestamp.
+/// Returns true when this device is entitled to Pro right now.
 ///
-/// `revoked` or `expired` flags (set by L-08 periodic verify) force
-/// the license to be invalid even when the raw dates would say "valid".
+/// GCC License v2: only a valid Ed25519 `signed_token` for this product and device grants Pro.
+/// `tier`, `expires_at` and `product` in the file are display-only and editable by the user.
+/// `revoked` / `expired` flags (set by periodic verify) can only take Pro away.
 pub fn is_license_valid(lic: &LicenseFile) -> bool {
     if lic.revoked || lic.expired {
         return false;
     }
-    if lic.tier == "99" {
-        return true;
-    }
-    match &lic.expires_at {
-        Some(ts_str) => {
-            // Accept both ISO-8601 and unix timestamp strings.
-            let now = chrono::Utc::now();
-            if let Ok(ts) = ts_str.parse::<i64>() {
-                now.timestamp() <= ts
-            } else if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts_str) {
-                now <= dt.with_timezone(&chrono::Utc)
-            } else {
-                // Unparseable → treat as valid (fail-open for offline use).
-                true
-            }
-        }
-        // None = lifetime
-        None => true,
-    }
+    crate::license_token::verify(
+        lic.signed_token.as_ref(),
+        crate::license_token::public_key,
+        &crate::license_gcc::device_id(),
+        lic.last_seen_unix,
+        chrono::Utc::now().timestamp(),
+    )
+    .is_ok()
 }
 
 // ── periodic verification (L-08) ───────────────────────────────────────────
@@ -168,7 +150,7 @@ pub fn is_license_valid(lic: &LicenseFile) -> bool {
 pub const PERIODIC_VERIFY_DAYS: i64 = 7;
 
 /// Days of offline grace after a failed (network) verification.
-pub const OFFLINE_GRACE_DAYS: i64 = 30;
+pub const OFFLINE_GRACE_DAYS: i64 = 14;
 
 pub fn parse_ts_unix(s: &str) -> Option<i64> {
     if s.is_empty() {
@@ -193,84 +175,62 @@ pub fn should_verify_periodically(lic: &LicenseFile) -> bool {
     now - last_ts > PERIODIC_VERIFY_DAYS * 86_400
 }
 
-/// Verify the license against GCC, update `last_verified_at`, and persist
-/// the license file back to disk (L-08).
+/// Verify the license against GCC and persist the result (GCC License v2).
 ///
-/// - Success: `last_verified_at` set to now, `offline_grace_until` cleared.
-/// - [`crate::license_gcc::LicenseError::Network`] (offline): extend the
-///   offline grace to `last_verified_at + 30 days`, capped at `expires_at`
-///   when one exists. No error returned — offline use stays permitted.
-/// - [`crate::license_gcc::LicenseError::Revoked`]: mark the license
-///   revoked (Pro off), keep the file on disk.
-/// - [`crate::license_gcc::LicenseError::Expired`]: mark the license
-///   expired, keep the file on disk.
+/// - Valid on this device: store the fresh `signed_token` (new 14-day window).
+/// - Not valid / device removed: mark revoked or expired and drop the token (Free now).
+/// - [`crate::license_gcc::LicenseError::Network`] (offline): leave the file as is; the stored
+///   token keeps working until its own `exp`. No error returned.
 pub fn verify_license(
     license: &LicenseFile,
     base_url: &str,
 ) -> std::result::Result<(), crate::license_gcc::LicenseError> {
     use crate::license_gcc::{self, LicenseError};
 
+    let persist = |lic: &LicenseFile| {
+        save_license(lic).map(|_| ()).map_err(|_| {
+            LicenseError::InvalidResponse("failed to persist license".into())
+        })
+    };
     let dev_id = license_gcc::device_id();
-    let now_iso = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let now = chrono::Utc::now();
+    let mut lic = license.clone();
+    lic.last_seen_unix = lic.last_seen_unix.max(now.timestamp());
 
     match license_gcc::verify(base_url, &license.key, &dev_id) {
-        Ok(resp) => {
-            let mut lic = license.clone();
-            lic.last_verified_at = now_iso;
+        Ok(resp) if resp.valid && resp.device_registered => {
+            lic.last_verified_at = now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
             lic.offline_grace_until = None;
-            // GCC is authoritative for expiration when it reports one.
+            lic.revoked = false;
+            lic.expired = false;
             if let Some(exp) = resp.expires_at {
                 lic.expires_at = Some(exp);
             }
-            save_license(&lic).map_err(|_| {
-                crate::license_gcc::LicenseError::InvalidResponse(
-                    "failed to persist license".into(),
-                )
-            })?;
-            Ok(())
-        }
-        Err(LicenseError::Network(_)) => {
-            // Offline grace: keep the license usable until
-            // last_verified_at + 30 days, capped at expires_at.
-            let mut lic = license.clone();
-            let last_ts = parse_ts_unix(&license.last_verified_at)
-                .unwrap_or_else(|| chrono::Utc::now().timestamp());
-            let grace_ts = last_ts + OFFLINE_GRACE_DAYS * 86_400;
-            let final_ts = match parse_ts_unix(license.expires_at.as_deref().unwrap_or("")) {
-                Some(exp_ts) if exp_ts < grace_ts => exp_ts,
-                _ => grace_ts,
-            };
-            if let Some(dt) = chrono::DateTime::from_timestamp(final_ts, 0) {
-                lic.offline_grace_until =
-                    Some(dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+            if resp.signed_token.is_some() {
+                lic.signed_token = resp.signed_token;
             }
-            save_license(&lic).map_err(|_| {
-                crate::license_gcc::LicenseError::InvalidResponse(
-                    "failed to persist license".into(),
-                )
-            })?;
-            Ok(())
+            persist(&lic)
         }
-        Err(LicenseError::Revoked) => {
-            // Revert to Free: flag the license, do NOT delete the file.
-            let mut lic = license.clone();
+        Ok(resp) => {
+            lic.last_verified_at = now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+            if resp.status == "expired" {
+                lic.expired = true;
+            } else {
+                lic.revoked = true;
+            }
+            lic.signed_token = None;
+            persist(&lic)
+        }
+        Err(LicenseError::Network(_)) => persist(&lic),
+        Err(LicenseError::Revoked) | Err(LicenseError::NotFound) => {
             lic.revoked = true;
-            save_license(&lic).map_err(|_| {
-                crate::license_gcc::LicenseError::InvalidResponse(
-                    "failed to persist license".into(),
-                )
-            })?;
-            Ok(())
+            lic.signed_token = None;
+            persist(&lic)
         }
         Err(LicenseError::Expired) => {
-            let mut lic = license.clone();
             lic.expired = true;
-            save_license(&lic).map_err(|_| {
-                crate::license_gcc::LicenseError::InvalidResponse(
-                    "failed to persist license".into(),
-                )
-            })?;
-            Ok(())
+            lic.signed_token = None;
+            persist(&lic)
         }
         Err(e) => Err(e),
     }
@@ -314,6 +274,8 @@ mod tests {
             offline_grace_until: None,
             revoked: false,
             expired: false,
+            signed_token: None,
+            last_seen_unix: 0,
         }
     }
 
@@ -384,18 +346,15 @@ mod tests {
             "schema v1 must be treated as needs-re-activation (None)"
         );
 
-        // 6. Tampered activation_token → load returns None
+        // 6. Tampered file (no valid signed token) still loads, but never grants Pro.
         let tampered = LicenseFile {
             activation_token: Some("fake-tampered-token".to_string()),
             ..sample_license()
         };
         let data = serde_json::to_string_pretty(&tampered).unwrap();
         std::fs::write(&p, data).expect("write tampered file");
-        let result = load_license().expect("load should not error");
-        assert!(
-            result.is_none(),
-            "tampered activation_token must cause load to return None"
-        );
+        let result = load_license().expect("load should not error").expect("file loads");
+        assert!(!is_license_valid(&result), "tampered file must not be Pro");
 
         // 7. Valid v2 without token → load succeeds
         let data = serde_json::to_string_pretty(&sample_license()).unwrap();
@@ -410,32 +369,29 @@ mod tests {
         let _ = remove_license();
     }
 
+    /// GCC License v2 regression: tier "99" / lifetime in the JSON file means nothing without
+    /// a valid signed token (this used to grant permanent Pro to anyone editing license.json).
     #[test]
-    fn test_is_license_valid_lifetime() {
+    fn test_tier_99_without_signed_token_is_not_pro() {
         let mut lic = sample_license();
         lic.tier = "99".to_string();
         lic.expires_at = None;
-        assert!(is_license_valid(&lic));
-
-        // Even with a past expires_at, tier 99 is always valid.
-        lic.expires_at = Some("0".to_string());
-        assert!(is_license_valid(&lic), "tier 99 must always be valid");
+        assert!(!is_license_valid(&lic), "unsigned lifetime file must not be Pro");
     }
 
     #[test]
-    fn test_is_license_valid_expires_at() {
+    fn test_signed_token_grants_pro_until_exp() {
+        use crate::license_token::test_support;
         let mut lic = sample_license();
-        lic.tier = "12".to_string();
+        lic.signed_token = Some(test_support::valid_token());
+        assert!(is_license_valid(&lic), "valid signed token must be Pro");
 
-        // Future timestamp → valid.
-        let future_ts = (chrono::Utc::now().timestamp() + 3600).to_string();
-        lic.expires_at = Some(future_ts.clone());
-        assert!(is_license_valid(&lic), "future expires_at must be valid");
+        let dev = crate::license_gcc::device_id();
+        lic.signed_token = Some(test_support::token(&["CASHELL"], &dev, chrono::Utc::now().timestamp() - 1));
+        assert!(!is_license_valid(&lic), "token past exp must not be Pro");
 
-        // Past timestamp → invalid.
-        let past_ts = (chrono::Utc::now().timestamp() - 3600).to_string();
-        lic.expires_at = Some(past_ts.clone());
-        assert!(!is_license_valid(&lic), "past expires_at must be invalid");
+        lic.signed_token = Some(test_support::token(&["CATERM"], &dev, chrono::Utc::now().timestamp() + 3600));
+        assert!(!is_license_valid(&lic), "CATerm token must not unlock CASHell");
     }
 
     #[test]
@@ -490,52 +446,6 @@ mod tests {
         );
     }
 
-    /// 3. Offline grace: grace window = last_verified_at + 30 days,
-    /// capped at expires_at when it falls earlier.
-    #[test]
-    fn test_offline_grace_capped_at_expires_at() {
-        let now = chrono::Utc::now();
-        let mut lic = sample_license();
-        lic.tier = "12".to_string();
-        lic.last_verified_at = now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-
-        // (a) Expires 10 days from now → grace capped at 10 days, not 30.
-        let exp10 = now + chrono::Duration::days(10);
-        let exp10_ts = exp10.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        lic.expires_at = Some(exp10_ts.clone());
-        let l2 = lic.clone();
-        let grace_ts = chrono::DateTime::parse_from_rfc3339(&exp10_ts)
-            .unwrap()
-            .with_timezone(&chrono::Utc)
-            .timestamp();
-        assert_eq!(
-            offline_grace_ts(&l2),
-            Some(grace_ts),
-            "grace must be capped at expires_at"
-        );
-
-        // (b) Expires 90 days from now → grace stays at 30 days.
-        let exp90 = now + chrono::Duration::days(90);
-        lic.expires_at = Some(exp90.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
-        let last_ts = chrono::DateTime::parse_from_rfc3339(&lic.last_verified_at)
-            .unwrap()
-            .with_timezone(&chrono::Utc)
-            .timestamp();
-        assert_eq!(
-            offline_grace_ts(&lic),
-            Some(last_ts + 30 * 86_400),
-            "grace must be last_verified_at + 30d when cap is later"
-        );
-
-        // (c) No expires_at (lifetime) → grace = 30 days.
-        lic.expires_at = None;
-        assert_eq!(
-            offline_grace_ts(&lic),
-            Some(last_ts + 30 * 86_400),
-            "lifetime tier grace = 30d"
-        );
-    }
-
     /// 4. Revoked: `is_license_valid` must return false, and a revoked
     /// license must not count as Pro (tier stays but flag forces Free).
     #[test]
@@ -556,33 +466,15 @@ mod tests {
         // before any grace logic, and revocation is sticky on disk.
     }
 
-    /// Compute the offline-grace unix timestamp the same way
-    /// [`verify_license`] does, for assertions in tests.
-    fn offline_grace_ts(lic: &LicenseFile) -> Option<i64> {
-        let last_ts = parse_ts_unix(&lic.last_verified_at)?;
-        let grace_ts = last_ts + OFFLINE_GRACE_DAYS * 86_400;
-        let final_ts = match parse_ts_unix(lic.expires_at.as_deref().unwrap_or("")) {
-            Some(exp_ts) if exp_ts < grace_ts => exp_ts,
-            _ => grace_ts,
-        };
-        Some(final_ts)
-    }
-
-    /// 5. `verify_license` offline path (L-08): unreachable GCC base URL
-    /// produces a network error → `offline_grace_until` is persisted as
-    /// ISO-8601, grace = last_verified_at + 30 days, and the function
-    /// returns `Ok(())` (offline use stays permitted).
-    ///
-    /// Shares a static mutex with `test_license_file_lifecycle` so both
-    /// tests write license.json sequentially, not concurrently.
+    /// Offline (GCC unreachable): `verify_license` returns Ok and keeps the stored token, so the
+    /// licence stays Pro until the token's own 14-day `exp`.
     #[test]
-    fn test_verify_license_offline_sets_grace() {
+    fn test_verify_license_offline_keeps_token() {
         let _guard = license_file_guard();
         let p = license_path().unwrap();
         let _ = std::fs::create_dir_all(p.parent().unwrap());
         let mut lic = sample_license();
-        let last = chrono::Utc::now() - chrono::Duration::days(1);
-        lic.last_verified_at = last.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        lic.signed_token = Some(crate::license_token::test_support::valid_token());
         save_license(&lic).unwrap();
 
         // Unroutable port → guaranteed network error (no mock server needed).
@@ -590,20 +482,8 @@ mod tests {
         assert!(res.is_ok(), "offline verify must not error, got {res:?}");
 
         let updated = load_license().unwrap().unwrap();
-        assert!(
-            updated.offline_grace_until.is_some(),
-            "offline verify must persist offline_grace_until"
-        );
-        let grace =
-            chrono::DateTime::parse_from_rfc3339(&updated.offline_grace_until.as_ref().unwrap())
-                .unwrap()
-                .with_timezone(&chrono::Utc);
-        let expected = last + chrono::Duration::days(30);
-        assert_eq!(grace.timestamp(), expected.timestamp());
-        assert!(
-            is_license_valid(&updated),
-            "license within grace window must stay valid"
-        );
+        assert_eq!(updated.signed_token, lic.signed_token, "offline must keep the token");
+        assert!(is_license_valid(&updated), "within token exp the licence stays Pro");
 
         let _ = remove_license();
     }

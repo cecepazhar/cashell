@@ -666,6 +666,8 @@ mod tests {
                 offline_grace_until: None,
                 revoked: false,
                 expired: false,
+                signed_token: Some(crate::license_token::test_support::valid_token()),
+                last_seen_unix: 0,
             };
             crate::license_local::save_license(&lic).unwrap();
             crate::entitlements::invalidate_cache();

@@ -633,6 +633,8 @@ mod tests {
             offline_grace_until: None,
             revoked: false,
             expired: false,
+            signed_token: None,
+            last_seen_unix: 0,
         };
 
         let sm =

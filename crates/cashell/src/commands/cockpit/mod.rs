@@ -3417,16 +3417,10 @@ impl CockpitApp {
         }
     }
 
-    /// True if a valid Pro session or Pro-trial license is cached on this machine.
+    /// True only when the GCC License v2 signed token grants Pro on this device. FastBootCache
+    /// and config fields are editable local files and never grant Pro on their own.
     pub fn is_pro(&self) -> bool {
-        if let Some(cache) = crate::pro::FastBootCache::load() {
-            if cache.is_valid() {
-                return true;
-            }
-        }
-        // Pro trial also counts as Pro-entitled
-        let pro_cfg = &self.cfg.pro;
-        !pro_cfg.account_email.is_empty()
+        crate::entitlements::current().is_pro
     }
 
     /// Manually trigger a GCC cloud sync (also toggled by 'y' / [☁ Sync GCC] button).

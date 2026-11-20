@@ -205,23 +205,20 @@ pub fn compute_days_left(lic: &LicenseFile) -> Option<i64> {
     }
 }
 
-/// Compute `offline_grace_until`: `last_verified_at + 30 days`,
-/// capped at `expires_at` if one exists.
+/// Compute `offline_grace_until`: the signed token's `exp` (GCC License v2, ≤ 14 days after the
+/// last successful verify, never past the licence end). `None` without a valid token.
 pub fn compute_offline_grace_until(lic: &LicenseFile) -> Option<String> {
-    let last_verified_ts = parse_expires_ts(&lic.last_verified_at)?;
-    let grace_ts = last_verified_ts + 30 * 86_400;
-    // Cap at expires_at if present.
-    let final_ts = if let Some(exp_ts) = parse_expires_ts(lic.expires_at.as_deref().unwrap_or("")) {
-        if exp_ts < grace_ts {
-            exp_ts
-        } else {
-            grace_ts
-        }
-    } else {
-        grace_ts
-    };
+    let now = chrono::Utc::now().timestamp();
+    let claims = crate::license_token::verify(
+        lic.signed_token.as_ref(),
+        crate::license_token::public_key,
+        &crate::license_gcc::device_id(),
+        lic.last_seen_unix,
+        now,
+    )
+    .ok()?;
     Some(
-        chrono::DateTime::from_timestamp(final_ts, 0)?
+        chrono::DateTime::from_timestamp(claims.exp, 0)?
             .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
     )
 }
@@ -271,6 +268,7 @@ pub fn activate_license_key(key: &str, base_url: &str) -> Result<LicenseFile> {
 
     let now_iso = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
 
+    let token_expires_unix = activation.token_expires_unix;
     // Capture expires_at before moving out of `activation`.
     let expires_at = activation.expires_at.clone();
     let expires_unix = expires_at.as_ref().and_then(|s| {
@@ -289,12 +287,14 @@ pub fn activate_license_key(key: &str, base_url: &str) -> Result<LicenseFile> {
         expires_at,
         activated_at: now_iso.clone(),
         last_verified_at: now_iso,
-        activation_token: activation.activation_token,
+        activation_token: None,
         devices_used: activation.devices_used,
         devices_max: activation.devices_max,
         offline_grace_until: None,
         revoked: false,
         expired: false,
+        signed_token: Some(activation.signed_token.clone()),
+        last_seen_unix: chrono::Utc::now().timestamp(),
     };
 
     license_local::save_license(&lic)?;
@@ -307,7 +307,10 @@ pub fn activate_license_key(key: &str, base_url: &str) -> Result<LicenseFile> {
     let cache = crate::pro::FastBootCache {
         hwid,
         status: 1,
-        session_expires_unix: expires_unix.unwrap_or(now_unix + 3650 * 86_400),
+        // FastBootCache is a UI hint only; Pro is decided by the signed token. Never let it
+        // outlive the token's offline window.
+        session_expires_unix: expires_unix
+            .map_or(token_expires_unix, |e| e.min(token_expires_unix)),
         api_base: base_url.to_string(),
         last_sync: now_unix,
     };
@@ -864,6 +867,8 @@ mod tests {
                 offline_grace_until: None,
                 revoked: false,
                 expired: false,
+                signed_token: None,
+                last_seen_unix: 0,
             };
             license_local::save_license(&lic).unwrap();
 

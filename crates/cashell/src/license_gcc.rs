@@ -1,70 +1,102 @@
 //! GCC license client — activation, verification, and deactivation.
 //!
-//! Talks to the GCC license API (`{gcc_base_url}/api/v1/licenses/*`).
-//! All calls are bounded by a 10-second reqwest timeout so the CLI never
-//! hangs on a slow or unreachable GCC (V-04 decision L-03 fallback:
-//! when the live GCC does not yet return an `activation_token`, the
-//! client logs a warning and continues without token verification).
+//! Talks to the GCC core license API (`{gcc_base_url}/api/v1/licenses/*`) following the
+//! "GCC License v2" standard: responses are `{success, data:{...}}` and carry an Ed25519
+//! `signed_token`, which is the only thing that grants Pro (see `license_token`). All calls are
+//! bounded by a 10-second timeout so the CLI never hangs on a slow or unreachable GCC.
 
-use hmac::{Hmac, Mac};
+use crate::license_token::{self, SignedToken};
+use ed25519_dalek::VerifyingKey;
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::time::Duration;
 use thiserror::Error;
 
-/// Errors returned by the GCC license client, mapped from HTTP status codes.
+/// Errors returned by the GCC license client, mapped from HTTP status codes and messages.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum LicenseError {
     /// The license key or product does not exist on GCC.
     #[error("license not found on GCC")]
     NotFound,
-    /// The device limit for this key has been reached (HTTP 409).
+    /// The device limit for this key has been reached.
     #[error("device limit reached for this license key")]
     DeviceLimit,
-    /// The key has been revoked by GCC (HTTP 403).
+    /// The key has been revoked (or is otherwise not active) on GCC.
     #[error("license key has been revoked")]
     Revoked,
-    /// The license subscription has expired (HTTP 410).
+    /// The license subscription has expired.
     #[error("license subscription has expired")]
     Expired,
-    /// Network / transport failure (DNS, TLS, timeout, ...).
+    /// Network / transport failure (DNS, TLS, timeout, 5xx, ...).
     #[error("network error: {0}")]
     Network(String),
-    /// The server returned 2xx but the payload could not be parsed.
+    /// The server answered but the payload was unusable (including no valid signed token).
     #[error("invalid response from GCC: {0}")]
     InvalidResponse(String),
 }
 
-/// Successful activation response from `POST /api/v1/licenses/activate`.
-#[derive(Debug, Clone, Deserialize)]
+/// Successful activation, already checked: `signed_token` verified for this product + device.
+#[derive(Debug, Clone)]
 pub struct Activation {
     pub key: String,
     pub product: String,
     pub tier: String,
-    /// ISO-8601 or unix timestamp string; `None` = lifetime.
-    #[serde(default)]
+    /// ISO-8601 licence end; `None` = lifetime. Display only.
     pub expires_at: Option<String>,
-    /// HMAC-SHA256-signed activation token (V-04 L-03). Optional: when the
-    /// live GCC does not yet return one, the caller skips verification.
-    #[serde(default)]
-    pub activation_token: Option<String>,
-    #[serde(default)]
+    pub signed_token: SignedToken,
     pub devices_used: u32,
-    #[serde(default)]
     pub devices_max: u32,
+    /// End of the current offline window (token `exp`, unix seconds).
+    pub token_expires_unix: i64,
 }
 
-/// Response of `POST /api/v1/licenses/verify`.
-#[derive(Debug, Clone, Deserialize)]
+/// Result of `POST /api/v1/licenses/verify`.
+#[derive(Debug, Clone)]
 pub struct VerifyResponse {
     pub valid: bool,
-    #[serde(default)]
+    pub status: String,
     pub expires_at: Option<String>,
-    #[serde(default)]
-    pub devices_used: u32,
-    #[serde(default)]
+    pub device_registered: bool,
     pub devices_max: u32,
+    /// Fresh 14-day token when the licence is valid on this device.
+    pub signed_token: Option<SignedToken>,
+}
+
+#[derive(Deserialize)]
+struct Envelope<T> {
+    data: T,
+}
+
+#[derive(Deserialize)]
+struct ActivateData {
+    license_key: String,
+    #[serde(default)]
+    product_sku: String,
+    #[serde(default)]
+    plan_tier: String,
+    #[serde(default)]
+    expires_at: Option<String>,
+    #[serde(default)]
+    max_devices: u32,
+    #[serde(default)]
+    signed_token: Option<SignedToken>,
+}
+
+#[derive(Deserialize)]
+struct VerifyData {
+    #[serde(default)]
+    valid: bool,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    expires_at: Option<String>,
+    #[serde(default)]
+    device_registered: bool,
+    #[serde(default)]
+    max_devices: u32,
+    #[serde(default)]
+    signed_token: Option<SignedToken>,
 }
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -76,39 +108,59 @@ fn client() -> std::result::Result<Client, LicenseError> {
         .map_err(|e| LicenseError::Network(format!("client init failed: {e}")))
 }
 
-/// Send a JSON request and map status/transport errors to [`LicenseError`].
-///
-/// Uses the blocking [`reqwest::blocking::Client`].
+/// Maps a GCC error (`{success:false, error:{message}}`) to [`LicenseError`].
+fn map_error(status: u16, body: &str) -> LicenseError {
+    let message = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| {
+            v.get("error")
+                .and_then(|e| e.get("message").or(Some(e)))
+                .and_then(|m| m.as_str().map(str::to_string))
+        })
+        .unwrap_or_default();
+    let m = message.to_lowercase();
+    match status {
+        404 => LicenseError::NotFound,
+        409 => LicenseError::DeviceLimit,
+        403 => LicenseError::Revoked,
+        410 => LicenseError::Expired,
+        400 if m.contains("device limit") || m.contains("perangkat") => LicenseError::DeviceLimit,
+        400 if m.contains("kedaluwarsa") || m.contains("expired") => LicenseError::Expired,
+        400 if m.contains("berstatus") || m.contains("revoked") => LicenseError::Revoked,
+        400 => LicenseError::InvalidResponse(message),
+        _ => LicenseError::Network(format!("unexpected status {status}")),
+    }
+}
+
+/// Send a JSON request; returns the body of a 2xx response or a mapped [`LicenseError`].
 pub fn request_sync(
     client: &Client,
     method: reqwest::Method,
     url: &str,
     body: &str,
-) -> std::result::Result<reqwest::blocking::Response, LicenseError> {
-    let req = client
+) -> std::result::Result<String, LicenseError> {
+    let resp = client
         .request(method, url)
         .header("Content-Type", "application/json")
-        .body(body.to_string());
-    let resp = req
+        .body(body.to_string())
         .send()
         .map_err(|e| LicenseError::Network(e.to_string()))?;
     let status = resp.status();
+    let text = resp
+        .text()
+        .map_err(|e| LicenseError::Network(e.to_string()))?;
     if !status.is_success() {
-        return Err(match status.as_u16() {
-            404 => LicenseError::NotFound,
-            409 => LicenseError::DeviceLimit,
-            403 => LicenseError::Revoked,
-            410 => LicenseError::Expired,
-            _ => LicenseError::Network(format!("unexpected status {status}")),
-        });
+        return Err(map_error(status.as_u16(), &text));
     }
-    Ok(resp)
+    Ok(text)
 }
 
-/// Activate a license key on GCC and return the parsed activation payload.
-///
-/// Verifies `activation_token` (HMAC-SHA256) when present; when absent,
-/// logs a warning and continues (V-04 L-03 fallback for live GCC).
+fn endpoint(base_url: &str, path: &str) -> String {
+    format!("{}/api/v1/licenses/{path}", base_url.trim_end_matches('/'))
+}
+
+/// Activate a license key on GCC. Fails closed: without a `signed_token` that verifies for
+/// CASHELL on this device, nothing is returned (and nothing gets saved by the caller).
 pub fn activate(
     base_url: &str,
     key: &str,
@@ -116,85 +168,76 @@ pub fn activate(
     device_name: &str,
     platform: &str,
 ) -> std::result::Result<Activation, LicenseError> {
-    let client = client()?;
-    let url = format!(
-        "{}/api/v1/licenses/activate",
-        base_url.trim_end_matches('/')
-    );
+    activate_with_key(base_url, key, device_id, device_name, platform, license_token::public_key)
+}
+
+/// [`activate`] with an injectable public key (tests).
+pub fn activate_with_key(
+    base_url: &str,
+    key: &str,
+    device_id: &str,
+    device_name: &str,
+    platform: &str,
+    key_for: impl Fn(u32) -> Option<VerifyingKey>,
+) -> std::result::Result<Activation, LicenseError> {
     let body = serde_json::json!({
-        "key": key,
+        "license_key": key,
         "device_id": device_id,
         "device_name": device_name,
         "platform": platform,
     })
     .to_string();
-
-    let resp = request_sync(&client, reqwest::Method::POST, &url, &body)?;
-    let body_text = resp
-        .text()
-        .map_err(|e| LicenseError::Network(e.to_string()))?;
-    let activation: Activation = serde_json::from_str(&body_text)
+    let text = request_sync(&client()?, reqwest::Method::POST, &endpoint(base_url, "activate"), &body)?;
+    let data = serde_json::from_str::<Envelope<ActivateData>>(&text)
+        .map_err(|e| LicenseError::InvalidResponse(e.to_string()))?
+        .data;
+    let token = data
+        .signed_token
+        .ok_or_else(|| LicenseError::InvalidResponse("GCC returned no signed_token".into()))?;
+    let now = chrono::Utc::now().timestamp();
+    let claims = license_token::verify(Some(&token), key_for, device_id, now, now)
         .map_err(|e| LicenseError::InvalidResponse(e.to_string()))?;
-
-    if let Some(token) = &activation.activation_token {
-        if !verify_activation_token(token, key, device_id) {
-            eprintln!(
-                "warning: activation token HMAC-SHA256 verification failed for {key} — token may be malformed; continuing without token verification"
-            );
-        }
-    } else {
-        eprintln!(
-            "warning: GCC did not return an activation_token; skipping token verification (live GCC not yet updated — V-04 L-03 fallback)"
-        );
-    }
-
-    Ok(activation)
+    Ok(Activation {
+        key: data.license_key,
+        product: data.product_sku,
+        tier: data.plan_tier,
+        expires_at: data.expires_at,
+        signed_token: token,
+        devices_used: 0,
+        devices_max: data.max_devices,
+        token_expires_unix: claims.exp,
+    })
 }
 
-/// Verify a license key's status on GCC.
+/// Verify a license key's status on GCC (and receive a refreshed token when valid).
 pub fn verify(
     base_url: &str,
     key: &str,
     device_id: &str,
 ) -> std::result::Result<VerifyResponse, LicenseError> {
-    let client = client()?;
-    let url = format!("{}/api/v1/licenses/verify", base_url.trim_end_matches('/'));
-    let body = serde_json::json!({
-        "key": key,
-        "device_id": device_id,
+    let body = serde_json::json!({ "license_key": key, "device_id": device_id }).to_string();
+    let text = request_sync(&client()?, reqwest::Method::POST, &endpoint(base_url, "verify"), &body)?;
+    let d = serde_json::from_str::<Envelope<VerifyData>>(&text)
+        .map_err(|e| LicenseError::InvalidResponse(e.to_string()))?
+        .data;
+    Ok(VerifyResponse {
+        valid: d.valid,
+        status: d.status,
+        expires_at: d.expires_at,
+        device_registered: d.device_registered,
+        devices_max: d.max_devices,
+        signed_token: d.signed_token,
     })
-    .to_string();
-
-    let resp = request_sync(&client, reqwest::Method::POST, &url, &body)?;
-    let body_text = resp
-        .text()
-        .map_err(|e| LicenseError::Network(e.to_string()))?;
-    let v: VerifyResponse = serde_json::from_str(&body_text)
-        .map_err(|e| LicenseError::InvalidResponse(e.to_string()))?;
-    Ok(v)
 }
 
 /// Deactivate (unbind) this device from a license key on GCC.
-///
-/// Live GCC currently returns 401 on this endpoint (V-04); callers should
-/// handle [`LicenseError::Network`] with a warning log and continue.
 pub fn deactivate(
     base_url: &str,
     key: &str,
     device_id: &str,
 ) -> std::result::Result<(), LicenseError> {
-    let client = client()?;
-    let url = format!(
-        "{}/api/v1/licenses/deactivate",
-        base_url.trim_end_matches('/')
-    );
-    let body = serde_json::json!({
-        "key": key,
-        "device_id": device_id,
-    })
-    .to_string();
-
-    let _resp = request_sync(&client, reqwest::Method::POST, &url, &body)?;
+    let body = serde_json::json!({ "license_key": key, "device_id": device_id }).to_string();
+    request_sync(&client()?, reqwest::Method::POST, &endpoint(base_url, "deactivate"), &body)?;
     Ok(())
 }
 
@@ -224,61 +267,6 @@ pub fn device_id() -> String {
 
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// Verify an activation token signed with HMAC-SHA256 using the
-/// `JWT_SECRET`-equivalent key.
-///
-/// GCC token format (since L-03):
-/// ```text
-/// {base64url("key:device_id:sku:activated_at_unix")}.{hmac_sha256_hex}
-/// ```
-/// where `hmac_sha256_hex` is the hex-encoded HMAC-SHA256 of the raw
-/// (non-base64) payload string, keyed with `JWT_SECRET`.
-///
-/// Returns `true` when the token verifies, `false` otherwise.
-pub fn verify_activation_token(token: &str, key: &str, device_id: &str) -> bool {
-    use base64::Engine;
-
-    // Token format: `{base64url_payload}.{sig_hex}`
-    let dot_idx = match token.rfind('.') {
-        Some(i) => i,
-        None => return false,
-    };
-    if dot_idx == 0 {
-        return false;
-    }
-    let payload_b64 = &token[..dot_idx];
-    let sig_hex = &token[dot_idx + 1..];
-
-    // Decode base64url payload → raw "key:device_id:sku:activated_at_unix"
-    let payload_bytes: Vec<u8> = match base64::engine::general_purpose::URL_SAFE
-        .decode(payload_b64) {
-        Ok(b) => b,
-        Err(_) => return false,
-    };
-    let payload_str = match std::str::from_utf8(&payload_bytes) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
-
-    // Verify payload starts with "key:device_id:" (4-field format)
-    let expected_prefix = format!("{key}:{device_id}:");
-    if !payload_str.starts_with(&expected_prefix) {
-        return false;
-    }
-
-    let secret = std::env::var("JWT_SECRET")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "cashell-license-hmac-v1".to_string());
-
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC key valid");
-    mac.update(payload_str.as_bytes());
-    let expected_sig = mac.finalize().into_bytes();
-    let expected_hex = hex_encode(&expected_sig);
-
-    sig_hex.eq_ignore_ascii_case(&expected_hex)
 }
 
 /// Mask a license key for display: keep the first 6 chars + "…".
@@ -331,13 +319,10 @@ mod tests {
     use axum::body::Body;
     use axum::routing::post;
     use axum::Router;
+    use base64::Engine;
+    use ed25519_dalek::{Signer, SigningKey};
     use tokio::net::TcpListener;
 
-    /// Start an axum server on a random port in the current runtime.
-    /// Returns the base URL. The server runs on the same runtime as the
-    /// test, so the test must use a multi-threaded runtime to avoid
-    /// deadlocking when the reqwest blocking client is called from a
-    /// std::thread (which would stop the current-thread event loop).
     async fn start_mock_server(handler: axum::Router) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -347,329 +332,128 @@ mod tests {
         format!("http://127.0.0.1:{port}")
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_activate_200_ok() {
-        let app = Router::new().route(
-            "/api/v1/licenses/activate",
-            post(|| async {
-                axum::http::Response::builder()
-                    .status(200)
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(
-                        r#"{"key":"CASH99-ABCDEF-2","product":"SH","tier":"99","expires_at":null,"activation_token":null,"devices_used":1,"devices_max":1}"#,
-                    ))
-                    .unwrap()
-            }),
-        );
+    fn signing_key() -> SigningKey {
+        SigningKey::from_bytes(&[9u8; 32])
+    }
+
+    fn test_key(_: u32) -> Option<VerifyingKey> {
+        Some(signing_key().verifying_key())
+    }
+
+    fn signed(products: &[&str], hwid: &str) -> serde_json::Value {
+        let exp = chrono::Utc::now().timestamp() + 14 * 86_400;
+        let payload = serde_json::json!({ "v": 2, "lic_id": "l", "sku": "CASHELL",
+            "products": products, "tier": "lifetime", "features": ["pro"], "hwid": hwid,
+            "max_devices": 1, "iat": 0, "exp": exp, "lic_exp": 0, "nonce": "n" })
+        .to_string();
+        let signature = base64::engine::general_purpose::STANDARD
+            .encode(signing_key().sign(payload.as_bytes()).to_bytes());
+        serde_json::json!({ "payload": payload, "signature": signature, "key_version": 1 })
+    }
+
+    fn respond(status: u16, body: String) -> Router {
+        Router::new()
+            .route(
+                "/api/v1/licenses/activate",
+                post(move || {
+                    let body = body.clone();
+                    async move {
+                        axum::http::Response::builder()
+                            .status(status)
+                            .header("Content-Type", "application/json")
+                            .body(Body::from(body))
+                            .unwrap()
+                    }
+                }),
+            )
+    }
+
+    fn ok_body(token: Option<serde_json::Value>) -> String {
+        serde_json::json!({ "success": true, "data": {
+            "license_key": "CASH99-ABCDEF-2", "product_sku": "CASHELL", "plan_tier": "lifetime",
+            "max_devices": 1, "expires_at": null, "activation_token": "legacy.hmac",
+            "signed_token": token }})
+        .to_string()
+    }
+
+    async fn run_activate(app: Router) -> Result<Activation, LicenseError> {
         let base = start_mock_server(app).await;
-        let result = std::thread::scope(|s| {
-            s.spawn(move || activate(&base, "CASH99-ABCDEF-2", "dev-1", "test", "linux"))
+        std::thread::scope(|s| {
+            s.spawn(move || activate_with_key(&base, "CASH99-ABCDEF-2", "dev-1", "t", "linux", test_key))
                 .join()
                 .unwrap_or_else(|_| Err(LicenseError::Network("spawned thread panicked".into())))
-        });
-        assert!(result.is_ok(), "200 should succeed: {result:?}");
-        let act = result.unwrap();
-        assert_eq!(act.tier, "99");
-        assert!(act.expires_at.is_none(), "lifetime tier → expires_at null");
+        })
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_activate_404_not_found() {
-        let app = Router::new().route(
-            "/api/v1/licenses/activate",
-            post(|| async {
-                axum::http::Response::builder()
-                    .status(404)
-                    .body(Body::empty())
-                    .unwrap()
-            }),
-        );
-        let base = start_mock_server(app).await;
-        let result = std::thread::scope(|s| {
-            s.spawn(move || activate(&base, "CASH99-ABCDEF-2", "dev-1", "test", "linux"))
-                .join()
-                .unwrap_or_else(|_| Err(LicenseError::Network("spawned thread panicked".into())))
-        });
-        assert!(matches!(result, Err(LicenseError::NotFound)));
+    async fn activate_with_valid_signed_token_succeeds() {
+        let act = run_activate(respond(200, ok_body(Some(signed(&["CASHELL"], "dev-1"))))).await;
+        let act = act.expect("valid signed token must activate");
+        assert_eq!(act.product, "CASHELL");
+        assert!(act.token_expires_unix > chrono::Utc::now().timestamp());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_activate_409_device_limit() {
-        let app = Router::new().route(
-            "/api/v1/licenses/activate",
-            post(|| async {
-                axum::http::Response::builder()
-                    .status(409)
-                    .body(Body::empty())
-                    .unwrap()
-            }),
-        );
-        let base = start_mock_server(app).await;
-        let result = std::thread::scope(|s| {
-            s.spawn(move || activate(&base, "CASH99-ABCDEF-2", "dev-1", "test", "linux"))
-                .join()
-                .unwrap_or_else(|_| Err(LicenseError::Network("spawned thread panicked".into())))
-        });
-        assert!(matches!(result, Err(LicenseError::DeviceLimit)));
+    async fn activate_without_signed_token_fails_closed() {
+        let act = run_activate(respond(200, ok_body(None))).await;
+        assert!(matches!(act, Err(LicenseError::InvalidResponse(_))), "{act:?}");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_activate_403_revoked() {
-        let app = Router::new().route(
-            "/api/v1/licenses/activate",
-            post(|| async {
-                axum::http::Response::builder()
-                    .status(403)
-                    .body(Body::empty())
-                    .unwrap()
-            }),
-        );
-        let base = start_mock_server(app).await;
-        let result = std::thread::scope(|s| {
-            s.spawn(move || activate(&base, "CASH99-ABCDEF-2", "dev-1", "test", "linux"))
-                .join()
-                .unwrap_or_else(|_| Err(LicenseError::Network("spawned thread panicked".into())))
-        });
-        assert!(matches!(result, Err(LicenseError::Revoked)));
+    async fn activate_with_other_product_token_fails() {
+        let act = run_activate(respond(200, ok_body(Some(signed(&["CATERM"], "dev-1"))))).await;
+        assert!(matches!(act, Err(LicenseError::InvalidResponse(_))), "{act:?}");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_activate_410_expired() {
-        let app = Router::new().route(
-            "/api/v1/licenses/activate",
-            post(|| async {
-                axum::http::Response::builder()
-                    .status(410)
-                    .body(Body::empty())
-                    .unwrap()
-            }),
-        );
-        let base = start_mock_server(app).await;
-        let result = std::thread::scope(|s| {
-            s.spawn(move || activate(&base, "CASH99-ABCDEF-2", "dev-1", "test", "linux"))
-                .join()
-                .unwrap_or_else(|_| Err(LicenseError::Network("spawned thread panicked".into())))
-        });
-        assert!(matches!(result, Err(LicenseError::Expired)));
-    }
-
-    #[tokio::test]
-    async fn test_activate_network_error() {
-        // Use a port that is not listening → connection refused → Network.
-        // The blocking reqwest call must run in a std::thread (not inside
-        // the tokio runtime) to avoid the "cannot drop runtime in blocking
-        // context" panic.
-        let result = std::thread::scope(|s| {
-            s.spawn(move || {
-                activate(
-                    "http://127.0.0.1:1",
-                    "CASH99-ABCDEF-2",
-                    "dev-1",
-                    "test",
-                    "linux",
-                )
-            })
-            .join()
-            .unwrap_or_else(|_| Err(LicenseError::Network("spawned thread panicked".into())))
-        });
-        assert!(
-            matches!(result, Err(LicenseError::Network(_))),
-            "expected Network error, got: {result:?}"
-        );
+    async fn activate_with_token_for_other_device_fails() {
+        let act = run_activate(respond(200, ok_body(Some(signed(&["CASHELL"], "dev-2"))))).await;
+        assert!(matches!(act, Err(LicenseError::InvalidResponse(_))), "{act:?}");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_activate_malformed_json() {
-        let app = Router::new().route(
-            "/api/v1/licenses/activate",
-            post(|| async {
-                axum::http::Response::builder()
-                    .status(200)
-                    .header("Content-Type", "application/json")
-                    .body(Body::from("not json at all"))
-                    .unwrap()
-            }),
-        );
-        let base = start_mock_server(app).await;
-        let result = std::thread::scope(|s| {
-            s.spawn(move || activate(&base, "CASH99-ABCDEF-2", "dev-1", "test", "linux"))
-                .join()
-                .unwrap_or_else(|_| Err(LicenseError::Network("spawned thread panicked".into())))
-        });
-        assert!(
-            matches!(result, Err(LicenseError::InvalidResponse(_))),
-            "expected InvalidResponse, got: {result:?}"
-        );
+    async fn activate_maps_gcc_errors() {
+        let not_found = r#"{"success":false,"error":{"message":"license tidak ditemukan"}}"#;
+        assert!(matches!(run_activate(respond(404, not_found.into())).await, Err(LicenseError::NotFound)));
+        let limit = r#"{"success":false,"error":{"message":"maximum device limit reached (max 1 devices)"}}"#;
+        assert!(matches!(run_activate(respond(400, limit.into())).await, Err(LicenseError::DeviceLimit)));
+        let expired = r#"{"success":false,"error":{"message":"license sudah kedaluwarsa"}}"#;
+        assert!(matches!(run_activate(respond(400, expired.into())).await, Err(LicenseError::Expired)));
+        let revoked = r#"{"success":false,"error":{"message":"license berstatus: revoked"}}"#;
+        assert!(matches!(run_activate(respond(400, revoked.into())).await, Err(LicenseError::Revoked)));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_verify_200() {
+    async fn verify_parses_envelope_and_token() {
+        let body = serde_json::json!({ "success": true, "data": { "valid": true, "status": "active",
+            "device_registered": true, "max_devices": 1, "signed_token": signed(&["CASHELL"], "dev-1") }})
+        .to_string();
         let app = Router::new().route(
             "/api/v1/licenses/verify",
-            post(|| async {
-                axum::http::Response::builder()
-                    .status(200)
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(
-                        r#"{"valid":true,"expires_at":"2026-01-01T00:00:00Z","devices_used":1,"devices_max":2}"#,
-                    ))
-                    .unwrap()
+            post(move || {
+                let body = body.clone();
+                async move {
+                    axum::http::Response::builder()
+                        .status(200)
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(body))
+                        .unwrap()
+                }
             }),
         );
         let base = start_mock_server(app).await;
-        let result = std::thread::scope(|s| {
+        let v = std::thread::scope(|s| {
             s.spawn(move || verify(&base, "CASH99-ABCDEF-2", "dev-1"))
                 .join()
-                .unwrap_or_else(|_| Err(LicenseError::Network("spawned thread panicked".into())))
-        });
-        assert!(result.is_ok(), "verify should succeed: {result:?}");
-        let v = result.unwrap();
-        assert!(v.valid);
-        assert!(v.expires_at.is_some());
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_verify_404() {
-        let app = Router::new().route(
-            "/api/v1/licenses/verify",
-            post(|| async {
-                axum::http::Response::builder()
-                    .status(404)
-                    .body(Body::empty())
-                    .unwrap()
-            }),
-        );
-        let base = start_mock_server(app).await;
-        let result = std::thread::scope(|s| {
-            s.spawn(move || verify(&base, "CASH99-ABCDEF-2", "dev-1"))
-                .join()
-                .unwrap_or_else(|_| Err(LicenseError::Network("spawned thread panicked".into())))
-        });
-        assert!(matches!(result, Err(LicenseError::NotFound)));
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_deactivate_200() {
-        let app = Router::new().route(
-            "/api/v1/licenses/deactivate",
-            post(|| async {
-                axum::http::Response::builder()
-                    .status(200)
-                    .body(Body::empty())
-                    .unwrap()
-            }),
-        );
-        let base = start_mock_server(app).await;
-        let result = std::thread::scope(|s| {
-            s.spawn(move || deactivate(&base, "CASH99-ABCDEF-2", "dev-1"))
-                .join()
-                .unwrap_or_else(|_| Err(LicenseError::Network("spawned thread panicked".into())))
-        });
-        assert!(result.is_ok(), "deactivate should succeed: {result:?}");
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_deactivate_401_maps_to_network() {
-        // Live GCC currently returns 401 on deactivate (V-04).
-        // The 401 status falls into the catch-all `Network` bucket.
-        let app = Router::new().route(
-            "/api/v1/licenses/deactivate",
-            post(|| async {
-                axum::http::Response::builder()
-                    .status(401)
-                    .body(Body::empty())
-                    .unwrap()
-            }),
-        );
-        let base = start_mock_server(app).await;
-        let result = std::thread::scope(|s| {
-            s.spawn(move || deactivate(&base, "CASH99-ABCDEF-2", "dev-1"))
-                .join()
-                .unwrap_or_else(|_| Err(LicenseError::Network("spawned thread panicked".into())))
-        });
-        assert!(
-            matches!(result, Err(LicenseError::Network(_))),
-            "401 should map to Network (graceful handling): {result:?}"
-        );
-    }
-
-    // ── HMAC token verification tests (GCC base64url 4-field format) ─────
-
-    /// Build a GCC-format activation token: base64url("key:dev:sku:ts") + "." + hex(HMAC-SHA256(secret, raw_payload))
-    fn make_gcc_token(key: &str, dev: &str, sku: &str, ts: i64, secret: &str) -> String {
-        use base64::Engine;
-        let raw = format!("{key}:{dev}:{sku}:{ts}");
-        let payload_b64 = base64::engine::general_purpose::URL_SAFE.encode(raw.as_bytes());
-        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC key valid");
-        mac.update(raw.as_bytes());
-        let sig = mac.finalize().into_bytes();
-        format!("{payload_b64}.{}", hex_encode(&sig))
+                .unwrap_or_else(|_| Err(LicenseError::Network("panicked".into())))
+        })
+        .expect("verify ok");
+        assert!(v.valid && v.device_registered && v.signed_token.is_some());
     }
 
     #[test]
-    fn test_activation_token_valid() {
-        let key = "CASH99-ABCDEF-2";
-        let dev = "dev-1";
-        let secret = "cashell-license-hmac-v1";
-
-        let token = make_gcc_token(key, dev, "SW-CASHLL-PRO", 1795059027, secret);
-
-        std::env::set_var("JWT_SECRET", secret);
-        let valid = verify_activation_token(&token, key, dev);
-        std::env::remove_var("JWT_SECRET");
-        assert!(
-            valid,
-            "valid GCC-format token must verify when JWT_SECRET matches the signing key"
-        );
-    }
-
-    #[test]
-    fn test_activation_token_invalid_sig() {
-        let key = "CASH99-ABCDEF-2";
-        let dev = "dev-1";
-        let secret = "cashell-license-hmac-v1";
-
-        let token = make_gcc_token(key, dev, "SW-CASHLL-PRO", 1795059027, secret);
-        // Corrupt the signature
-        let corrupted = format!("{}0", token);
-        let _ = corrupted; // just to show we built it
-        let mut chars: Vec<char> = token.chars().collect();
-        // Flip one hex char in the signature portion
-        let dot = token.rfind('.').unwrap();
-        let sig_start = dot + 1;
-        chars[sig_start] = if chars[sig_start] == 'a' { 'b' } else { 'a' };
-        let bad_token = chars.into_iter().collect::<String>();
-
-        std::env::set_var("JWT_SECRET", secret);
-        assert!(
-            !verify_activation_token(&bad_token, key, dev),
-            "corrupted signature must fail"
-        );
-        std::env::remove_var("JWT_SECRET");
-    }
-
-    #[test]
-    fn test_activation_token_wrong_device() {
-        let key = "CASH99-ABCDEF-2";
-        let secret = "cashell-license-hmac-v1";
-
-        let token = make_gcc_token(key, "dev-1", "SW-CASHLL-PRO", 1795059027, secret);
-
-        std::env::set_var("JWT_SECRET", secret);
-        assert!(
-            !verify_activation_token(&token, key, "dev-999"),
-            "token for dev-1 must fail when verifying against dev-999"
-        );
-        std::env::remove_var("JWT_SECRET");
-    }
-
-    #[test]
-    fn test_activation_token_malformed() {
-        // No dot at all
-        assert!(!verify_activation_token("garbage", "key", "dev"));
-        // Empty string
-        assert!(!verify_activation_token("", "key", "dev"));
-        // Invalid base64url
-        assert!(!verify_activation_token("!!!notbase64.sig", "key", "dev"));
+    fn network_failure_is_network_error() {
+        let r = activate("http://127.0.0.1:9", "CASH99-ABCDEF-2", "d", "t", "linux");
+        assert!(matches!(r, Err(LicenseError::Network(_))), "{r:?}");
     }
 }
