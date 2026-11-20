@@ -612,6 +612,8 @@ pub struct AuditReportItem {
 // ── Cockpit App State ───────────────────────────────────────────────────────
 
 const MAX_CPU_SAMPLES: usize = 60;
+/// Network history: one sample per braille dot column (2 per cell).
+const MAX_NET_SAMPLES: usize = 240;
 
 pub struct CockpitApp {
     // Topology state
@@ -626,6 +628,9 @@ pub struct CockpitApp {
     // Telemetry (Overview)
     pub cpu_history: VecDeque<f32>,
     pub ram_history: VecDeque<f32>,
+    /// Download / upload rate history (KB/s), newest last.
+    pub net_rx_history: VecDeque<f64>,
+    pub net_tx_history: VecDeque<f64>,
     pub latest_snap: SysSnapshot,
     pub hostname: String,
     pub is_9router_online: bool,
@@ -937,6 +942,8 @@ impl CockpitApp {
             hitboxes: catui::hitbox::HitboxRegistry::new(),
             cpu_history,
             ram_history,
+            net_rx_history: VecDeque::with_capacity(MAX_NET_SAMPLES),
+            net_tx_history: VecDeque::with_capacity(MAX_NET_SAMPLES),
             latest_snap: snap,
             hostname,
             is_9router_online: false,
@@ -2751,6 +2758,16 @@ impl CockpitApp {
         let ram_pct = (snap.ram_used_mb * 100)
             .checked_div(snap.ram_total_mb)
             .unwrap_or(0) as f32;
+        for (hist, v) in [
+            (&mut self.net_rx_history, snap.net_rx_rate_kbps),
+            (&mut self.net_tx_history, snap.net_tx_rate_kbps),
+        ] {
+            hist.push_back(v.max(0.0));
+            if hist.len() > MAX_NET_SAMPLES {
+                hist.pop_front();
+            }
+        }
+
         self.ram_history.push_back(ram_pct);
         if self.ram_history.len() > MAX_CPU_SAMPLES {
             self.ram_history.pop_front();
@@ -7812,6 +7829,69 @@ pub(crate) fn core_cell_spans(
     ]
 }
 
+/// Filled braille area graph, newest sample at the right edge, one sample
+/// per dot column. `downward` mirrors it (grows from the top) for the
+/// btop-style upload half. Returns `height` lines of `width` cells.
+fn area_braille_lines(
+    data: &[f64],
+    width: usize,
+    height: usize,
+    max: f64,
+    color: Color,
+    downward: bool,
+) -> Vec<Line<'static>> {
+    if width == 0 || height == 0 {
+        return Vec::new();
+    }
+    let dot_w = width * 2;
+    let dot_h = height * 4;
+    let max = if max <= 0.0 { 1.0 } else { max };
+    // Right-align the newest samples; older columns stay empty.
+    let start = data.len().saturating_sub(dot_w);
+    let visible = data.get(start..).unwrap_or(&[]);
+    let pad = dot_w - visible.len();
+    let mut grid = vec![vec![0u32; width]; height];
+    for (i, v) in visible.iter().enumerate() {
+        let x = pad + i;
+        let filled = if *v > 0.0 {
+            ((v / max) * dot_h as f64).ceil().clamp(1.0, dot_h as f64) as usize
+        } else {
+            0
+        };
+        for k in 0..filled {
+            let y = if downward { k } else { dot_h - 1 - k };
+            let bit = match (x % 2, y % 4) {
+                (0, 0) => 0x01,
+                (0, 1) => 0x02,
+                (0, 2) => 0x04,
+                (0, 3) => 0x40,
+                (1, 0) => 0x08,
+                (1, 1) => 0x10,
+                (1, 2) => 0x20,
+                _ => 0x80,
+            };
+            if let Some(cell) = grid.get_mut(y / 4).and_then(|r| r.get_mut(x / 2)) {
+                *cell |= bit;
+            }
+        }
+    }
+    grid.into_iter()
+        .map(|row| {
+            let text: String = row
+                .into_iter()
+                .map(|m| {
+                    if m == 0 {
+                        ' '
+                    } else {
+                        char::from_u32(0x2800 + m).unwrap_or(' ')
+                    }
+                })
+                .collect();
+            Line::from(Span::styled(text, Style::default().fg(color)))
+        })
+        .collect()
+}
+
 pub fn format_kbps(kbps: f64) -> String {
     if kbps >= 1024.0 * 1024.0 {
         format!("{:.2} GB/s", kbps / (1024.0 * 1024.0))
@@ -8217,71 +8297,82 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         f.render_widget(net_block, top_chunks[2]);
 
         if net_inner.width > 8 && net_inner.height > 2 {
-            let iface_display = if snap.active_net_iface.is_empty() {
-                "wlp2s0".to_string()
-            } else {
-                snap.active_net_iface.clone()
-            };
-            let rx_rate_str = format_kbps(snap.net_rx_rate_kbps);
-            let tx_rate_str = format_kbps(snap.net_tx_rate_kbps);
-            let rx_tot_str = format_net_gb(snap.net_total_rx_gb);
-            let tx_tot_str = format_net_gb(snap.net_total_tx_gb);
+            let width = net_inner.width as usize;
+            let muted = Style::default().fg(palette.text_muted);
+            let text = Style::default().fg(palette.text);
+            let down_color = palette.success;
+            let up_color = palette.accent;
 
-            let net_lines = vec![
+            // Real interface state only — no hard-coded iface or "[OK]".
+            let (iface, state, state_color) = if snap.active_net_iface.is_empty() {
+                ("–".to_string(), "no active interface", palette.text_muted)
+            } else if snap.net_rx_rate_kbps + snap.net_tx_rate_kbps > 0.0 {
+                (snap.active_net_iface.clone(), "● ACTIVE", palette.success)
+            } else {
+                (snap.active_net_iface.clone(), "○ IDLE", palette.text_muted)
+            };
+
+            // Scale each half to the peak currently on screen.
+            let window = width * 2;
+            let peak =
+                |h: &VecDeque<f64>| h.iter().rev().take(window).copied().fold(0.0f64, f64::max);
+            let rx_peak = peak(&app.net_rx_history);
+            let tx_peak = peak(&app.net_tx_history);
+            let rx_hist: Vec<f64> = app.net_rx_history.iter().copied().collect();
+            let tx_hist: Vec<f64> = app.net_tx_history.iter().copied().collect();
+
+            let rate_line = |arrow: &str, label: &str, rate: f64, pk: f64, c: Color| {
                 Line::from(vec![
-                    Span::styled("Iface:    ", Style::default().fg(palette.text_muted)),
+                    Span::styled(format!("{arrow} {label} "), muted),
                     Span::styled(
-                        iface_display,
-                        Style::default()
-                            .fg(Color::White)
-                            .add_modifier(Modifier::BOLD),
+                        format_kbps(rate),
+                        Style::default().fg(c).add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        " [OK]",
-                        Style::default()
-                            .fg(palette.success)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]),
-                Line::from(vec![
-                    Span::styled("▼ RX:     ", Style::default().fg(palette.text_muted)),
-                    Span::styled(
-                        rx_rate_str,
-                        Style::default()
-                            .fg(palette.success)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(" (live)", Style::default().fg(palette.text_muted)),
-                ]),
-                Line::from(vec![
-                    Span::styled("▲ TX:     ", Style::default().fg(palette.text_muted)),
-                    Span::styled(
-                        tx_rate_str,
-                        Style::default()
-                            .fg(palette.accent)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(" (live)", Style::default().fg(palette.text_muted)),
-                ]),
-                Line::from(vec![
-                    Span::styled("Total RX: ", Style::default().fg(palette.text_muted)),
-                    Span::styled(rx_tot_str, Style::default().fg(Color::White)),
-                ]),
-                Line::from(vec![
-                    Span::styled("Total TX: ", Style::default().fg(palette.text_muted)),
-                    Span::styled(tx_tot_str, Style::default().fg(Color::White)),
-                ]),
-                Line::from(vec![
-                    Span::styled("State:    ", Style::default().fg(palette.text_muted)),
-                    Span::styled(
-                        "● ACTIVE",
-                        Style::default()
-                            .fg(palette.success)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]),
+                    Span::styled(format!("  peak {}", format_kbps(pk)), muted),
+                ])
+            };
+
+            let header = Line::from(vec![
+                Span::styled(
+                    iface,
+                    Style::default()
+                        .fg(palette.text)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("  ", muted),
+                Span::styled(state, Style::default().fg(state_color)),
+            ]);
+            let totals = Line::from(vec![
+                Span::styled("Total ▼ ", muted),
+                Span::styled(format_net_gb(snap.net_total_rx_gb), text),
+                Span::styled("  ▲ ", muted),
+                Span::styled(format_net_gb(snap.net_total_tx_gb), text),
+            ]);
+
+            // header, ▼ label, [down graph], [up graph], ▲ label, totals
+            let graph_rows = (net_inner.height as usize).saturating_sub(4);
+            let down_h = graph_rows.div_ceil(2);
+            let up_h = graph_rows / 2;
+
+            let mut lines = vec![
+                header,
+                rate_line("▼", "DOWN", snap.net_rx_rate_kbps, rx_peak, down_color),
             ];
-            f.render_widget(Paragraph::new(net_lines), net_inner);
+            lines.extend(area_braille_lines(
+                &rx_hist, width, down_h, rx_peak, down_color, false,
+            ));
+            lines.extend(area_braille_lines(
+                &tx_hist, width, up_h, tx_peak, up_color, true,
+            ));
+            lines.push(rate_line(
+                "▲",
+                "UP  ",
+                snap.net_tx_rate_kbps,
+                tx_peak,
+                up_color,
+            ));
+            lines.push(totals);
+            f.render_widget(Paragraph::new(lines), net_inner);
         }
 
         // ── Top 4: Companion Mascot Arena (28% - Compact) ──────────────────────
@@ -13024,6 +13115,41 @@ mod tests {
         assert_eq!(spans[0].content, "C3 ");
         assert!(spans[5].content.contains("95%"));
         assert_eq!(spans[2].style.fg, Some(palette.danger));
+    }
+
+    #[test]
+    fn test_area_braille_graph_right_aligned_and_mirrored() {
+        // One full-height sample at the newest (rightmost) position.
+        let lines = area_braille_lines(&[0.0, 0.0, 10.0], 3, 2, 10.0, Color::Green, false);
+        assert_eq!(lines.len(), 2);
+        let row =
+            |i: usize| -> String { lines[i].spans.iter().map(|s| s.content.as_ref()).collect() };
+        // Rightmost cell is filled in both rows, leftmost is empty.
+        assert!(row(0).ends_with(|c: char| c != ' '));
+        assert!(row(1).starts_with(' '));
+        // Mirrored: a half-height sample fills only the top row.
+        let up = area_braille_lines(&[5.0], 1, 2, 10.0, Color::Green, true);
+        let top: String = up[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        let bot: String = up[1].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_ne!(top, " ");
+        assert_eq!(bot, " ");
+    }
+
+    #[test]
+    fn test_net_history_ring_buffer() {
+        let mut app = CockpitApp::new(&Config::default());
+        for i in 0..(MAX_NET_SAMPLES + 5) {
+            let snap = SysSnapshot {
+                net_rx_rate_kbps: i as f64,
+                ..Default::default()
+            };
+            app.ingest_snapshot(snap);
+        }
+        assert_eq!(app.net_rx_history.len(), MAX_NET_SAMPLES);
+        assert_eq!(
+            app.net_rx_history.back().copied(),
+            Some((MAX_NET_SAMPLES + 4) as f64)
+        );
     }
 
     #[test]
