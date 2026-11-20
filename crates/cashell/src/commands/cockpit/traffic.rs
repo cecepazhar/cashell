@@ -196,7 +196,7 @@ fn draw_analytics_detail_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if analytics.daily_traffic.is_empty() {
         chart_lines.push(Line::from(" No Traffic Events Recorded Yet. "));
         chart_lines.push(Line::from(Span::styled(
-            " Tip: Send test hits with 'p' or embed tracker.js snippet. ",
+            " Tip: embed the tracker.js snippet on your site to start collecting. ",
             Style::default().fg(palette.text_muted),
         )));
     } else {
@@ -252,7 +252,7 @@ fn draw_analytics_detail_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ]),
         Row::new(vec![
             Cell::from(if analytics.browser_breakdown.is_empty() {
-                "Chrome: 80%\nFirefox: 20%".to_string()
+                "No data yet".to_string()
             } else {
                 analytics
                     .browser_breakdown
@@ -262,7 +262,7 @@ fn draw_analytics_detail_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                     .join("\n")
             }),
             Cell::from(if analytics.os_breakdown.is_empty() {
-                "Linux: 75%\nWindows: 25%".to_string()
+                "No data yet".to_string()
             } else {
                 analytics
                     .os_breakdown
@@ -272,7 +272,7 @@ fn draw_analytics_detail_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                     .join("\n")
             }),
             Cell::from(if analytics.device_breakdown.is_empty() {
-                "Desktop: 90%\nMobile: 10%".to_string()
+                "No data yet".to_string()
             } else {
                 analytics
                     .device_breakdown
@@ -282,7 +282,7 @@ fn draw_analytics_detail_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                     .join("\n")
             }),
             Cell::from(if analytics.country_breakdown.is_empty() {
-                "ID: 95%\nUS: 5%".to_string()
+                "No data yet".to_string()
             } else {
                 analytics
                     .country_breakdown

@@ -2687,61 +2687,6 @@ impl CockpitApp {
         }
     }
 
-    pub fn simulate_analytics_pageview(&mut self) {
-        if let Some(ref d) = self.db {
-            let sites = ["example", "docs", "blog", "site", "demo"];
-            let site = self.analytics_site_filter.clone().unwrap_or_else(|| {
-                let now_s = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                sites[(now_s % sites.len() as u64) as usize].to_string()
-            });
-
-            let pages = ["/", "/docs", "/pricing", "/features", "/download", "/blog"];
-            let secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            let page = pages[(secs % pages.len() as u64) as usize];
-            let browsers = ["Chrome", "Firefox", "Safari", "Edge"];
-            let browser = browsers[(secs % browsers.len() as u64) as usize];
-            let oss = ["Linux", "macOS", "Windows", "Android", "iOS"];
-            let os_name = oss[(secs % oss.len() as u64) as usize];
-            let devs = ["Desktop", "Mobile"];
-            let dev = devs[(secs % 3 == 0) as usize];
-            let countries = ["ID", "SG", "US", "MY", "JP", "GB"];
-            let country = countries[(secs % countries.len() as u64) as usize];
-            let refs = [
-                "https://google.com",
-                "https://x.com",
-                "https://github.com",
-                "Direct",
-            ];
-            let referrer = refs[(secs % refs.len() as u64) as usize];
-            let sess = format!("sess_{}", secs / 120);
-            let v_hash = format!("sim_hash_{}", secs % 19);
-
-            let _ = d.record_pageview(
-                &site,
-                &sess,
-                page,
-                referrer,
-                &format!("{site} - {page}"),
-                browser,
-                os_name,
-                dev,
-                country,
-                &v_hash,
-            );
-
-            self.sample_system();
-            self.set_notification(format!(
-                "Simulated pageview: {site}{page} from {country} ({browser}/{os_name})"
-            ));
-        }
-    }
-
     pub fn ingest_snapshot(&mut self, snap: SysSnapshot) {
         // Fast snapshots (`snapshot_telemetry`) leave slow-probe fields
         // (Docker, fleet, services, uptime, analytics, GPU) at their defaults.
@@ -6156,9 +6101,6 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             app.sample_system();
             app.ingest_snapshot(app.latest_snap.clone());
             app.set_notification("📊 Analytics reloaded");
-        }
-        KeyCode::Char('p') if app.current_tab == CockpitTab::Analytics => {
-            app.simulate_analytics_pageview();
         }
         KeyCode::Char('i') if app.current_tab == CockpitTab::Analytics => {
             app.import_all_landing_sites();
@@ -13043,12 +12985,16 @@ mod tests {
         assert!(!sites.is_empty());
         assert_eq!(sites[0].name, "All Sovereign Apps");
 
-        let prev_views = app.latest_snap.web_analytics.pageviews;
-
-        // Simulate pageview populates analytics in database
-        app.simulate_analytics_pageview();
-        app.sample_system();
-        assert!(app.latest_snap.web_analytics.pageviews > prev_views);
+        // A real tracker hit lands in the analytics tables. Use an in-memory
+        // DB so tests never write into the user's real cashell.db.
+        let db = crate::db::Database::open_in_memory().expect("in-memory db");
+        let before = db.get_analytics_summary(None).expect("summary").pageviews;
+        db.record_pageview(
+            "docs", "sess_t", "/", "", "Docs", "Firefox", "Linux", "Desktop", "ID", "vh",
+        )
+        .expect("record pageview");
+        let after = db.get_analytics_summary(None).expect("summary").pageviews;
+        assert!(after > before);
     }
 
     #[test]
