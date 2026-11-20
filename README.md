@@ -101,7 +101,7 @@ Sesuai dokumen tata kelola lisensi tunggal (`05-tier-free-vs-pro.md`), CAShell m
 | Fitur | Free | Pro |
 |---|:---:|:---:|
 | Query analitik, filter rentang tanggal, dan ekspor data CSV/JSON | ✅ | ✅ |
-| Endpoint collector lokal (`POST /api/v1/collect`) & tracker `ca-track.js` | ✅ | ✅ |
+| Endpoint collector lokal (`POST /api/collect`) & tracker `ca-track.js` | ✅ | ✅ |
 | Pemantauan jumlah domain/situs: tanpa batas | ✅ | ✅ |
 
 ### 6. AI & Otomasi (BYOK — Bring Your Own Key)
