@@ -40,19 +40,51 @@ pub fn app_build_executor(apps: Vec<crate::config::AppConfig>) -> BuildExecutor 
             let dir = crate::paths::app_dir(&app.name);
             let store = crate::secrets::SecretStore::load_default().ok();
             let env = app.resolve_env(store.as_ref());
-            let outcome = tokio::task::spawn_blocking(move || {
-                crate::deploy::deploy_app(&app, &dir, commit.as_deref(), &env)
-            })
-            .await
-            .map_err(|e| anyhow::anyhow!("deploy task failed: {e}"))?;
-            {
+            let outcome = {
+                let (app, dir, env) = (app.clone(), dir.clone(), env.clone());
+                tokio::task::spawn_blocking(move || {
+                    crate::deploy::deploy_app(&app, &dir, commit.as_deref(), &env)
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("deploy task failed: {e}"))?
+            };
+            let history = {
                 let db = db.lock().await;
                 let _ = db.append_deploy_build_log(job.build_id, &outcome.log);
                 if let Some(c) = &outcome.commit {
                     let _ = db.update_deploy_build_commit(job.build_id, c);
                 }
-            }
-            outcome.result.map_err(|e| anyhow::anyhow!(e))
+                if outcome.result.is_ok() {
+                    None
+                } else {
+                    crate::deploy::rollback::history(&db, &app.name).ok()
+                }
+            };
+            let (Err(err), Some(history)) = (&outcome.result, history) else {
+                return outcome.result.map_err(|e| anyhow::anyhow!(e));
+            };
+            // The deploy failed: bring the last good release back if the app is down.
+            let failed = outcome.commit.clone();
+            let rb = {
+                let app = app.clone();
+                tokio::task::spawn_blocking(move || {
+                    crate::deploy::rollback::run_auto_rollback(
+                        &app,
+                        &dir,
+                        &env,
+                        &history,
+                        failed.as_deref(),
+                    )
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("rollback task failed: {e}"))?
+            };
+            let summary = {
+                let db = db.lock().await;
+                crate::deploy::rollback::record_auto_rollback(&db, &app.name, job.build_id, &rb)
+                    .unwrap_or_else(|e| format!("auto-rollback: could not record result: {e:#}"))
+            };
+            Err(anyhow::anyhow!("{err}; {summary}"))
         })
     })
 }

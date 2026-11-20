@@ -3,6 +3,7 @@
 pub mod executor;
 pub mod git;
 pub mod queue;
+pub mod rollback;
 pub mod webhook;
 pub mod zero_downtime;
 

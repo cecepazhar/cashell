@@ -176,7 +176,10 @@ pub fn parse_ps_line(line: &str) -> Option<(String, ContainerHealth)> {
     Some((name, health))
 }
 
-fn project_containers(tool: &ComposeTool, project: &str) -> Result<Vec<(String, ContainerHealth)>> {
+pub(crate) fn project_containers(
+    tool: &ComposeTool,
+    project: &str,
+) -> Result<Vec<(String, ContainerHealth)>> {
     let out = Command::new(&tool.engine)
         .args([
             "ps",
