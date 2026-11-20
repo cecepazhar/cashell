@@ -995,4 +995,139 @@ mod deploy_route_tests {
         .into_response();
         assert_eq!(res_valid.status(), StatusCode::ACCEPTED);
     }
+
+    const HOOK_SECRET: &str = "hook-secret-xyz";
+    const SHA: &str = "674ac1f20b5722962e2a28a43a87bf2c29008a2d";
+
+    fn hook_state() -> (Arc<DaemonState>, Arc<crate::deploy::BuildQueue>) {
+        let cfg = Config {
+            apps: vec![crate::config::AppConfig {
+                name: "hook-app".to_string(),
+                repo: "https://example.invalid/hook.git".to_string(),
+                branch: "main".to_string(),
+                compose_path: "docker-compose.yml".to_string(),
+                secrets: vec![],
+                env: Default::default(),
+            }],
+            ..Default::default()
+        };
+        let mut node_secrets = std::collections::HashMap::new();
+        node_secrets.insert("hook-app".to_string(), HOOK_SECRET.to_string());
+        let db = crate::db::Database::open_in_memory().unwrap();
+        // No executor: queued builds fail without touching git or containers.
+        let (queue, _worker) = crate::deploy::BuildQueue::new(db, None);
+        let state = Arc::new(DaemonState {
+            token: "daemon-token".to_string(),
+            trusted_proxies: vec![],
+            node_secrets,
+            salt_manager: DailySaltManager::new(),
+            rate_limiter: CollectorRateLimiter::new(60, 60),
+            cfg,
+            build_queue: Some(queue.clone()),
+        });
+        (state, queue)
+    }
+
+    async fn post_hook(
+        state: &Arc<DaemonState>,
+        payload: &[u8],
+        sign_with: &str,
+    ) -> (StatusCode, serde_json::Value) {
+        let mut mac = Hmac::<Sha256>::new_from_slice(sign_with.as_bytes()).unwrap();
+        mac.update(payload);
+        let sig = crate::deploy::webhook::hex_encode(&mac.finalize().into_bytes());
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-hub-signature-256",
+            format!("sha256={sig}").parse().unwrap(),
+        );
+        let resp = deploy_webhook_handler(
+            axum::extract::Path("hook-app".to_string()),
+            State(state.clone()),
+            headers,
+            axum::body::Bytes::copy_from_slice(payload),
+        )
+        .await
+        .into_response();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::json!(null));
+        (status, json)
+    }
+
+    // D-WH-1: only pushes to the configured branch deploy.
+    #[tokio::test]
+    async fn test_d_wh1_push_to_other_branch_is_ignored_and_not_queued() {
+        let (state, queue) = hook_state();
+        let payload = format!(r#"{{"ref":"refs/heads/dev","after":"{SHA}"}}"#);
+        let (status, body) = post_hook(&state, payload.as_bytes(), HOOK_SECRET).await;
+
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(body["status"], "ignored");
+        assert!(body["reason"].as_str().unwrap().contains("refs/heads/main"));
+        assert!(
+            queue.get_build(1).await.unwrap().is_none(),
+            "an ignored push must not create a build"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_d_wh1_tag_push_is_ignored() {
+        let (state, queue) = hook_state();
+        let (status, body) = post_hook(
+            &state,
+            br#"{"ref":"refs/tags/v2.1.0","after":"674ac1f20b5722962e2a28a43a87bf2c29008a2d"}"#,
+            HOOK_SECRET,
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(body["status"], "ignored");
+        assert!(queue.get_build(1).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_d_wh1_bad_signature_is_rejected_before_the_ref_filter() {
+        let (state, queue) = hook_state();
+        let payload = format!(r#"{{"ref":"refs/heads/dev","after":"{SHA}"}}"#);
+        let (status, body) = post_hook(&state, payload.as_bytes(), "wrong-secret").await;
+
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert!(body.get("status").is_none(), "must not reveal ref handling");
+        assert!(queue.get_build(1).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_d_wh1_push_to_configured_branch_is_queued_with_commit() {
+        let (state, queue) = hook_state();
+        let payload = format!(r#"{{"ref":"refs/heads/main","after":"{SHA}"}}"#);
+        let (status, body) = post_hook(&state, payload.as_bytes(), HOOK_SECRET).await;
+
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(body["status"], "queued");
+        assert_eq!(body["build_id"], 1);
+        assert_eq!(body["commit"], SHA);
+        assert_eq!(body["branch"], "main");
+        let build = queue.get_build(1).await.unwrap().unwrap();
+        assert_eq!(build.commit_hash, SHA);
+    }
+
+    // D-WH-2: a payload without a commit is queued as the "HEAD" placeholder,
+    // which the executor turns into "deploy the branch tip" (never a literal checkout of "HEAD").
+    #[tokio::test]
+    async fn test_d_wh2_payload_without_commit_is_queued_as_branch_tip() {
+        let (state, queue) = hook_state();
+        let (status, body) = post_hook(&state, br#"{"ref":"refs/heads/main"}"#, HOOK_SECRET).await;
+
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(body["status"], "queued");
+        assert_eq!(body["commit"], "HEAD");
+        let build = queue.get_build(1).await.unwrap().unwrap();
+        assert_eq!(build.commit_hash, "HEAD");
+        assert_eq!(
+            crate::deploy::queue::commit_to_deploy(&build.commit_hash),
+            None
+        );
+    }
 }

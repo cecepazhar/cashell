@@ -22,6 +22,13 @@ pub type BuildExecutor = Arc<
     dyn Fn(BuildJob, Arc<Mutex<Database>>) -> tokio::task::JoinHandle<Result<String>> + Send + Sync,
 >;
 
+/// What to check out for a queued job: the exact commit when the webhook
+/// carried a valid SHA, otherwise `None` = the tip of the configured branch
+/// (payloads without a commit are queued as the placeholder `"HEAD"`).
+pub fn commit_to_deploy(commit_hash: &str) -> Option<String> {
+    crate::deploy::git::is_valid_commit_sha(commit_hash).then(|| commit_hash.to_string())
+}
+
 /// The real executor for configured `[[apps]]`: git sync → compose build →
 /// health gate, with the full command output stored in the build log.
 pub fn app_build_executor(apps: Vec<crate::config::AppConfig>) -> BuildExecutor {
@@ -35,8 +42,7 @@ pub fn app_build_executor(apps: Vec<crate::config::AppConfig>) -> BuildExecutor 
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("app '{}' is not configured", job.app_name))?;
             // Webhooks without a commit id deploy the branch tip.
-            let commit = crate::deploy::git::is_valid_commit_sha(&job.commit_hash)
-                .then(|| job.commit_hash.clone());
+            let commit = commit_to_deploy(&job.commit_hash);
             let dir = crate::paths::app_dir(&app.name);
             let store = crate::secrets::SecretStore::load_default().ok();
             let env = app.resolve_env(store.as_ref());
@@ -329,5 +335,79 @@ pub mod tests {
 
         queue.is_running.store(false, Ordering::Relaxed);
         worker.abort();
+    }
+
+    async fn wait_finished(queue: &BuildQueue, id: i64) -> DeployBuildRecord {
+        for _ in 0..150 {
+            let b = queue.get_build(id).await.unwrap().unwrap();
+            if b.status == "success" || b.status == "failed" {
+                return b;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+        panic!("build {id} did not finish");
+    }
+
+    // D-EXE-4: a queue without an executor must never report a build it did not run.
+    #[tokio::test]
+    async fn test_d_exe4_queue_without_executor_never_reports_success() {
+        let db = Database::open_in_memory().unwrap();
+        let (queue, worker) = BuildQueue::new(db, None);
+        let id = queue.enqueue("api", "abc1234", "main").await.unwrap();
+
+        let build = wait_finished(&queue, id).await;
+        assert_eq!(build.status, "failed");
+        assert!(
+            build.log_output.contains("no build executor configured"),
+            "log: {}",
+            build.log_output
+        );
+        assert!(!build.log_output.contains("Build succeeded"));
+
+        queue.is_running.store(false, Ordering::Relaxed);
+        worker.abort();
+    }
+
+    #[tokio::test]
+    async fn test_d_exe4_executor_error_marks_build_failed() {
+        let db = Database::open_in_memory().unwrap();
+        let executor: BuildExecutor =
+            Arc::new(|_job, _db| tokio::spawn(async { Err(anyhow::anyhow!("boom")) }));
+        let (queue, worker) = BuildQueue::new(db, Some(executor));
+        let id = queue.enqueue("api", "abc1234", "main").await.unwrap();
+
+        let build = wait_finished(&queue, id).await;
+        assert_eq!(build.status, "failed");
+        assert!(build.log_output.contains("boom"));
+
+        queue.is_running.store(false, Ordering::Relaxed);
+        worker.abort();
+    }
+
+    // The real executor refuses unknown apps before touching git or containers.
+    #[tokio::test]
+    async fn test_d_exe4_real_executor_rejects_unconfigured_app() {
+        let db = Database::open_in_memory().unwrap();
+        let (queue, worker) = BuildQueue::new(db, Some(app_build_executor(vec![])));
+        let id = queue.enqueue("ghost", "abc1234", "main").await.unwrap();
+
+        let build = wait_finished(&queue, id).await;
+        assert_eq!(build.status, "failed");
+        assert!(build.log_output.contains("app 'ghost' is not configured"));
+
+        queue.is_running.store(false, Ordering::Relaxed);
+        worker.abort();
+    }
+
+    // D-WH-2: no usable commit in the payload -> deploy the branch tip, never the literal "HEAD".
+    #[test]
+    fn test_d_wh2_commit_to_deploy_maps_placeholder_to_branch_tip() {
+        assert_eq!(commit_to_deploy("HEAD"), None);
+        assert_eq!(commit_to_deploy(""), None);
+        assert_eq!(commit_to_deploy("--upload-pack=evil"), None);
+        assert_eq!(commit_to_deploy("main; rm -rf /"), None);
+        assert_eq!(commit_to_deploy("674ac1f").as_deref(), Some("674ac1f"));
+        let full = "674ac1f20b5722962e2a28a43a87bf2c29008a2d";
+        assert_eq!(commit_to_deploy(full).as_deref(), Some(full));
     }
 }

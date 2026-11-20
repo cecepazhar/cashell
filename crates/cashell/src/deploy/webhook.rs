@@ -156,3 +156,28 @@ pub mod tests {
         assert_eq!(commit.as_deref(), Some("c0ffee1234567890"));
     }
 }
+
+#[cfg(test)]
+mod ref_tests {
+    use super::*;
+
+    #[test]
+    fn extracts_branch_and_tag_refs() {
+        assert_eq!(
+            extract_ref_from_payload(br#"{"ref":"refs/heads/main","after":"abc"}"#).as_deref(),
+            Some("refs/heads/main")
+        );
+        assert_eq!(
+            extract_ref_from_payload(br#"{"ref":"refs/tags/v1.0"}"#).as_deref(),
+            Some("refs/tags/v1.0")
+        );
+    }
+
+    #[test]
+    fn missing_empty_or_invalid_ref_is_none() {
+        assert_eq!(extract_ref_from_payload(br#"{"after":"abc"}"#), None);
+        assert_eq!(extract_ref_from_payload(br#"{"ref":""}"#), None);
+        assert_eq!(extract_ref_from_payload(br#"{"ref":42}"#), None);
+        assert_eq!(extract_ref_from_payload(b"not json"), None);
+    }
+}
