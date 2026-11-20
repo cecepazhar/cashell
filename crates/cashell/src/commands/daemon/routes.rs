@@ -871,21 +871,27 @@ pub async fn deploy_webhook_handler(
             .into_response();
     }
 
-    // Only pushes to the app's configured branch deploy (tags / other
-    // branches are acknowledged and ignored).
-    if let Some(git_ref) = crate::deploy::webhook::extract_ref_from_payload(&body) {
-        if git_ref != format!("refs/heads/{}", app.branch) {
-            return (
-                StatusCode::ACCEPTED,
-                Json(serde_json::json!({
-                    "ok": true,
-                    "status": "ignored",
-                    "reason": format!("ref '{git_ref}' is not refs/heads/{}", app.branch),
-                    "app": app_name,
-                })),
-            )
-                .into_response();
+    // Only pushes to the app's configured branch deploy. Tags, other
+    // branches and events without a `ref` (e.g. GitHub `ping`, which carries
+    // no push) are acknowledged and ignored.
+    let ignore_reason = match crate::deploy::webhook::extract_ref_from_payload(&body) {
+        None => Some("payload has no 'ref' (not a push event)".to_string()),
+        Some(git_ref) if git_ref != format!("refs/heads/{}", app.branch) => {
+            Some(format!("ref '{git_ref}' is not refs/heads/{}", app.branch))
         }
+        Some(_) => None,
+    };
+    if let Some(reason) = ignore_reason {
+        return (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({
+                "ok": true,
+                "status": "ignored",
+                "reason": reason,
+                "app": app_name,
+            })),
+        )
+            .into_response();
     }
 
     let commit_hash =
@@ -1096,6 +1102,27 @@ mod deploy_route_tests {
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert!(body.get("status").is_none(), "must not reveal ref handling");
         assert!(queue.get_build(1).await.unwrap().is_none());
+    }
+
+    // Q11: events without a `ref` (GitHub `ping`, malformed bodies) never deploy.
+    #[tokio::test]
+    async fn test_q11_payload_without_ref_is_ignored_and_not_queued() {
+        let (state, queue) = hook_state();
+        let payloads: [&[u8]; 3] = [
+            br#"{"zen":"Keep it logically awesome.","hook_id":1}"#,
+            br#"{"after":"674ac1f20b5722962e2a28a43a87bf2c29008a2d"}"#,
+            b"not json",
+        ];
+        for payload in payloads {
+            let (status, body) = post_hook(&state, payload, HOOK_SECRET).await;
+            assert_eq!(status, StatusCode::ACCEPTED);
+            assert_eq!(body["status"], "ignored");
+            assert!(body["reason"].as_str().unwrap().contains("no 'ref'"));
+        }
+        assert!(
+            queue.get_build(1).await.unwrap().is_none(),
+            "an event without a ref must not create a build"
+        );
     }
 
     #[tokio::test]
