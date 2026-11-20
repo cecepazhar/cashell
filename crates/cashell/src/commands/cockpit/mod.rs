@@ -97,6 +97,21 @@ fn panel_border(palette: &catui::Theme, focused: bool, critical: bool) -> Style 
     }
 }
 
+/// Dashboard panel ids in on-screen order (row-major, left to right):
+/// Applications | Server, Containers | Uptime, Analytics | Services Health.
+/// Ids stay stable (scroll/key handlers use them); only placement and the
+/// Tab order follow this list.
+const DASH_ORDER: [usize; 6] = [5, 0, 2, 3, 4, 1];
+
+/// Next (`step = 1`) or previous (`step = 5`) dashboard panel in screen order.
+fn dash_step(current: usize, step: usize) -> usize {
+    let pos = DASH_ORDER.iter().position(|&id| id == current).unwrap_or(0);
+    DASH_ORDER
+        .get((pos + step) % DASH_ORDER.len())
+        .copied()
+        .unwrap_or(DASH_ORDER[0])
+}
+
 // ── Mouse Hitboxes ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5642,7 +5657,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
 
         KeyCode::Tab => {
             if app.current_tab == CockpitTab::Dashboard {
-                app.dashboard_focused_panel = (app.dashboard_focused_panel + 1) % 6;
+                app.dashboard_focused_panel = dash_step(app.dashboard_focused_panel, 1);
             } else {
                 let next_idx = (app.current_tab.to_index() + 1) % CockpitTab::COUNT;
                 app.current_tab = CockpitTab::from_index(next_idx);
@@ -5650,7 +5665,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
         KeyCode::BackTab => {
             if app.current_tab == CockpitTab::Dashboard {
-                app.dashboard_focused_panel = (app.dashboard_focused_panel + 5) % 6;
+                app.dashboard_focused_panel = dash_step(app.dashboard_focused_panel, 5);
             } else {
                 let prev_idx =
                     (app.current_tab.to_index() + CockpitTab::COUNT - 1) % CockpitTab::COUNT;
@@ -8663,11 +8678,12 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         let containers_scroll = app.dashboard_containers_scroll;
         let monitors_scroll = app.dashboard_monitors_scroll;
         let analytics_scroll = app.dashboard_analytics_scroll;
-        draw_fleet_nodes_resume_panel(f, app, upper_cols[0], &palette, fleet_scroll, fleet_focused);
+        applications::draw_applications_panel(f, app, upper_cols[0], &palette, procs_focused);
+        draw_fleet_nodes_resume_panel(f, app, upper_cols[1], &palette, fleet_scroll, fleet_focused);
         draw_services_health_resume_panel(
             f,
             app,
-            upper_cols[1],
+            lower_cols[1],
             &palette,
             services_scroll,
             services_focused,
@@ -8696,7 +8712,6 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             analytics_scroll,
             analytics_focused,
         );
-        applications::draw_applications_panel(f, app, lower_cols[1], &palette, procs_focused);
     } else {
         // Compact view: switch between Upper, Middle, and Lower panels
         let cols = Layout::default()
@@ -8704,61 +8719,65 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(bottom_area);
 
-        if app.dashboard_focused_panel <= 1 {
-            let fleet_scroll = app.dashboard_fleet_scroll;
-            let services_scroll = app.dashboard_services_scroll;
-            draw_fleet_nodes_resume_panel(
-                f,
-                app,
-                cols[0],
-                &palette,
-                fleet_scroll,
-                app.dashboard_focused_panel == 0,
-            );
-            draw_services_health_resume_panel(
-                f,
-                app,
-                cols[1],
-                &palette,
-                services_scroll,
-                app.dashboard_focused_panel == 1,
-            );
-        } else if app.dashboard_focused_panel <= 3 {
-            let containers_scroll = app.dashboard_containers_scroll;
-            let monitors_scroll = app.dashboard_monitors_scroll;
-            draw_docker_containers_resume_panel(
-                f,
-                app,
-                cols[0],
-                &palette,
-                containers_scroll,
-                app.dashboard_focused_panel == 2,
-            );
-            draw_uptime_monitors_resume_panel(
-                f,
-                app,
-                cols[1],
-                &palette,
-                monitors_scroll,
-                app.dashboard_focused_panel == 3,
-            );
-        } else {
-            let analytics_scroll = app.dashboard_analytics_scroll;
-            draw_web_analytics_resume_panel(
-                f,
-                app,
-                cols[0],
-                &palette,
-                analytics_scroll,
-                app.dashboard_focused_panel == 4,
-            );
-            applications::draw_applications_panel(
-                f,
-                app,
-                cols[1],
-                &palette,
-                app.dashboard_focused_panel == 5,
-            );
+        let page = DASH_ORDER
+            .iter()
+            .position(|&id| id == app.dashboard_focused_panel)
+            .unwrap_or(0)
+            / 2;
+        let focused = app.dashboard_focused_panel;
+        let fleet_scroll = app.dashboard_fleet_scroll;
+        let services_scroll = app.dashboard_services_scroll;
+        let containers_scroll = app.dashboard_containers_scroll;
+        let monitors_scroll = app.dashboard_monitors_scroll;
+        let analytics_scroll = app.dashboard_analytics_scroll;
+        match page {
+            0 => {
+                applications::draw_applications_panel(f, app, cols[0], &palette, focused == 5);
+                draw_fleet_nodes_resume_panel(
+                    f,
+                    app,
+                    cols[1],
+                    &palette,
+                    fleet_scroll,
+                    focused == 0,
+                );
+            }
+            1 => {
+                draw_docker_containers_resume_panel(
+                    f,
+                    app,
+                    cols[0],
+                    &palette,
+                    containers_scroll,
+                    focused == 2,
+                );
+                draw_uptime_monitors_resume_panel(
+                    f,
+                    app,
+                    cols[1],
+                    &palette,
+                    monitors_scroll,
+                    focused == 3,
+                );
+            }
+            _ => {
+                draw_web_analytics_resume_panel(
+                    f,
+                    app,
+                    cols[0],
+                    &palette,
+                    analytics_scroll,
+                    focused == 4,
+                );
+                draw_services_health_resume_panel(
+                    f,
+                    app,
+                    cols[1],
+                    &palette,
+                    services_scroll,
+                    focused == 1,
+                );
+            }
         }
     }
 }
@@ -8786,7 +8805,7 @@ fn draw_fleet_nodes_resume_panel(
         ""
     };
     let scroll_hint = if area.height < 12 {
-        " [j↓ Docker/Uptime]"
+        " [Tab ▸ next]"
     } else {
         ""
     };
@@ -9023,7 +9042,7 @@ fn draw_docker_containers_resume_panel(
     };
 
     let scroll_hint = if area.height < 12 {
-        " [k↑ Fleet/Services]"
+        " [Tab ▸ next]"
     } else {
         ""
     };
@@ -9192,7 +9211,7 @@ fn draw_uptime_monitors_resume_panel(
     };
 
     let scroll_hint = if area.height < 12 {
-        " [k↑ Fleet/Services]"
+        " [Tab ▸ next]"
     } else {
         ""
     };
@@ -13115,6 +13134,23 @@ mod tests {
 
         // Verify AppCard created
         assert!(app.apps.iter().any(|a| a.name == "test-node:web"));
+    }
+
+    #[test]
+    fn test_dashboard_tab_order_follows_screen_layout() {
+        // Applications | Server, Containers | Uptime, Analytics | Services Health
+        let mut seen = vec![5];
+        let mut cur = 5;
+        for _ in 0..5 {
+            cur = dash_step(cur, 1);
+            seen.push(cur);
+        }
+        assert_eq!(seen, vec![5, 0, 2, 3, 4, 1]);
+        assert_eq!(dash_step(1, 1), 5, "wraps to the first panel");
+        assert_eq!(dash_step(5, 5), 1, "BackTab wraps to the last panel");
+        for id in 0..6 {
+            assert_eq!(dash_step(dash_step(id, 1), 5), id);
+        }
     }
 
     #[test]
