@@ -29,8 +29,7 @@ pub fn is_valid_branch(s: &str) -> bool {
     !s.is_empty()
         && !s.starts_with('-')
         && !s.contains("..")
-        && s
-            .chars()
+        && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '/'))
 }
 
@@ -195,13 +194,25 @@ pub mod tests {
 
         // 5. Regression: a new commit pushed after the first clone must be
         //    picked up on the next sync (libgit2 version kept the old commit).
-        let branch = repo.head().unwrap().shorthand().unwrap_or("main").to_string();
+        let branch = repo
+            .head()
+            .unwrap()
+            .shorthand()
+            .unwrap_or("main")
+            .to_string();
         fs::write(&file_path, "# Test Project\nThird\n").unwrap();
         index.add_path(Path::new("README.md")).unwrap();
         let tree3 = repo.find_tree(index.write_tree().unwrap()).unwrap();
         let parent2 = repo.find_commit(second_commit_oid).unwrap();
         let third_oid = repo
-            .commit(Some("HEAD"), &sig, &sig, "Third commit", &tree3, &[&parent2])
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "Third commit",
+                &tree3,
+                &[&parent2],
+            )
             .unwrap();
         let res_new = sync_app_repository(src_url, &dest_dir, &branch, None).unwrap();
         assert_eq!(res_new.commit_hash, third_oid.to_string());

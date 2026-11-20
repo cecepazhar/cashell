@@ -202,6 +202,44 @@ fn project_containers(tool: &ComposeTool, project: &str) -> Result<Vec<(String, 
         .collect())
 }
 
+fn engine_out(tool: &ComposeTool, args: &[&str]) -> Result<String> {
+    let out = Command::new(&tool.engine)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .with_context(|| format!("failed to run `{}`", tool.engine))?;
+    if !out.status.success() {
+        bail!(
+            "`{} {}` failed",
+            tool.engine,
+            args.first().copied().unwrap_or("")
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Fail when a container still runs an older image than its tag now points
+/// to — otherwise a build could be "success" while serving the old code.
+fn ensure_fresh_images(tool: &ComposeTool, project: &str, log: &mut String) -> Result<()> {
+    for (name, _) in project_containers(tool, project)? {
+        let info = engine_out(
+            tool,
+            &["inspect", &name, "--format", "{{.Image}}|{{.Config.Image}}"],
+        )?;
+        let (running, tag) = info.split_once('|').unwrap_or((info.as_str(), ""));
+        if tag.is_empty() {
+            continue;
+        }
+        let latest = engine_out(tool, &["image", "inspect", tag, "--format", "{{.Id}}"])?;
+        let norm = |s: &str| s.trim_start_matches("sha256:").to_string();
+        if norm(running) != norm(&latest) {
+            bail!("container {name} still runs an old image of {tag} (not recreated)");
+        }
+    }
+    log.push_str("images: all containers run the freshly built images\n");
+    Ok(())
+}
+
 /// Wait until every container of the project is running and not unhealthy.
 fn wait_healthy(tool: &ComposeTool, project: &str, log: &mut String) -> Result<()> {
     let start = Instant::now();
@@ -304,6 +342,10 @@ pub fn deploy_app(
             .iter()
             .map(|s| s.to_string()),
         );
+        if tool.program == "podman-compose" {
+            // podman-compose keeps old containers even when the image changed.
+            args.push("--force-recreate".to_string());
+        }
         let display = format!(
             "{} -p {project} -f {} up -d --build --remove-orphans",
             tool.label(),
@@ -318,6 +360,7 @@ pub fn deploy_app(
         }
         run_logged(&mut cmd, &display, &mut log)?;
 
+        ensure_fresh_images(&tool, &project, &mut log)?;
         wait_healthy(&tool, &project, &mut log)?;
         Ok(format!(
             "Deployed {} @ {} ({})",

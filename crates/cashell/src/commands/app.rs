@@ -174,11 +174,8 @@ pub async fn run_with_docker(
             let dir = crate::paths::app_dir(&app.name);
             if crate::deploy::executor::is_compose_app(app, &dir) {
                 let tail = lines.to_string();
-                let out = crate::deploy::executor::compose_cmd(
-                    app,
-                    &dir,
-                    &["logs", "--tail", &tail],
-                )?;
+                let out =
+                    crate::deploy::executor::compose_cmd(app, &dir, &["logs", "--tail", &tail])?;
                 println!("{out}");
                 return Ok(0);
             }
@@ -197,7 +194,10 @@ pub async fn run_with_docker(
                 "Deploying '{}' ({}{})...",
                 app.name,
                 app.branch,
-                commit.as_deref().map(|c| format!(" @ {c}")).unwrap_or_default()
+                commit
+                    .as_deref()
+                    .map(|c| format!(" @ {c}"))
+                    .unwrap_or_default()
             ));
             recorded_deploy(app, commit.as_deref())
         }
@@ -229,13 +229,16 @@ pub async fn run_with_docker(
         AppAction::Rollback { name, target } => {
             let app = find_app(cfg, name)?;
             let db = crate::db::get_db().or_else(|_| crate::db::Database::open())?;
-            // Only commits that really built and passed health checks qualify.
-            let good: Vec<String> = db
+            let history: Vec<(String, String)> = db
                 .list_deploy_builds(Some(&app.name), 50)?
                 .into_iter()
-                .filter(|b| b.status == "success")
-                .map(|b| b.commit_hash)
-                .filter(|c| crate::deploy::git::is_valid_commit_sha(c))
+                .map(|b| (b.commit_hash, b.status))
+                .collect();
+            // Only commits that really built and passed health checks qualify.
+            let good: Vec<String> = history
+                .iter()
+                .filter(|(c, st)| st == "success" && crate::deploy::git::is_valid_commit_sha(c))
+                .map(|(c, _)| c.clone())
                 .collect();
             let target_commit = match target {
                 Some(t) => {
@@ -246,16 +249,11 @@ pub async fn run_with_docker(
                     }
                     t.clone()
                 }
-                None => {
-                    // good[0] is the current deploy; roll back to the previous distinct commit.
-                    let current = good.first().cloned();
-                    good.iter()
-                        .find(|c| Some(*c) != current.as_ref())
-                        .cloned()
-                        .ok_or_else(|| {
-                            anyhow!("No previous successful build found to rollback for application '{name}'")
-                        })?
-                }
+                None => default_rollback_target(&history).ok_or_else(|| {
+                    anyhow!(
+                        "No previous successful build found to rollback for application '{name}'"
+                    )
+                })?,
             };
             output::info(&format!(
                 "Rolling back '{}' to commit '{}' (rebuild + health check)...",
@@ -264,6 +262,25 @@ pub async fn run_with_docker(
             recorded_deploy(app, Some(&target_commit))
         }
     }
+}
+
+/// Pick the commit `app rollback` restores when no target is given.
+///
+/// `history` is `(commit, status)` newest first. The last finished build is
+/// what the app currently runs (or failed to run); the target is the newest
+/// successful commit that differs from it. After a failed deploy this is the
+/// last good release, not the one before it.
+fn default_rollback_target(history: &[(String, String)]) -> Option<String> {
+    let current = history
+        .iter()
+        .find(|(_, st)| st == "success" || st == "failed")
+        .map(|(c, _)| c.as_str());
+    history
+        .iter()
+        .filter(|(c, st)| st == "success" && crate::deploy::git::is_valid_commit_sha(c))
+        .map(|(c, _)| c)
+        .find(|c| Some(c.as_str()) != current)
+        .cloned()
 }
 
 fn find_app<'a>(cfg: &'a Config, name: &str) -> Result<&'a crate::config::AppConfig> {
@@ -289,7 +306,11 @@ fn recorded_deploy(app: &crate::config::AppConfig, commit: Option<&str>) -> Resu
         db.update_deploy_build_commit(build_id, c)?;
     }
     let finished = chrono::Utc::now().timestamp();
-    let status = if outcome.result.is_ok() { "success" } else { "failed" };
+    let status = if outcome.result.is_ok() {
+        "success"
+    } else {
+        "failed"
+    };
     db.update_deploy_build_status(build_id, status, None, Some(finished), Some(&outcome.log))?;
     print!("{}", outcome.log);
     match outcome.result {
@@ -470,6 +491,45 @@ pub mod tests {
 
         let exists = mock_docker.container_exists("api-service").await.unwrap();
         assert!(exists, "Container must be healthy after rollback");
+    }
+
+    fn h(rows: &[(&str, &str)]) -> Vec<(String, String)> {
+        rows.iter()
+            .map(|(c, s)| (c.to_string(), s.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn rollback_after_failed_deploy_restores_last_good() {
+        // v3 failed while v2 was live: restore v2, not v1.
+        let hist = h(&[
+            ("6dfdedc", "failed"),
+            ("c59a5eb", "success"),
+            ("793541d", "success"),
+        ]);
+        assert_eq!(default_rollback_target(&hist).as_deref(), Some("c59a5eb"));
+    }
+
+    #[test]
+    fn rollback_from_healthy_goes_to_previous_distinct_commit() {
+        let hist = h(&[
+            ("c59a5eb", "success"),
+            ("c59a5eb", "success"),
+            ("793541d", "success"),
+        ]);
+        assert_eq!(default_rollback_target(&hist).as_deref(), Some("793541d"));
+    }
+
+    #[test]
+    fn rollback_ignores_in_flight_and_invalid_builds() {
+        let hist = h(&[
+            ("HEAD", "building"),
+            ("c59a5eb", "success"),
+            ("HEAD", "success"),
+            ("793541d", "success"),
+        ]);
+        assert_eq!(default_rollback_target(&hist).as_deref(), Some("793541d"));
+        assert_eq!(default_rollback_target(&h(&[("c59a5eb", "success")])), None);
     }
 
     #[tokio::test]
