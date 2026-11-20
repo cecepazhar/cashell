@@ -361,6 +361,7 @@ pub fn deploy_app(
             // the Docker format keeps it so the health gate can use it.
             cmd.env("BUILDAH_FORMAT", "docker");
         }
+        crate::host_guard::check()?;
         run_logged(&mut cmd, &display, &mut log)?;
 
         ensure_fresh_images(&tool, &project, &mut log)?;
@@ -391,6 +392,9 @@ pub fn compose_cmd(app: &AppConfig, app_dir: &Path, sub: &[&str]) -> Result<Stri
     args.extend(sub.iter().map(|s| s.to_string()));
     let mut log = String::new();
     let display = format!("{} {}", tool.label(), sub.join(" "));
+    if !matches!(sub.first().copied(), Some("logs" | "ps")) {
+        crate::host_guard::check()?;
+    }
     let mut cmd = Command::new(&tool.program);
     cmd.args(&args).current_dir(app_dir);
     run_logged(&mut cmd, &display, &mut log)

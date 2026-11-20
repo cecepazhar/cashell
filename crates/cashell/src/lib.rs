@@ -13,6 +13,7 @@ pub mod daemon;
 pub mod db;
 pub mod deploy;
 pub mod entitlements;
+pub mod host_guard;
 pub mod license_gcc;
 pub mod license_local;
 pub mod license_token;

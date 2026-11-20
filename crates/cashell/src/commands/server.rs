@@ -702,6 +702,7 @@ fn run_autoban(action: &AutobanAction) -> Result<()> {
 // ── Docker ────────────────────────────────────────────────────────────────────
 
 fn run_docker(action: &str, name: Option<&str>) -> Result<()> {
+    crate::host_guard::check()?;
     let action_lc = action.to_lowercase();
     let args: Vec<&str> = match action_lc.as_str() {
         "ps" => vec!["ps"],

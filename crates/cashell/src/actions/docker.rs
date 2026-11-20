@@ -142,6 +142,7 @@ impl DockerApi for BollardDocker {
         target: &'a str,
     ) -> DockerFuture<'a, String> {
         Box::pin(async move {
+            crate::host_guard::check()?;
             match action {
                 "start" => {
                     self.client
@@ -263,6 +264,7 @@ impl DockerApi for SystemDocker {
         target: &'a str,
     ) -> DockerFuture<'a, String> {
         Box::pin(async move {
+            crate::host_guard::check()?;
             if let Ok(bollard_client) = BollardDocker::connect() {
                 if let Ok(res) = bollard_client.container_action(action, target).await {
                     return Ok(res);

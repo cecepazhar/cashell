@@ -1217,14 +1217,13 @@ impl CockpitApp {
             .selected_container
             .min(self.latest_snap.docker_containers.len() - 1);
         let name = self.latest_snap.docker_containers[idx].name.clone();
-        let out = std::process::Command::new("docker")
-            .args(["start", &name])
-            .output()
-            .or_else(|_| {
-                std::process::Command::new("podman")
-                    .args(["start", &name])
-                    .output()
-            });
+        let out =
+            crate::host_guard::output(std::process::Command::new("docker").args(["start", &name]))
+                .or_else(|_| {
+                    crate::host_guard::output(
+                        std::process::Command::new("podman").args(["start", &name]),
+                    )
+                });
         match out {
             Ok(o) if o.status.success() => {
                 self.latest_snap.docker_containers[idx].state = "running".to_string();
@@ -1250,14 +1249,13 @@ impl CockpitApp {
             .selected_container
             .min(self.latest_snap.docker_containers.len() - 1);
         let name = self.latest_snap.docker_containers[idx].name.clone();
-        let out = std::process::Command::new("docker")
-            .args(["stop", &name])
-            .output()
-            .or_else(|_| {
-                std::process::Command::new("podman")
-                    .args(["stop", &name])
-                    .output()
-            });
+        let out =
+            crate::host_guard::output(std::process::Command::new("docker").args(["stop", &name]))
+                .or_else(|_| {
+                    crate::host_guard::output(
+                        std::process::Command::new("podman").args(["stop", &name]),
+                    )
+                });
         match out {
             Ok(o) if o.status.success() => {
                 self.latest_snap.docker_containers[idx].state = "exited".to_string();
@@ -1283,14 +1281,12 @@ impl CockpitApp {
             .selected_container
             .min(self.latest_snap.docker_containers.len() - 1);
         let name = self.latest_snap.docker_containers[idx].name.clone();
-        let out = std::process::Command::new("docker")
-            .args(["restart", &name])
-            .output()
-            .or_else(|_| {
-                std::process::Command::new("podman")
-                    .args(["restart", &name])
-                    .output()
-            });
+        let out = crate::host_guard::output(
+            std::process::Command::new("docker").args(["restart", &name]),
+        )
+        .or_else(|_| {
+            crate::host_guard::output(std::process::Command::new("podman").args(["restart", &name]))
+        });
         match out {
             Ok(o) if o.status.success() => {
                 self.latest_snap.docker_containers[idx].state = "running".to_string();
@@ -1416,9 +1412,9 @@ impl CockpitApp {
         }
         if let Some((pid, ref name)) = self.pending_kill_proc.take() {
             let sig = if self.pending_kill_force { "-9" } else { "-15" };
-            let res = std::process::Command::new("kill")
-                .args([sig, &pid.to_string()])
-                .output();
+            let res = crate::host_guard::output(
+                std::process::Command::new("kill").args([sig, &pid.to_string()]),
+            );
             match res {
                 Ok(out) if out.status.success() => {
                     self.set_notification(format!("Terminated process {name} (PID {pid})"));
@@ -1512,14 +1508,14 @@ impl CockpitApp {
             .min(self.latest_snap.docker_containers.len() - 1);
         let name = self.latest_snap.docker_containers[idx].name.clone();
 
-        let out = std::process::Command::new("docker")
-            .args(["rm", "-f", &name])
-            .output()
-            .or_else(|_| {
-                std::process::Command::new("podman")
-                    .args(["rm", "-f", &name])
-                    .output()
-            });
+        let out = crate::host_guard::output(
+            std::process::Command::new("docker").args(["rm", "-f", &name]),
+        )
+        .or_else(|_| {
+            crate::host_guard::output(
+                std::process::Command::new("podman").args(["rm", "-f", &name]),
+            )
+        });
         if let Ok(o) = out {
             if o.status.success() {
                 self.set_notification(format!("🗑 Container '{name}' destroyed"));
@@ -2424,22 +2420,22 @@ impl CockpitApp {
             .cloned();
 
         let result = if let Some(cmd) = remediation_cmd {
-            std::process::Command::new("sh").args(["-c", &cmd]).output()
+            crate::host_guard::output(std::process::Command::new("sh").args(["-c", &cmd]))
         } else {
             // 2. Try docker restart, then podman restart, then systemctl restart
-            std::process::Command::new("docker")
-                .args(["restart", trimmed])
-                .output()
-                .or_else(|_| {
-                    std::process::Command::new("podman")
-                        .args(["restart", trimmed])
-                        .output()
-                })
-                .or_else(|_| {
-                    std::process::Command::new("systemctl")
-                        .args(["restart", trimmed])
-                        .output()
-                })
+            crate::host_guard::output(
+                std::process::Command::new("docker").args(["restart", trimmed]),
+            )
+            .or_else(|_| {
+                crate::host_guard::output(
+                    std::process::Command::new("podman").args(["restart", trimmed]),
+                )
+            })
+            .or_else(|_| {
+                crate::host_guard::output(
+                    std::process::Command::new("systemctl").args(["restart", trimmed]),
+                )
+            })
         };
 
         match result {
@@ -3900,14 +3896,14 @@ impl CockpitApp {
         }
 
         // If container with same name exists, cleanly remove it first for edit/re-run
-        let _ = std::process::Command::new("docker")
-            .args(["rm", "-f", &name])
-            .output()
-            .or_else(|_| {
-                std::process::Command::new("podman")
-                    .args(["rm", "-f", &name])
-                    .output()
-            });
+        let _ = crate::host_guard::output(
+            std::process::Command::new("docker").args(["rm", "-f", &name]),
+        )
+        .or_else(|_| {
+            crate::host_guard::output(
+                std::process::Command::new("podman").args(["rm", "-f", &name]),
+            )
+        });
 
         // Build the docker/podman run command
         let mut args: Vec<String> = vec!["run".into(), "-d".into(), "--name".into(), name.clone()];
@@ -3928,7 +3924,7 @@ impl CockpitApp {
 
         let mut command = std::process::Command::new("docker");
         command.args(&args);
-        let result = command.output();
+        let result = crate::host_guard::output(&mut command);
 
         let mut engine = "docker";
         let (success, detail) = match result {
@@ -3944,7 +3940,7 @@ impl CockpitApp {
                 engine = "podman";
                 let mut cmd2 = std::process::Command::new("podman");
                 cmd2.args(&args);
-                match cmd2.output() {
+                match crate::host_guard::output(&mut cmd2) {
                     Ok(ref o) if o.status.success() => {
                         (true, String::from_utf8_lossy(&o.stdout).trim().to_string())
                     }

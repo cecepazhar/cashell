@@ -102,11 +102,11 @@ fn stop_daemon() {
         .unwrap_or(false);
 
     if is_cashell {
-        match std::process::Command::new("kill")
-            .arg("-TERM")
-            .arg(pid.to_string())
-            .status()
-        {
+        match crate::host_guard::status(
+            std::process::Command::new("kill")
+                .arg("-TERM")
+                .arg(pid.to_string()),
+        ) {
             Ok(_) => println!("  Daemon:    SIGTERM sent to pid {pid}; waiting ≤ 10 s"),
             Err(e) => eprintln!("  ⚠ Daemon:    SIGTERM to pid {pid} failed: {e} (continuing)"),
         }
@@ -149,6 +149,9 @@ fn stop_daemon() {
 /// System unit (`/etc/systemd/system/...`) needs root — report only, do not
 /// attempt (K7: never write outside the CAShell tree).
 fn stop_systemd() {
+    if !crate::host_guard::allowed() {
+        return;
+    }
     // User unit: CAShell-owned path, safe to stop/disable/remove.
     let user_unit = paths::user_systemd_unit();
     let user_installed = user_unit.exists();

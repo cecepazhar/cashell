@@ -310,6 +310,7 @@ WantedBy=default.target
 }
 
 pub fn run_install_service(user: bool) -> Result<()> {
+    crate::host_guard::check()?;
     let cfg_path = crate::paths::config_path();
     let mut cfg = crate::config::Config::load(None)?;
     if cfg.daemon.token.is_empty() {
@@ -392,6 +393,7 @@ pub fn run_install_service(user: bool) -> Result<()> {
 }
 
 pub fn run_stop_service(user: bool) -> Result<()> {
+    crate::host_guard::check()?;
     let args_stop = if user {
         vec!["--user", "stop", "cashell-daemon.service"]
     } else {

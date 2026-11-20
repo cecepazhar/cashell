@@ -598,6 +598,9 @@ impl AppSignal {
 /// Send `sig` to every pid. Refuses pid 0/1 and our own process.
 /// Returns `(ok, failed)` counts.
 pub fn signal_pids(pids: &[u32], sig: AppSignal) -> (usize, usize) {
+    if !crate::host_guard::allowed() {
+        return (0, pids.len());
+    }
     let me = std::process::id();
     let (mut ok, mut failed) = (0, 0);
     for &pid in pids {
@@ -624,6 +627,9 @@ pub fn signal_pids(pids: &[u32], sig: AppSignal) -> (usize, usize) {
 /// Lower scheduling priority (`nice +10`, capped at 19). Unprivileged users
 /// can only lower priority, which is what this does.
 pub fn lower_priority(pids: &[u32]) -> (usize, usize) {
+    if !crate::host_guard::allowed() {
+        return (0, pids.len());
+    }
     let (mut ok, mut failed) = (0, 0);
     for &pid in pids {
         if pid <= 1 {
