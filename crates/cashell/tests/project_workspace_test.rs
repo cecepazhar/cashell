@@ -199,6 +199,13 @@ services:
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+/// Run with a throw-away CAShell home so the developer's real database and
+/// config are never touched (integration tests are built without cfg(test)).
+fn in_temp_home<R>(f: impl FnOnce() -> R) -> R {
+    let home = std::env::temp_dir().join(format!("cashell-it-home-{}", std::process::id()));
+    cashell::paths::with_test_home(&home, f)
+}
+
 #[test]
 fn test_project_cli_command_json_output() {
     let cmd = ProjectCommand {
@@ -206,7 +213,7 @@ fn test_project_cli_command_json_output() {
         json: true,
     };
     let cfg = Config::default();
-    let res = cashell::commands::project::run(&cmd, &cfg);
+    let res = in_temp_home(|| cashell::commands::project::run(&cmd, &cfg));
     assert!(res.is_ok());
     assert_eq!(res.unwrap(), 0);
 }
@@ -220,6 +227,6 @@ fn test_project_cli_info_command() {
         json: true,
     };
     let cfg = Config::default();
-    let res = cashell::commands::project::run(&cmd, &cfg);
+    let res = in_temp_home(|| cashell::commands::project::run(&cmd, &cfg));
     assert!(res.is_ok());
 }

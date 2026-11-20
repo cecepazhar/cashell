@@ -75,9 +75,36 @@ pub fn with_test_tmp<P: FnOnce() -> R, R>(tmp: &std::path::Path, f: P) -> R {
     }
 }
 
+/// Unit tests never touch the developer's real home: without an explicit
+/// override or `CASHELL_HOME`, they share one throw-away home per test
+/// process under the system temp dir.
+#[cfg(test)]
+fn unit_test_home() -> Option<PathBuf> {
+    static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    if std::env::var_os(HOME_ENV).is_some_and(|v| !v.is_empty()) {
+        return None;
+    }
+    Some(
+        HOME.get_or_init(|| {
+            std::env::temp_dir().join(format!("cashell-unit-home-{}", std::process::id()))
+        })
+        .clone(),
+    )
+}
+
+#[cfg(not(test))]
+fn unit_test_home() -> Option<PathBuf> {
+    None
+}
+
+/// Home override that also relocates the XDG roots (test seams only).
+fn isolated_home() -> Option<PathBuf> {
+    test_home_override().or_else(unit_test_home)
+}
+
 /// The home root all CAShell paths hang off.
 pub fn home_dir() -> PathBuf {
-    if let Some(ov) = test_home_override() {
+    if let Some(ov) = isolated_home() {
         return ov;
     }
     std::env::var_os(HOME_ENV)
@@ -90,7 +117,7 @@ pub fn home_dir() -> PathBuf {
 fn xdg_root(var: &str, home_fallback: &std::path::Path) -> PathBuf {
     // A thread-local home override relocates the whole tree — ignore XDG
     // env vars so nothing escapes the override (test seam only).
-    if test_home_override().is_some() {
+    if isolated_home().is_some() {
         return home_fallback.to_path_buf();
     }
     std::env::var_os(var)
@@ -349,6 +376,20 @@ pub fn remove_cashell_path(path: &PathBuf, desc: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unit_tests_never_resolve_the_real_home() {
+        if std::env::var_os(HOME_ENV).is_some() {
+            return; // explicit CASHELL_HOME wins; nothing to guard
+        }
+        let real = dirs::home_dir();
+        assert!(db_path().starts_with(std::env::temp_dir()));
+        assert!(config_path().starts_with(std::env::temp_dir()));
+        assert!(hwid_path().starts_with(std::env::temp_dir()));
+        if let Some(real) = real {
+            assert!(!db_path().starts_with(real.join(".config")));
+        }
+    }
 
     #[test]
     fn test_cashell_home_override_relocates_tree() {

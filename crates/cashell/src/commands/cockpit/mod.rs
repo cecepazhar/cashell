@@ -2545,9 +2545,7 @@ impl CockpitApp {
 
     pub fn import_all_landing_sites(&mut self) {
         // Look for custom import file first: ~/.config/cashell/profile.toml or sites.toml
-        let config_dir = dirs::config_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from(".config"))
-            .join("cashell");
+        let config_dir = crate::paths::config_dir();
         let profile_path = config_dir.join("profile.toml");
         let sites_path = config_dir.join("sites.toml");
 
@@ -2603,8 +2601,7 @@ impl CockpitApp {
 
     pub fn export_analytics_data_json(&mut self) {
         if let Some(ref d) = self.db {
-            let config_dir =
-                dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".config"));
+            let config_dir = crate::paths::config_root();
             let path = config_dir.join("cashell/analytics_export.json");
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
@@ -2625,8 +2622,7 @@ impl CockpitApp {
 
     pub fn export_analytics_data_csv(&mut self) {
         if let Some(ref d) = self.db {
-            let config_dir =
-                dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".config"));
+            let config_dir = crate::paths::config_root();
             let path = config_dir.join("cashell/analytics_export.csv");
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);

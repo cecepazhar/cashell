@@ -145,17 +145,13 @@ impl Snapshot {
 
 /// Convenience helper to create a backup in the default location.
 pub fn create_default_backup() -> Result<Snapshot> {
-    let config_dir = dirs::config_dir()
-        .map(|p| p.join("cashell"))
-        .unwrap_or_else(|| PathBuf::from(".config/cashell"));
+    let config_dir = crate::paths::config_dir();
     Snapshot::create(&config_dir, &default_backup_dir())
 }
 
 /// Convenience helper to restore a backup into the default location.
 pub fn restore_default_backup(snapshot: &Path) -> Result<()> {
-    let config_dir = dirs::config_dir()
-        .map(|p| p.join("cashell"))
-        .unwrap_or_else(|| PathBuf::from(".config/cashell"));
+    let config_dir = crate::paths::config_dir();
     Snapshot::restore(snapshot, &config_dir)
 }
 

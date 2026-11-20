@@ -102,14 +102,10 @@ pub async fn execute_remediation(
         let key = expand_tilde(ssh_key_path);
         // H-07: CAShell-specific known_hosts file so we never silently accept
         // arbitrary host keys (StrictHostKeyChecking=accept-new + UserKnownHostsFile).
-        let known_hosts = dirs::config_dir()
-            .map(|d| {
-                d.join("cashell")
-                    .join("ssh_known_hosts")
-                    .to_string_lossy()
-                    .to_string()
-            })
-            .unwrap_or_else(|| "~/.config/cashell/ssh_known_hosts".to_string());
+        let known_hosts = crate::paths::config_dir()
+            .join("ssh_known_hosts")
+            .to_string_lossy()
+            .to_string();
         let out = tokio::process::Command::new("ssh")
             .arg("-i")
             .arg(&key)
