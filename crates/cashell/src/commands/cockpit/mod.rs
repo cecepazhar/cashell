@@ -8809,7 +8809,8 @@ fn draw_fleet_nodes_resume_panel(
     } else {
         ""
     };
-    let title = format!(" ■ Server Fleet Resume · Armada ({online_count}/{total_count} Online){focus_hint}{scroll_hint} ");
+    let title =
+        format!(" ■ Server ({online_count}/{total_count} Online){focus_hint}{scroll_hint} ");
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
@@ -8948,9 +8949,7 @@ fn draw_services_health_resume_panel(
     } else {
         ""
     };
-    let title = format!(
-        " ■ Services Health Resume · Daemons ({active_count}/{total_count} Active){focus_hint} "
-    );
+    let title = format!(" ■ Services Health ({active_count}/{total_count} Active){focus_hint} ");
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
@@ -9047,13 +9046,13 @@ fn draw_docker_containers_resume_panel(
         ""
     };
     let title = if is_focused {
-        format!(" ■ Docker Containers Resume · {running_count}/{total_count} Containers Running{focus_hint} ")
+        format!(" ■ Containers · {running_count}/{total_count} Containers Running{focus_hint} ")
     } else if down_count == 0 && total_count > 0 {
-        format!(" ■ Docker Containers Resume · ● {running_count}/{total_count} Containers Running{scroll_hint} ")
+        format!(" ■ Containers · ● {running_count}/{total_count} Containers Running{scroll_hint} ")
     } else if down_count > 0 {
-        format!(" ■ Docker Containers Resume · ■ {running_count}/{total_count} Running ({down_count} [DOWN]){scroll_hint} ")
+        format!(" ■ Containers · ■ {running_count}/{total_count} Running ({down_count} [DOWN]){scroll_hint} ")
     } else {
-        format!(" ■ Docker Containers Resume · ● 0/0 Containers{scroll_hint} ")
+        format!(" ■ Containers · ● 0/0 Containers{scroll_hint} ")
     };
 
     let block = Block::default()
@@ -9216,13 +9215,15 @@ fn draw_uptime_monitors_resume_panel(
         ""
     };
     let title = if is_focused {
-        format!(" ■ Uptime Monitors Resume · {up_count}/{total_count} UP{focus_hint} ")
+        format!(" ■ Uptime · {up_count}/{total_count} UP{focus_hint} ")
     } else if down_count == 0 && total_count > 0 {
-        format!(" ■ Uptime Monitors Resume · [OK] ALL {up_count} UP ({total_count} Total){scroll_hint} ")
+        format!(" ■ Uptime · [OK] ALL {up_count} UP ({total_count} Total){scroll_hint} ")
     } else if down_count > 0 {
-        format!(" ■ Uptime Monitors Resume · [ALERT] {up_count}/{total_count} UP · {down_count} [DOWN]{scroll_hint} ")
+        format!(
+            " ■ Uptime · [ALERT] {up_count}/{total_count} UP · {down_count} [DOWN]{scroll_hint} "
+        )
     } else {
-        format!(" ■ Uptime Monitors Resume · ● 0/0 Monitored{scroll_hint} ")
+        format!(" ■ Uptime · ● 0/0 Monitored{scroll_hint} ")
     };
 
     let block = Block::default()
@@ -9431,7 +9432,7 @@ fn draw_web_analytics_resume_panel(
     let block = Block::default()
         .borders(Borders::ALL)
         .title(format!(
-            " ■ Product Analytics (Umami / CA-Product Landings) · {} Live{focus_hint} ",
+            " ■ Analytics · {} Live{focus_hint} ",
             a.active_visitors
         ))
         .border_style(panel_border(palette, is_focused, false));

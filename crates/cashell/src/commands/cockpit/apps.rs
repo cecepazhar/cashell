@@ -540,10 +540,7 @@ pub fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 // 2. Containers Card
                 let cont_block = Block::default()
                     .borders(Borders::ALL)
-                    .title(format!(
-                        " 🐳 Docker / Podman Containers ({}) ",
-                        proj.containers.len()
-                    ))
+                    .title(format!(" 🐳 Containers ({}) ", proj.containers.len()))
                     .border_style(Style::default().fg(palette.border));
                 let c_inner = cont_block.inner(res_chunks[1]);
                 f.render_widget(cont_block, res_chunks[1]);
@@ -902,7 +899,7 @@ pub fn draw_project_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             let block = Block::default()
                 .borders(Borders::ALL)
                 .title(format!(
-                    " 🐳 Docker & Podman Engine Containers ({}) ",
+                    " 🐳 Containers ({}) ",
                     app.latest_snap.docker_containers.len()
                 ))
                 .border_style(Style::default().fg(palette.border));
