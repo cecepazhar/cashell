@@ -79,6 +79,22 @@ pub fn cockpit_theme(name: &str) -> catui::Theme {
         .adapt(depth)
 }
 
+/// Uniform dashboard panel border. Neutral `border` by default,
+/// `border_focus` (same hue as the active tab) when the panel has keyboard
+/// focus, and `danger` only for a real critical condition. Softer status
+/// (warnings, counts) lives in the panel title, not the border colour.
+fn panel_border(palette: &catui::Theme, focused: bool, critical: bool) -> Style {
+    if focused {
+        Style::default()
+            .fg(palette.border_focus)
+            .add_modifier(Modifier::BOLD)
+    } else if critical {
+        Style::default().fg(palette.danger)
+    } else {
+        Style::default().fg(palette.border)
+    }
+}
+
 // ── Mouse Hitboxes ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -7779,23 +7795,30 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         let thermal_alert = snap.cpu_temp_c > 88.0;
 
         // ── Top 1: CPU Telemetry (28%) ──────────────────────────────────────────
-        let cpu_title = if thermal_alert {
-            format!(" CPU Telemetry ({:.1}%) [ALERT: THERMAL] ", snap.cpu_pct)
-        } else {
-            format!(" CPU Telemetry ({:.1}%) ", snap.cpu_pct)
-        };
-        let cpu_border_color = if thermal_alert {
-            palette.danger
+        let mut cpu_title = vec![Span::styled(
+            format!(" CPU Telemetry ({:.1}%) ", snap.cpu_pct),
+            Style::default().fg(palette.text),
+        )];
+        if thermal_alert {
+            cpu_title.push(Span::styled(
+                "[ALERT: THERMAL] ",
+                Style::default()
+                    .fg(palette.danger)
+                    .add_modifier(Modifier::BOLD),
+            ));
         } else if snap.cpu_pct > 80.0 {
-            palette.warning
-        } else {
-            palette.success
-        };
+            cpu_title.push(Span::styled(
+                "[HIGH LOAD] ",
+                Style::default()
+                    .fg(palette.warning)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
 
         let cpu_block = Block::default()
             .borders(Borders::ALL)
-            .title(cpu_title)
-            .border_style(Style::default().fg(cpu_border_color));
+            .title(Line::from(cpu_title))
+            .border_style(panel_border(&palette, false, thermal_alert));
         let cpu_inner = cpu_block.inner(top_chunks[0]);
         f.render_widget(cpu_block, top_chunks[0]);
 
@@ -7887,7 +7910,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         let mem_block = Block::default()
             .borders(Borders::ALL)
             .title(" Memory & Disk ")
-            .border_style(Style::default().fg(palette.border));
+            .border_style(panel_border(&palette, false, false));
         let mem_inner = mem_block.inner(top_chunks[1]);
         f.render_widget(mem_block, top_chunks[1]);
 
@@ -8048,7 +8071,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         let net_block = Block::default()
             .borders(Borders::ALL)
             .title(" Network Status ")
-            .border_style(Style::default().fg(palette.border));
+            .border_style(panel_border(&palette, false, false));
         let net_inner = net_block.inner(top_chunks[2]);
         f.render_widget(net_block, top_chunks[2]);
 
@@ -8128,7 +8151,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let alerts_block = Block::default()
         .borders(Borders::ALL)
         .title(" ■ Executive Command Center · Armada & Daemons Overview ")
-        .border_style(Style::default().fg(palette.accent));
+        .border_style(panel_border(&palette, false, false));
     let alerts_inner = alerts_block.inner(chunks[1]);
     f.render_widget(alerts_block, chunks[1]);
 
@@ -8613,16 +8636,10 @@ fn draw_host_top_processes_panel(
         " ■ Host Top Processes · Task Manager ({}){focus_hint} ",
         procs.len()
     );
-    let border_color = if is_focused {
-        palette.danger
-    } else {
-        palette.accent
-    };
-
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .border_style(Style::default().fg(border_color));
+        .border_style(panel_border(palette, is_focused, false));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -8786,18 +8803,14 @@ fn draw_fleet_nodes_resume_panel(
         ""
     };
     let title = format!(" ■ Server Fleet Resume · Armada ({online_count}/{total_count} Online){focus_hint}{scroll_hint} ");
-    let border_color = if is_focused {
-        palette.accent
-    } else if online_count == total_count && total_count > 0 {
-        palette.success
-    } else {
-        palette.warning
-    };
-
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .border_style(Style::default().fg(border_color));
+        .border_style(panel_border(
+            palette,
+            is_focused,
+            total_count > 0 && online_count < total_count,
+        ));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -8935,18 +8948,14 @@ fn draw_services_health_resume_panel(
     let title = format!(
         " ■ Services Health Resume · Daemons ({active_count}/{total_count} Active){focus_hint} "
     );
-    let border_color = if is_focused {
-        palette.accent
-    } else if active_count == total_count && total_count > 0 {
-        palette.success
-    } else {
-        palette.warning
-    };
-
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .border_style(Style::default().fg(border_color));
+        .border_style(panel_border(
+            palette,
+            is_focused,
+            total_count > 0 && active_count < total_count,
+        ));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -9038,32 +9047,20 @@ fn draw_docker_containers_resume_panel(
     } else {
         ""
     };
-    let (title, border_color) = if is_focused {
-        (
-            format!(" ■ Docker Containers Resume · {running_count}/{total_count} Containers Running{focus_hint} "),
-            palette.accent,
-        )
+    let title = if is_focused {
+        format!(" ■ Docker Containers Resume · {running_count}/{total_count} Containers Running{focus_hint} ")
     } else if down_count == 0 && total_count > 0 {
-        (
-            format!(" ■ Docker Containers Resume · ● {running_count}/{total_count} Containers Running{scroll_hint} "),
-            palette.success,
-        )
+        format!(" ■ Docker Containers Resume · ● {running_count}/{total_count} Containers Running{scroll_hint} ")
     } else if down_count > 0 {
-        (
-            format!(" ■ Docker Containers Resume · ■ {running_count}/{total_count} Running ({down_count} [DOWN]){scroll_hint} "),
-            Color::Rgb(240, 130, 120),
-        )
+        format!(" ■ Docker Containers Resume · ■ {running_count}/{total_count} Running ({down_count} [DOWN]){scroll_hint} ")
     } else {
-        (
-            format!(" ■ Docker Containers Resume · ● 0/0 Containers{scroll_hint} "),
-            palette.border,
-        )
+        format!(" ■ Docker Containers Resume · ● 0/0 Containers{scroll_hint} ")
     };
 
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .border_style(Style::default().fg(border_color));
+        .border_style(panel_border(palette, is_focused, down_count > 0));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -9219,32 +9216,20 @@ fn draw_uptime_monitors_resume_panel(
     } else {
         ""
     };
-    let (title, border_color) = if is_focused {
-        (
-            format!(" ■ Uptime Monitors Resume · {up_count}/{total_count} UP{focus_hint} "),
-            palette.accent,
-        )
+    let title = if is_focused {
+        format!(" ■ Uptime Monitors Resume · {up_count}/{total_count} UP{focus_hint} ")
     } else if down_count == 0 && total_count > 0 {
-        (
-            format!(" ■ Uptime Monitors Resume · [OK] ALL {up_count} UP ({total_count} Total){scroll_hint} "),
-            palette.success,
-        )
+        format!(" ■ Uptime Monitors Resume · [OK] ALL {up_count} UP ({total_count} Total){scroll_hint} ")
     } else if down_count > 0 {
-        (
-            format!(" ■ Uptime Monitors Resume · [ALERT] {up_count}/{total_count} UP · {down_count} [DOWN]{scroll_hint} "),
-            Color::Rgb(240, 130, 120),
-        )
+        format!(" ■ Uptime Monitors Resume · [ALERT] {up_count}/{total_count} UP · {down_count} [DOWN]{scroll_hint} ")
     } else {
-        (
-            format!(" ■ Uptime Monitors Resume · ● 0/0 Monitored{scroll_hint} "),
-            palette.border,
-        )
+        format!(" ■ Uptime Monitors Resume · ● 0/0 Monitored{scroll_hint} ")
     };
 
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .border_style(Style::default().fg(border_color));
+        .border_style(panel_border(palette, is_focused, down_count > 0));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -9450,11 +9435,7 @@ fn draw_web_analytics_resume_panel(
             " ■ Product Analytics (Umami / CA-Product Landings) · {} Live{focus_hint} ",
             a.active_visitors
         ))
-        .border_style(Style::default().fg(if is_focused {
-            palette.success
-        } else {
-            palette.accent
-        }));
+        .border_style(panel_border(palette, is_focused, false));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -9583,11 +9564,7 @@ fn draw_web_analytics_resume_panel2(
         .title(format!(
             " 🌐 Product Landing Pages & Top Referrers{focus_hint} "
         ))
-        .border_style(Style::default().fg(if is_focused {
-            palette.success
-        } else {
-            palette.border
-        }));
+        .border_style(panel_border(palette, is_focused, false));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -10284,8 +10261,12 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(title)
-        .border_style(Style::default().fg(mood_color));
+        .title(Span::styled(title, Style::default().fg(mood_color)))
+        .border_style(panel_border(
+            &palette,
+            false,
+            app.pet_mood == crate::pet::PetMood::Overheated,
+        ));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
