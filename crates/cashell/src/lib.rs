@@ -1,6 +1,7 @@
 //! cashell library — reusable modules for the CLI binary.
 pub mod actions;
 pub mod ai;
+pub mod app_groups;
 pub mod audit_interview;
 pub mod audit_tui;
 pub mod banner;

@@ -21,6 +21,7 @@ use catui::layout::centered_rect;
 use clap::Parser;
 
 pub mod ai;
+pub mod applications;
 pub mod apps;
 pub mod server;
 pub mod settings;
@@ -236,6 +237,7 @@ pub enum HitboxAction {
     // Task Manager & Process Killer actions
     SelectProcess(usize),
     KillProcess(u32),
+    RunAppAction(usize),
     ConfirmKillProcess,
     CancelKillProcess,
     // CrystalDisk SSD Diagnostic modal
@@ -742,6 +744,16 @@ pub struct CockpitApp {
     pub show_kill_modal: bool,
     pub pending_kill_proc: Option<(u32, String)>,
     pub pending_kill_force: bool,
+    /// Every pid an Applications-table End/Kill targets (empty = single pid).
+    pub pending_kill_pids: Vec<u32>,
+
+    // Applications table (dashboard panel 5)
+    pub app_sort: applications::AppSort,
+    pub app_expanded: std::collections::HashSet<String>,
+    pub app_selected_key: Option<applications::AppRowKey>,
+    pub show_app_action_menu: bool,
+    pub app_action_selected: usize,
+    pub app_action_target: Option<applications::AppActionTarget>,
 
     // CrystalDisk SSD Diagnostic modal
     pub show_disk_health_modal: bool,
@@ -1034,6 +1046,13 @@ impl CockpitApp {
             show_kill_modal: false,
             pending_kill_proc: None,
             pending_kill_force: false,
+            pending_kill_pids: Vec::new(),
+            app_sort: applications::AppSort::default(),
+            app_expanded: std::collections::HashSet::new(),
+            app_selected_key: None,
+            show_app_action_menu: false,
+            app_action_selected: 0,
+            app_action_target: None,
 
             show_disk_health_modal: false,
             selected_disk_health: 0,
@@ -1363,11 +1382,31 @@ impl CockpitApp {
 
     pub fn prompt_kill_process_with_name(&mut self, pid: u32, name: &str) {
         self.pending_kill_proc = Some((pid, name.to_string()));
+        self.pending_kill_pids.clear();
         self.pending_kill_force = false;
         self.show_kill_modal = true;
     }
 
     pub fn execute_kill_process(&mut self) {
+        if !self.pending_kill_pids.is_empty() {
+            let pids = std::mem::take(&mut self.pending_kill_pids);
+            let name = self
+                .pending_kill_proc
+                .take()
+                .map(|(_, n)| n)
+                .unwrap_or_default();
+            let (sig, verb) = if self.pending_kill_force {
+                (crate::app_groups::AppSignal::Kill, "Force-killed")
+            } else {
+                (crate::app_groups::AppSignal::End, "Sent End Task to")
+            };
+            let (ok, failed) = crate::app_groups::signal_pids(&pids, sig);
+            self.set_notification(format!("{verb} {name}: {ok} ok, {failed} failed"));
+            self.show_kill_modal = false;
+            self.pending_kill_force = false;
+            self.app_action_target = None;
+            return;
+        }
         if let Some((pid, ref name)) = self.pending_kill_proc.take() {
             let sig = if self.pending_kill_force { "-9" } else { "-15" };
             let res = std::process::Command::new("kill")
@@ -5459,6 +5498,31 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
     }
 
+    // 5e. Applications action menu
+    if app.show_app_action_menu {
+        let n = applications::APP_ACTIONS.len();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.app_action_selected = (app.app_action_selected + n - 1) % n;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.app_action_selected = (app.app_action_selected + 1) % n;
+            }
+            KeyCode::Enter => {
+                let idx = app.app_action_selected;
+                app.run_app_action(idx);
+            }
+            KeyCode::Char(c @ '1'..='5') => {
+                app.run_app_action((c as usize) - ('1' as usize));
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.show_app_action_menu = false;
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
     // 5d. Kill Process Confirmation Modal Handling
     if app.show_kill_modal {
         match key.code {
@@ -5474,6 +5538,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc | KeyCode::Char('q') => {
                 app.show_kill_modal = false;
                 app.pending_kill_force = false;
+                app.pending_kill_pids.clear();
                 app.set_notification("Process termination cancelled.");
                 return Ok(false);
             }
@@ -5577,6 +5642,30 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Char('-') => app.current_tab = CockpitTab::Setting,
         KeyCode::Char('=') => app.current_tab = CockpitTab::Turbo,
 
+        // ── Applications table (Dashboard panel 5) ───────────────────────────
+        KeyCode::Enter
+            if app.current_tab == CockpitTab::Dashboard
+                && app.dashboard_focused_panel == 5
+                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+        {
+            app.open_app_actions();
+        }
+        KeyCode::Char(' ')
+            if app.current_tab == CockpitTab::Dashboard && app.dashboard_focused_panel == 5 =>
+        {
+            app.toggle_app_expand();
+        }
+        KeyCode::Char('S')
+            if app.current_tab == CockpitTab::Dashboard && app.dashboard_focused_panel == 5 =>
+        {
+            app.cycle_app_sort();
+        }
+        KeyCode::Char('x') | KeyCode::Delete
+            if app.current_tab == CockpitTab::Dashboard && app.dashboard_focused_panel == 5 =>
+        {
+            app.prompt_end_selected_app();
+        }
+
         // ── Pet Play Area Controls (Hardware-Reactive Tamagotchi) ─────────────
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.execute_pet_action();
@@ -5601,18 +5690,6 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             app.pet_selected_action = 4;
             app.toggle_pet_history();
         }
-        KeyCode::Char('k') | KeyCode::Char('K') if app.current_tab == CockpitTab::Dashboard => {
-            let target = app
-                .latest_snap
-                .top_processes
-                .get(app.dashboard_proc_selected)
-                .map(|p| (p.pid, p.name.clone()));
-            if let Some((pid, name)) = target {
-                app.prompt_kill_process_with_name(pid, &name);
-            } else {
-                app.set_notification("No process selected to kill");
-            }
-        }
 
         KeyCode::Tab => {
             if app.current_tab == CockpitTab::Dashboard {
@@ -5636,7 +5713,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Up | KeyCode::Char('k') => match app.current_tab {
             CockpitTab::Dashboard => {
                 if app.dashboard_focused_panel == 5 {
-                    app.dashboard_proc_selected = app.dashboard_proc_selected.saturating_sub(1);
+                    app.move_app_selection(-1);
                 } else {
                     app.pet_selected_action = (app.pet_selected_action + 4) % 5;
                     match app.dashboard_focused_panel {
@@ -5707,8 +5784,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Down | KeyCode::Char('j') => match app.current_tab {
             CockpitTab::Dashboard => {
                 if app.dashboard_focused_panel == 5 {
-                    let max_idx = app.latest_snap.top_processes.len().saturating_sub(1);
-                    app.dashboard_proc_selected = (app.dashboard_proc_selected + 1).min(max_idx);
+                    app.move_app_selection(1);
                 } else {
                     app.pet_selected_action = (app.pet_selected_action + 1) % 5;
                     match app.dashboard_focused_panel {
@@ -6466,7 +6542,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                     app.dashboard_analytics_scroll =
                         app.dashboard_analytics_scroll.saturating_sub(1)
                 }
-                _ => app.dashboard_proc_selected = app.dashboard_proc_selected.saturating_sub(1),
+                _ => app.move_app_selection(-1),
             },
             CockpitTab::Project => match app.project_view {
                 ProjectView::Hierarchy | ProjectView::Tree => {
@@ -6498,10 +6574,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                 }
                 3 => app.dashboard_monitors_scroll = (app.dashboard_monitors_scroll + 1).min(30),
                 4 => app.dashboard_analytics_scroll = (app.dashboard_analytics_scroll + 1).min(30),
-                _ => {
-                    let max_idx = app.latest_snap.top_processes.len().saturating_sub(1);
-                    app.dashboard_proc_selected = (app.dashboard_proc_selected + 1).min(max_idx);
-                }
+                _ => app.move_app_selection(1),
             },
             CockpitTab::Project => match app.project_view {
                 ProjectView::Hierarchy | ProjectView::Tree => {
@@ -6994,8 +7067,17 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                         app.execute_turbo_action(idx);
                     }
                     HitboxAction::SelectProcess(idx) => {
-                        app.dashboard_proc_selected = idx;
+                        // Second click on the selected row opens its actions.
+                        let reclick =
+                            app.dashboard_focused_panel == 5 && app.dashboard_proc_selected == idx;
                         app.dashboard_focused_panel = 5;
+                        app.select_app_row(idx);
+                        if reclick {
+                            app.open_app_actions();
+                        }
+                    }
+                    HitboxAction::RunAppAction(idx) => {
+                        app.run_app_action(idx);
                     }
                     HitboxAction::KillProcess(pid) => {
                         app.prompt_kill_process(pid);
@@ -7006,6 +7088,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                     HitboxAction::CancelKillProcess => {
                         app.show_kill_modal = false;
                         app.pending_kill_force = false;
+                        app.pending_kill_pids.clear();
                         app.set_notification("Process termination cancelled.");
                     }
                     HitboxAction::OpenDiskHealth => {
@@ -7298,6 +7381,10 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     if app.show_pro_wizard {
         draw_pro_wizard(f, app, area);
+    }
+
+    if app.show_app_action_menu {
+        applications::draw_app_action_menu(f, app, area);
     }
 
     if app.show_kill_modal {
@@ -7603,48 +7690,125 @@ fn cpu_braille_lines(
     })
 }
 
-fn format_core_span(core: Option<&CpuCoreInfo>, id: usize, bar_len: usize) -> Vec<Span<'static>> {
-    let (usage, freq) = if let Some(c) = core {
-        (c.usage, c.frequency_mhz)
+/// CPU temperature at or above which the dashboard raises a thermal alert.
+/// Shared by the CPU panel, compact header, Executive banner and Turbo HUD.
+const THERMAL_ALERT_C: f32 = 85.0;
+/// CPU temperature at or above which temperature text turns to warning.
+const THERMAL_WARN_C: f32 = 70.0;
+
+fn temp_color(palette: &catui::Theme, temp_c: f32) -> Color {
+    if temp_c >= THERMAL_ALERT_C {
+        palette.danger
+    } else if temp_c >= THERMAL_WARN_C {
+        palette.warning
     } else {
-        (0.0, 0)
+        palette.success
+    }
+}
+
+/// Same 90/80/60 % bands as the CPU braille graph, from the active theme.
+fn cpu_load_color(palette: &catui::Theme, pct: f32) -> Color {
+    if pct >= 90.0 {
+        palette.danger
+    } else if pct >= 80.0 {
+        palette.warning
+    } else if pct >= 60.0 {
+        palette.chart[1]
+    } else {
+        palette.success
+    }
+}
+
+/// One-line meter: `RAM ▕██████░░░░▏ 74%  11.7G / 15.4G`. Text is drawn
+/// beside the bar (never on top of the fill), so it stays readable.
+fn meter_line(
+    palette: &catui::Theme,
+    label: &str,
+    ratio: f64,
+    color: Color,
+    detail: &str,
+    width: usize,
+) -> Line<'static> {
+    let pct = format!("{:>4.0}%", ratio * 100.0);
+    let detail = format!("  {detail}");
+    let fixed = label.len() + 1 + 2 + pct.len() + detail.chars().count();
+    let (bar_len, detail) = if width >= fixed + 6 {
+        (width - fixed, detail)
+    } else {
+        (
+            width.saturating_sub(label.len() + 3 + pct.len()).max(3),
+            String::new(),
+        )
     };
+    let filled = (ratio * bar_len as f64).round().clamp(0.0, bar_len as f64) as usize;
+    Line::from(vec![
+        Span::styled(format!("{label} "), Style::default().fg(palette.text_muted)),
+        Span::styled("▕", Style::default().fg(palette.text_muted)),
+        Span::styled("█".repeat(filled), Style::default().fg(color)),
+        Span::styled(
+            "░".repeat(bar_len - filled),
+            Style::default().fg(palette.text_muted),
+        ),
+        Span::styled("▏", Style::default().fg(palette.text_muted)),
+        Span::styled(pct, Style::default().fg(color).add_modifier(Modifier::BOLD)),
+        Span::styled(detail, Style::default().fg(palette.text)),
+    ])
+}
+
+/// Per-core grid geometry: `(columns, bar_len, rows)` so every core fits in
+/// `width` cells using at most `max_rows` rows (fewer columns = longer bars).
+fn core_grid_layout(n_cores: usize, width: usize, max_rows: usize) -> (usize, usize, usize) {
+    const SEP: usize = 2; // gap between columns
+    let id_w = n_cores.saturating_sub(1).max(1).to_string().len();
+    let fixed = 1 + id_w + 2 + 5; // "C" + id + "▕▏" + " 100%"
+    let n = n_cores.max(1);
+    let max_rows = max_rows.max(1);
+    for cols in 1..=n {
+        let rows = n.div_ceil(cols);
+        let cell_w = (width.saturating_sub(SEP * (cols - 1))) / cols;
+        let bar = cell_w.saturating_sub(fixed + 1);
+        if rows <= max_rows && bar >= 3 {
+            return (cols, bar.min(24), rows);
+        }
+        if bar < 3 {
+            // Too narrow for more columns; clip rows instead.
+            let cols = (cols - 1).max(1);
+            let cell_w = (width.saturating_sub(SEP * (cols - 1))) / cols;
+            return (
+                cols,
+                cell_w.saturating_sub(fixed + 1).max(1),
+                max_rows.min(n.div_ceil(cols)),
+            );
+        }
+    }
+    (n, 3, 1)
+}
+
+pub(crate) fn core_cell_spans(
+    palette: &catui::Theme,
+    core: Option<&CpuCoreInfo>,
+    id: usize,
+    id_w: usize,
+    bar_len: usize,
+) -> Vec<Span<'static>> {
+    let usage = core.map(|c| c.usage).unwrap_or(0.0);
     let filled = ((usage / 100.0) * (bar_len as f32))
         .round()
         .clamp(0.0, bar_len as f32) as usize;
-    let unfilled = bar_len.saturating_sub(filled);
-
-    let color = if usage >= 90.0 {
-        Color::Rgb(238, 128, 120) // Soft Retro Coral
-    } else if usage >= 80.0 {
-        Color::Rgb(245, 155, 120) // Warm Pastel Salmon
-    } else if usage >= 60.0 {
-        Color::Rgb(240, 185, 110) // Retro Honey Amber
-    } else {
-        Color::Rgb(140, 215, 165) // Pastel Mint Green
-    };
-
-    let freq_str = if freq >= 1000 {
-        format!("{:.1}GHz", freq as f64 / 1000.0)
-    } else if freq > 0 {
-        format!("{freq}MHz")
-    } else {
-        " -- ".to_string()
-    };
-
+    let color = cpu_load_color(palette, usage);
     vec![
         Span::styled(
-            format!("C{id} "),
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
+            format!("C{id:<id_w$}"),
+            Style::default().fg(palette.text_muted),
         ),
-        Span::styled("[", Style::default().fg(Color::DarkGray)),
+        Span::styled("▕", Style::default().fg(palette.text_muted)),
         Span::styled("█".repeat(filled), Style::default().fg(color)),
-        Span::styled("░".repeat(unfilled), Style::default().fg(Color::DarkGray)),
-        Span::styled("] ", Style::default().fg(Color::DarkGray)),
-        Span::styled(format!("{:>3.0}% ", usage), Style::default().fg(color)),
-        Span::styled(format!("{:>6}", freq_str), Style::default().fg(Color::Cyan)),
+        Span::styled(
+            "░".repeat(bar_len.saturating_sub(filled)),
+            Style::default().fg(palette.text_muted),
+        ),
+        Span::styled("▏", Style::default().fg(palette.text_muted)),
+        Span::styled(format!("{usage:>4.0}%"), Style::default().fg(color)),
     ]
 }
 
@@ -7713,7 +7877,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let (top_h, show_full_top) = if area.height < 36 && app.overview_proc_scroll >= 1 {
         (1u16, false)
     } else {
-        (12u16, true)
+        (16u16, true)
     };
 
     let chunks = Layout::default()
@@ -7746,7 +7910,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             Span::styled("Temp: ", Style::default().fg(palette.text_muted)),
             Span::styled(
                 format!("{:.1}°C  ", snap.cpu_temp_c),
-                Style::default().fg(if snap.cpu_temp_c > 85.0 {
+                Style::default().fg(if snap.cpu_temp_c >= THERMAL_ALERT_C {
                     palette.danger
                 } else {
                     palette.success
@@ -7792,7 +7956,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             ])
             .split(chunks[0]);
 
-        let thermal_alert = snap.cpu_temp_c > 88.0;
+        let thermal_alert = snap.cpu_temp_c >= THERMAL_ALERT_C;
 
         // ── Top 1: CPU Telemetry (28%) ──────────────────────────────────────────
         let mut cpu_title = vec![Span::styled(
@@ -7823,87 +7987,75 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         f.render_widget(cpu_block, top_chunks[0]);
 
         if cpu_inner.width > 8 && cpu_inner.height > 2 {
-            let temp_style = if snap.cpu_temp_c >= 80.0 {
-                Style::default()
-                    .fg(Color::LightRed)
-                    .add_modifier(Modifier::BOLD)
-            } else if snap.cpu_temp_c >= 65.0 {
-                Style::default().fg(Color::Yellow)
+            let avg_mhz = if snap.cpus.is_empty() {
+                0
             } else {
-                Style::default().fg(Color::Green)
+                snap.cpus.iter().map(|c| c.frequency_mhz).sum::<u64>() / snap.cpus.len() as u64
             };
-
-            let mut header_spans = vec![
-                Span::styled("Load: ", Style::default().fg(palette.text_muted)),
+            let freq_str = if avg_mhz >= 1000 {
+                format!("{:.1}GHz", avg_mhz as f64 / 1000.0)
+            } else if avg_mhz > 0 {
+                format!("{avg_mhz}MHz")
+            } else {
+                "--".to_string()
+            };
+            let header = Line::from(vec![
+                Span::styled("Load ", Style::default().fg(palette.text_muted)),
                 Span::styled(
                     format!(
-                        "[{:.2}, {:.2}, {:.2}]  ",
+                        "{:.2} {:.2} {:.2}",
                         snap.load_avg[0], snap.load_avg[1], snap.load_avg[2]
                     ),
-                    Style::default().fg(palette.accent),
+                    Style::default().fg(palette.text),
                 ),
-                Span::styled("Temp: ", Style::default().fg(palette.text_muted)),
-                Span::styled(format!("{:.1}°C", snap.cpu_temp_c), temp_style),
-            ];
-
-            if thermal_alert {
-                header_spans.push(Span::styled(
-                    " [ALERT]",
+                Span::styled("  ·  ", Style::default().fg(palette.text_muted)),
+                Span::styled(
+                    format!("{:.1}°C", snap.cpu_temp_c),
                     Style::default()
-                        .fg(palette.danger)
+                        .fg(temp_color(&palette, snap.cpu_temp_c))
                         .add_modifier(Modifier::BOLD),
-                ));
-            }
+                ),
+                Span::styled("  ·  ", Style::default().fg(palette.text_muted)),
+                Span::styled(freq_str, Style::default().fg(palette.text)),
+            ]);
+
+            // Rows: header, history graph (>= 2 rows), then the core grid.
+            let width = cpu_inner.width as usize;
+            let avail = (cpu_inner.height as usize).saturating_sub(1);
+            // Give the core grid at most half the space so the graph stays readable.
+            let max_core_rows = (avail / 2).max(1);
+            let (cols, bar_len, core_rows) =
+                core_grid_layout(snap.cpus.len(), width, max_core_rows);
+            let graph_h = avail.saturating_sub(core_rows).max(1);
 
             let cpu_hist_vec: Vec<f32> = app.cpu_history.iter().copied().collect();
-            let braille_height = if cpu_inner.height >= 8 { 2 } else { 1 };
-            let braille_lines = cpu_braille_lines(
-                &palette,
-                &cpu_hist_vec,
-                cpu_inner.width as usize,
-                braille_height,
-            );
+            let mut lines = vec![header];
+            lines.extend(cpu_braille_lines(&palette, &cpu_hist_vec, width, graph_h));
 
-            let half_w = (cpu_inner.width.saturating_sub(3) / 2) as usize;
-            let bar_len = if half_w >= 26 {
-                10
-            } else if half_w >= 18 {
-                5
-            } else {
-                3
-            };
-
-            let mut core_lines = Vec::new();
-            if cpu_inner.width >= 30 {
-                for row in 0..4 {
-                    let c_left_idx = row;
-                    let c_right_idx = row + 4;
-
-                    let left_spans =
-                        format_core_span(snap.cpus.get(c_left_idx), c_left_idx, bar_len);
-                    let right_spans =
-                        format_core_span(snap.cpus.get(c_right_idx), c_right_idx, bar_len);
-
-                    let mut line_spans = left_spans;
-                    line_spans.push(Span::styled(" │ ", Style::default().fg(palette.text_muted)));
-                    line_spans.extend(right_spans);
-                    core_lines.push(Line::from(line_spans));
+            let id_w = snap.cpus.len().saturating_sub(1).max(1).to_string().len();
+            for row in 0..core_rows {
+                let mut spans = Vec::new();
+                for col in 0..cols {
+                    // Column-major so C0..C(n/cols) read top-to-bottom.
+                    let idx = col * core_rows + row;
+                    if idx >= snap.cpus.len() {
+                        break;
+                    }
+                    if col > 0 {
+                        spans.push(Span::raw("  "));
+                    }
+                    spans.extend(core_cell_spans(
+                        &palette,
+                        snap.cpus.get(idx),
+                        idx,
+                        id_w,
+                        bar_len,
+                    ));
                 }
-            } else {
-                for row in
-                    0..4.min(cpu_inner.height.saturating_sub(3 + braille_height as u16) as usize)
-                {
-                    let spans = format_core_span(snap.cpus.get(row), row, bar_len);
-                    core_lines.push(Line::from(spans));
-                }
+                lines.push(Line::from(spans));
             }
 
-            let mut full_cpu_lines = Vec::new();
-            full_cpu_lines.push(Line::from(header_spans));
-            full_cpu_lines.extend(braille_lines);
-            full_cpu_lines.extend(core_lines);
-
-            f.render_widget(Paragraph::new(full_cpu_lines), cpu_inner);
+            f.render_widget(Paragraph::new(lines), cpu_inner);
         }
 
         // ── Top 2: Memory & Disk (22%, compact view without large tables) ────────
@@ -7915,119 +8067,89 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         f.render_widget(mem_block, top_chunks[1]);
 
         if mem_inner.width > 8 && mem_inner.height > 3 {
-            let mem_layout = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(1), // RAM gauge
-                    Constraint::Length(1), // Swap gauge
-                    Constraint::Length(1), // Disk gauge
-                    Constraint::Min(3),    // Compact breakdown text
-                ])
-                .split(mem_inner);
-
-            let ram_used = snap.ram_used_mb;
-            let ram_total = snap.ram_total_mb.max(1);
-            let ram_pct = ((ram_used * 100) / ram_total) as u16;
-            let ram_color = if ram_pct > 85 {
-                palette.danger
-            } else if ram_pct > 70 {
-                palette.warning
-            } else {
-                palette.chart[0]
-            };
-            let ram_label_span = Span::styled(
-                format!("RAM: {ram_used}M/{ram_total}M ({ram_pct}%)"),
-                Style::default()
-                    .fg(Color::Rgb(10, 15, 25))
-                    .add_modifier(Modifier::BOLD),
-            );
-            let ram_gauge = Gauge::default()
-                .gauge_style(Style::default().fg(ram_color).bg(Color::DarkGray))
-                .ratio(((ram_used as f64) / (ram_total as f64)).clamp(0.0, 1.0))
-                .label(ram_label_span);
-            f.render_widget(ram_gauge, mem_layout[0]);
-
-            let swap_used = snap.swap_used_mb;
-            let swap_total = snap.swap_total_mb.max(1);
-            let swap_pct = if snap.swap_total_mb > 0 {
-                ((swap_used * 100) / swap_total) as u16
-            } else {
-                0
-            };
-            let swap_label_span = Span::styled(
-                format!("SWP: {swap_used}M/{swap_total}M ({swap_pct}%)"),
-                Style::default()
-                    .fg(Color::Rgb(10, 15, 25))
-                    .add_modifier(Modifier::BOLD),
-            );
-            let swap_gauge = Gauge::default()
-                .gauge_style(Style::default().fg(palette.chart[1]).bg(Color::DarkGray))
-                .ratio(if snap.swap_total_mb > 0 {
-                    ((swap_used as f64) / (swap_total as f64)).clamp(0.0, 1.0)
-                } else {
+            let width = mem_inner.width as usize;
+            let pct_of = |used: u64, total: u64| -> f64 {
+                if total == 0 {
                     0.0
-                })
-                .label(swap_label_span);
-            f.render_widget(swap_gauge, mem_layout[1]);
-
-            let disk_used = snap.disk_used_gb;
-            let disk_total = snap.disk_total_gb.max(1);
-            let disk_pct = ((disk_used * 100) / disk_total) as u16;
-            let disk_color = if disk_pct > 90 {
-                palette.danger
-            } else if disk_pct > 75 {
-                palette.warning
-            } else {
-                palette.success
+                } else {
+                    (used as f64 / total as f64).clamp(0.0, 1.0)
+                }
             };
-            let disk_label_span = Span::styled(
-                format!("DSK: {disk_used}G/{disk_total}G ({disk_pct}%)"),
-                Style::default()
-                    .fg(Color::Rgb(10, 15, 25))
-                    .add_modifier(Modifier::BOLD),
+            let band = |r: f64| {
+                if r > 0.90 {
+                    palette.danger
+                } else if r > 0.75 {
+                    palette.warning
+                } else {
+                    palette.success
+                }
+            };
+
+            let ram_r = pct_of(snap.ram_used_mb, snap.ram_total_mb);
+            let swap_r = pct_of(snap.swap_used_mb, snap.swap_total_mb);
+            let disk_r = pct_of(snap.disk_used_gb, snap.disk_total_gb);
+
+            let ram_line = meter_line(
+                &palette,
+                "RAM",
+                ram_r,
+                band(ram_r),
+                &format!(
+                    "{} / {}",
+                    applications::fmt_mb(snap.ram_used_mb),
+                    applications::fmt_mb(snap.ram_total_mb)
+                ),
+                width,
             );
-            let disk_gauge = Gauge::default()
-                .gauge_style(Style::default().fg(disk_color).bg(Color::DarkGray))
-                .ratio(((disk_used as f64) / (disk_total as f64)).clamp(0.0, 1.0))
-                .label(disk_label_span);
-            f.render_widget(disk_gauge, mem_layout[2]);
-
-            // Compact breakdown lines without large tables
-            let gpu_info = if snap.gpu_label != "No GPU" && !snap.gpu_label.is_empty() {
-                let util = snap
-                    .gpu_pct
-                    .map(|p| format!("{p:.0}%"))
-                    .unwrap_or_else(|| "--".to_string());
-                format!("{}: {}", snap.gpu_label, util)
+            let swap_line = if snap.swap_total_mb > 0 {
+                meter_line(
+                    &palette,
+                    "SWP",
+                    swap_r,
+                    band(swap_r),
+                    &format!(
+                        "{} / {}",
+                        applications::fmt_mb(snap.swap_used_mb),
+                        applications::fmt_mb(snap.swap_total_mb)
+                    ),
+                    width,
+                )
             } else {
-                "Integrated Intel/AMD".to_string()
+                Line::from(Span::styled(
+                    "SWP  none",
+                    Style::default().fg(palette.text_muted),
+                ))
             };
+            let disk_line = meter_line(
+                &palette,
+                "DSK",
+                disk_r,
+                band(disk_r),
+                &format!("{}G / {}G", snap.disk_used_gb, snap.disk_total_gb),
+                width,
+            );
 
             let mount_summary = snap
                 .mounts
                 .first()
                 .map(|m| {
                     let cap = format_mount_capacity(m.used_mb, m.total_mb, m.used_gb, m.total_gb);
-                    format!("{}: {} ({}%)", m.mountpoint, cap, m.pct)
+                    format!("{} {} ({}%)", m.mountpoint, cap, m.pct)
                 })
-                .unwrap_or_else(|| format!("/ : {}G/{}G", snap.disk_used_gb, snap.disk_total_gb));
+                .unwrap_or_else(|| format!("/ {}G/{}G", snap.disk_used_gb, snap.disk_total_gb));
 
-            let mut mem_lines = vec![
+            let muted = Style::default().fg(palette.text_muted);
+            let text = Style::default().fg(palette.text);
+            let mut detail = vec![
                 Line::from(vec![
-                    Span::styled("Avail: ", Style::default().fg(palette.text_muted)),
-                    Span::styled(
-                        format!("{}M ", snap.ram_available_mb),
-                        Style::default().fg(palette.accent),
-                    ),
-                    Span::styled("Cache: ", Style::default().fg(palette.text_muted)),
-                    Span::styled(
-                        format!("{}M", snap.ram_cached_mb),
-                        Style::default().fg(Color::White),
-                    ),
+                    Span::styled("Avail ", muted),
+                    Span::styled(applications::fmt_mb(snap.ram_available_mb), text),
+                    Span::styled("  ·  Cache ", muted),
+                    Span::styled(applications::fmt_mb(snap.ram_cached_mb), text),
                 ]),
                 Line::from(vec![
-                    Span::styled("Mount: ", Style::default().fg(palette.text_muted)),
-                    Span::styled(mount_summary, Style::default().fg(palette.success)),
+                    Span::styled("Mount ", muted),
+                    Span::styled(mount_summary, text),
                 ]),
             ];
             if let Some(disk) = snap.disk_health.first() {
@@ -8040,30 +8162,49 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 } else {
                     palette.danger
                 };
-                mem_lines.push(Line::from(vec![
-                    Span::styled("SMART: ", Style::default().fg(palette.text_muted)),
+                detail.push(Line::from(vec![
+                    Span::styled("SMART ", muted),
                     Span::styled(
-                        format!("[● {}] ", disk.health_status),
+                        format!("● {} ", disk.health_status),
                         Style::default()
                             .fg(health_color)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        format!("[● {:.0}°C] ", disk.temperature_c),
-                        Style::default().fg(palette.accent),
-                    ),
-                    Span::styled("(H)", Style::default().fg(palette.text_muted)),
-                ]));
-            } else {
-                mem_lines.push(Line::from(vec![
-                    Span::styled("GPU:   ", Style::default().fg(palette.text_muted)),
-                    Span::styled(
-                        truncate_str(&gpu_info, 20),
-                        Style::default().fg(palette.text_muted),
-                    ),
+                    Span::styled(format!("{:.0}°C ", disk.temperature_c), text),
+                    Span::styled("(H)", muted),
                 ]));
             }
-            f.render_widget(Paragraph::new(mem_lines), mem_layout[3]);
+            // GPU line only when a GPU was actually detected (no placeholder text).
+            if !snap.gpu_label.is_empty() && snap.gpu_label != "No GPU" {
+                let util = snap
+                    .gpu_pct
+                    .map(|p| format!("{p:.0}%"))
+                    .unwrap_or_else(|| "--".to_string());
+                detail.push(Line::from(vec![
+                    Span::styled("GPU ", muted),
+                    Span::styled(truncate_str(&snap.gpu_label, 24).to_string(), text),
+                    Span::styled(format!(" {util}"), text),
+                ]));
+            }
+
+            // RAM meter, RAM history graph (fills spare rows), SWP, DSK, details.
+            let fixed = 3 + detail.len();
+            let graph_h = (mem_inner.height as usize).saturating_sub(fixed);
+            let mut lines = vec![ram_line];
+            if graph_h > 0 {
+                let ram_hist: Vec<f32> = app.ram_history.iter().copied().collect();
+                lines.extend(catui::widgets::braille_lines(
+                    &ram_hist,
+                    width,
+                    graph_h,
+                    100.0,
+                    &|pct: f32| band(f64::from(pct) / 100.0),
+                ));
+            }
+            lines.push(swap_line);
+            lines.push(disk_line);
+            lines.extend(detail);
+            f.render_widget(Paragraph::new(lines), mem_inner);
             app.register_hitbox(mem_inner, HitboxAction::OpenDiskHealth);
         }
 
@@ -8399,9 +8540,9 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     }
 
     // Check hardware alerts
-    if snap.cpu_temp_c > 85.0 {
+    if snap.cpu_temp_c >= THERMAL_ALERT_C {
         alert_items.push(vec![Span::styled(
-            " [ALERT: Thermal > 85°C] ",
+            " [ALERT: Thermal ≥ 85°C] ",
             Style::default()
                 .fg(Color::Rgb(238, 128, 120))
                 .bg(Color::Rgb(48, 22, 28))
@@ -8502,7 +8643,6 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         let containers_scroll = app.dashboard_containers_scroll;
         let monitors_scroll = app.dashboard_monitors_scroll;
         let analytics_scroll = app.dashboard_analytics_scroll;
-        let proc_selected = app.dashboard_proc_selected;
         draw_fleet_nodes_resume_panel(f, app, upper_cols[0], &palette, fleet_scroll, fleet_focused);
         draw_services_health_resume_panel(
             f,
@@ -8536,14 +8676,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             analytics_scroll,
             analytics_focused,
         );
-        draw_host_top_processes_panel(
-            f,
-            app,
-            lower_cols[1],
-            &palette,
-            proc_selected,
-            procs_focused,
-        );
+        applications::draw_applications_panel(f, app, lower_cols[1], &palette, procs_focused);
     } else {
         // Compact view: switch between Upper, Middle, and Lower panels
         let cols = Layout::default()
@@ -8591,7 +8724,6 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             );
         } else {
             let analytics_scroll = app.dashboard_analytics_scroll;
-            let proc_selected = app.dashboard_proc_selected;
             draw_web_analytics_resume_panel(
                 f,
                 app,
@@ -8600,179 +8732,15 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 analytics_scroll,
                 app.dashboard_focused_panel == 4,
             );
-            draw_host_top_processes_panel(
+            applications::draw_applications_panel(
                 f,
                 app,
                 cols[1],
                 &palette,
-                proc_selected,
                 app.dashboard_focused_panel == 5,
             );
         }
     }
-}
-
-// ── Host Top Processes (Task Manager & Process Killer) ──────────────────────
-
-fn draw_host_top_processes_panel(
-    f: &mut Frame,
-    app: &mut CockpitApp,
-    area: Rect,
-    palette: &catui::Theme,
-    selected_idx: usize,
-    is_focused: bool,
-) {
-    if area.width < 10 || area.height < 4 {
-        return;
-    }
-    app.register_hitbox(area, HitboxAction::FocusDashboardPanel(5));
-    let procs = &app.latest_snap.top_processes;
-    let focus_hint = if is_focused {
-        " [● FOCUSED - ↑/↓ Select, k Kill]"
-    } else {
-        ""
-    };
-    let title = format!(
-        " ■ Host Top Processes · Task Manager ({}){focus_hint} ",
-        procs.len()
-    );
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(title)
-        .border_style(panel_border(palette, is_focused, false));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
-    if inner.height < 2 {
-        return;
-    }
-
-    let visible_rows = inner.height.saturating_sub(1) as usize; // 1 for header
-    let scroll_offset = if selected_idx >= visible_rows {
-        selected_idx.saturating_sub(visible_rows - 1)
-    } else {
-        0
-    };
-
-    let mut rows = Vec::new();
-    let row_start_y = inner.y + 1; // 1 below header
-    let mut hitboxes_to_register = Vec::new();
-
-    for (screen_row, (idx, p)) in procs
-        .iter()
-        .enumerate()
-        .skip(scroll_offset)
-        .take(visible_rows)
-        .enumerate()
-    {
-        let is_selected = idx == selected_idx;
-        let cpu_col = if p.cpu_pct >= 50.0 {
-            palette.danger
-        } else if p.cpu_pct >= 20.0 {
-            palette.warning
-        } else {
-            palette.success
-        };
-
-        let status_glyph = match p.status.as_str() {
-            "Run" | "Running" => "● RUN",
-            "Sleep" | "Sleeping" => "◌ SLEEP",
-            "Idle" => "· IDLE",
-            _ => &p.status,
-        };
-
-        let (row_style, pid_style, name_style, act_style) = if is_selected {
-            (
-                Style::default()
-                    .bg(palette.highlight_bg)
-                    .fg(palette.highlight_fg)
-                    .add_modifier(Modifier::BOLD),
-                Style::default()
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD),
-                Style::default()
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD),
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            )
-        } else {
-            (
-                Style::default(),
-                Style::default().fg(Color::Cyan),
-                Style::default().fg(Color::White),
-                Style::default().fg(palette.danger),
-            )
-        };
-
-        let short_name = truncate_str(&p.name, 16);
-        let row_y = row_start_y + screen_row as u16;
-
-        hitboxes_to_register.push((
-            Rect {
-                x: inner.x,
-                y: row_y,
-                width: inner.width.saturating_sub(10),
-                height: 1,
-            },
-            HitboxAction::SelectProcess(idx),
-        ));
-        hitboxes_to_register.push((
-            Rect {
-                x: inner.x + inner.width.saturating_sub(10),
-                y: row_y,
-                width: 10,
-                height: 1,
-            },
-            HitboxAction::KillProcess(p.pid),
-        ));
-
-        rows.push(
-            Row::new(vec![
-                Cell::from(format!("{}", p.pid)).style(pid_style),
-                Cell::from(short_name.to_string()).style(name_style),
-                Cell::from(format!("{:.1}%", p.cpu_pct)).style(Style::default().fg(cpu_col)),
-                Cell::from(format!("{}M", p.mem_mb)).style(Style::default().fg(palette.accent)),
-                Cell::from(status_glyph.to_string()),
-                Cell::from("[Kill(k)]").style(act_style),
-            ])
-            .style(row_style),
-        );
-    }
-
-    for (r, a) in hitboxes_to_register {
-        app.register_hitbox(r, a);
-    }
-
-    if rows.is_empty() {
-        rows.push(Row::new(vec![
-            Cell::from("--"),
-            Cell::from("No processes found"),
-            Cell::from("--"),
-            Cell::from("--"),
-            Cell::from("--"),
-            Cell::from(""),
-        ]));
-    }
-
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(7), // PID
-            Constraint::Min(12),   // NAME
-            Constraint::Length(8), // CPU%
-            Constraint::Length(8), // MEM(MB)
-            Constraint::Length(9), // STATUS
-            Constraint::Length(9), // ACTION
-        ],
-    )
-    .header(
-        Row::new(vec!["PID", "NAME", "CPU%", "MEM", "STATUS", "ACTION"]).style(
-            Style::default()
-                .fg(palette.warning)
-                .add_modifier(Modifier::BOLD),
-        ),
-    );
-    f.render_widget(table, inner);
 }
 
 // ── Server Fleet Resume Panel ───────────────────────────────────────────────
@@ -11200,13 +11168,7 @@ fn draw_turbo_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     } else {
         Color::Cyan
     };
-    let temp_color = if snap.cpu_temp_c > 80.0 {
-        Color::LightRed
-    } else if snap.cpu_temp_c > 65.0 {
-        Color::Yellow
-    } else {
-        Color::Green
-    };
+    let temp_color = temp_color(&palette, snap.cpu_temp_c);
 
     let hud_line1 = Line::from(vec![
         Span::styled(" Profile: ", Style::default().fg(palette.text_muted)),
@@ -12012,9 +11974,30 @@ fn draw_kill_process_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         .pending_kill_proc
         .clone()
         .unwrap_or((0, "unknown".to_string()));
-    let message = format!(
-        "Confirm Kill PID {pid} ({name})? This will send SIGTERM. Press [9] for Force Kill (SIGKILL)."
-    );
+    let message = if app.pending_kill_pids.is_empty() {
+        format!(
+            "Confirm Kill PID {pid} ({name})? This will send SIGTERM. Press [9] for Force Kill (SIGKILL)."
+        )
+    } else {
+        let sig = if app.pending_kill_force {
+            "SIGKILL (force)"
+        } else {
+            "SIGTERM. Press [9] for Force Kill (SIGKILL)"
+        };
+        let self_warn = if app
+            .app_action_target
+            .as_ref()
+            .is_some_and(|t| t.contains_self_tree)
+        {
+            " WARNING: this group includes the terminal running CAShell."
+        } else {
+            ""
+        };
+        format!(
+            "End {name} ({} process(es))? This will send {sig}.{self_warn}",
+            app.pending_kill_pids.len()
+        )
+    };
     let dlg = || {
         catui::widgets::ConfirmDialog::new(&palette, "Confirm Process Kill", message.clone())
             .labels("y: Confirm", "n: Cancel")
@@ -13019,16 +13002,28 @@ mod tests {
     }
 
     #[test]
-    fn test_format_core_span() {
+    fn test_core_grid_layout_fits_all_cores() {
+        // 8 cores in a ~48-col panel with room for 4 rows -> 2 columns x 4 rows.
+        assert_eq!(core_grid_layout(8, 48, 4).0, 2);
+        assert_eq!(core_grid_layout(8, 48, 4).2, 4);
+        // 16 threads with only 4 rows available -> 4 columns, nothing hidden.
+        let (cols, bar, rows) = core_grid_layout(16, 96, 4);
+        assert!(cols * rows >= 16, "{cols}x{rows}");
+        assert!(bar >= 3);
+    }
+
+    #[test]
+    fn test_core_cell_spans_uses_theme_colors() {
+        let palette = cockpit_theme("ca-classic");
         let core = CpuCoreInfo {
             core_id: 3,
-            usage: 64.0,
+            usage: 95.0,
             frequency_mhz: 3200,
         };
-        let spans = format_core_span(Some(&core), 3, 10);
+        let spans = core_cell_spans(&palette, Some(&core), 3, 2, 10);
         assert_eq!(spans[0].content, "C3 ");
-        assert!(spans[5].content.contains("64%"));
-        assert_eq!(spans[6].content, "3.2GHz");
+        assert!(spans[5].content.contains("95%"));
+        assert_eq!(spans[2].style.fg, Some(palette.danger));
     }
 
     #[test]
@@ -13681,13 +13676,18 @@ mod tests {
         app.latest_snap.net_total_tx_gb = 3.2;
         app.latest_snap.active_net_iface = "wlp2s0".to_string();
 
-        app.latest_snap.top_processes = vec![crate::systat::ProcInfo {
-            pid: 101,
-            name: "test-proc".to_string(),
+        app.latest_snap.applications = vec![crate::app_groups::AppInfo {
+            key: "test-app".to_string(),
+            name: "Test App".to_string(),
             cpu_pct: 33.3,
             mem_mb: 64,
-            status: "Run".to_string(),
-            role: "Test".to_string(),
+            group_actions: true,
+            processes: vec![crate::app_groups::AppProcess {
+                pid: 101,
+                name: "test-proc".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
         }];
 
         let backend = ratatui::backend::TestBackend::new(140, 45);
@@ -13700,15 +13700,11 @@ mod tests {
             })
             .expect("draw dashboard");
 
-        // Verify that process selection and kill hitboxes were registered
+        // Applications rows are selectable (actions open from the row).
         assert!(app
             .hitboxes
             .iter()
             .any(|h| matches!(h.action, HitboxAction::SelectProcess(0))));
-        assert!(app
-            .hitboxes
-            .iter()
-            .any(|h| matches!(h.action, HitboxAction::KillProcess(101))));
         assert!(app
             .hitboxes
             .iter()

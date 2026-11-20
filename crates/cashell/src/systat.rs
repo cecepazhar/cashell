@@ -310,6 +310,8 @@ pub struct SysSnapshot {
     pub net_total_tx_gb: f64,
     pub active_net_iface: String,
     pub top_processes: Vec<ProcInfo>,
+    /// Processes grouped per desktop application (fast-refresh field).
+    pub applications: Vec<crate::app_groups::AppInfo>,
     pub mesh_peers: Vec<MeshPeer>,
     pub docker_containers: Vec<DockerContainerInfo>,
     pub tracked_projects: Vec<TrackedProject>,
@@ -330,6 +332,8 @@ struct NetRateState {
 static NET_RATE_TRACKER: Mutex<Option<NetRateState>> = Mutex::new(None);
 
 static TELEMETRY_SYS: Mutex<Option<sysinfo::System>> = Mutex::new(None);
+/// User table + time of the previous process refresh (for I/O and GPU rates).
+static PROC_STATE: Mutex<Option<(sysinfo::Users, Instant)>> = Mutex::new(None);
 
 /// Fast, side-effect-free telemetry for UI refresh loops.
 ///
@@ -349,6 +353,16 @@ pub fn snapshot_telemetry() -> SysSnapshot {
 
     sys.refresh_cpu_usage();
     sys.refresh_memory();
+    // Processes were never refreshed here, so `top_processes` was always
+    // empty. Refresh CPU/memory/disk-usage/user for the Applications table.
+    sys.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        sysinfo::ProcessRefreshKind::new()
+            .with_cpu()
+            .with_memory()
+            .with_disk_usage()
+            .with_user(sysinfo::UpdateKind::OnlyIfNotSet),
+    );
 
     let cpu_count = sys.cpus().len();
     let cpu_pct: f32 =
@@ -391,7 +405,16 @@ pub fn snapshot_telemetry() -> SysSnapshot {
     let (net_rx_rate_kbps, net_tx_rate_kbps, net_total_rx_gb, net_total_tx_gb, active_net_iface) =
         probe_networks();
 
-    let top_processes = probe_top_processes(&sys);
+    let top_processes = probe_top_processes(sys);
+    let applications = {
+        let mut st = PROC_STATE.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Instant::now();
+        let (users, last) =
+            st.get_or_insert_with(|| (sysinfo::Users::new_with_refreshed_list(), now));
+        let elapsed = now.duration_since(*last).as_secs_f64();
+        *last = now;
+        crate::app_groups::collect_applications(sys, users, elapsed)
+    };
 
     SysSnapshot {
         cpu_pct,
@@ -415,6 +438,7 @@ pub fn snapshot_telemetry() -> SysSnapshot {
         net_total_tx_gb,
         active_net_iface,
         top_processes,
+        applications,
         ..Default::default()
     }
 }
@@ -2504,6 +2528,8 @@ fn probe_top_processes(sys: &sysinfo::System) -> Vec<ProcInfo> {
     let mut procs: Vec<ProcInfo> = sys
         .processes()
         .iter()
+        // Threads show up as processes in sysinfo; list processes only.
+        .filter(|(_, proc)| proc.thread_kind().is_none())
         .map(|(pid, proc)| {
             let name = proc.name().to_string_lossy().to_string();
             let cpu_pct = proc.cpu_usage();

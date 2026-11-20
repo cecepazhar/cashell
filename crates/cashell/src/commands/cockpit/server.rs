@@ -1,6 +1,6 @@
 //! Fleet & Node Overview Tab & Wizard — extracted from cockpit.rs (F-07).
 
-use super::{cockpit_theme, format_core_span, CockpitApp, HitboxAction};
+use super::{cockpit_theme, core_cell_spans, CockpitApp, HitboxAction};
 use catui::layout::centered_rect;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -372,12 +372,22 @@ pub fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 .fg(palette.warning)
                 .add_modifier(Modifier::BOLD),
         )));
-        for row in 0..4 {
-            let left_spans = format_core_span(snap.cpus.get(row), row, 6);
-            let right_spans = format_core_span(snap.cpus.get(row + 4), row + 4, 6);
-            let mut l = left_spans;
-            l.push(Span::styled(" │ ", Style::default().fg(palette.text_muted)));
-            l.extend(right_spans);
+        // Two columns, every core shown (column-major: C0.. on the left).
+        let n = snap.cpus.len();
+        let rows = n.div_ceil(2);
+        let id_w = n.saturating_sub(1).max(1).to_string().len();
+        for row in 0..rows {
+            let mut l = core_cell_spans(&palette, snap.cpus.get(row), row, id_w, 6);
+            if row + rows < n {
+                l.push(Span::styled(" │ ", Style::default().fg(palette.text_muted)));
+                l.extend(core_cell_spans(
+                    &palette,
+                    snap.cpus.get(row + rows),
+                    row + rows,
+                    id_w,
+                    6,
+                ));
+            }
             details.push(Line::from(l));
         }
     } else {
