@@ -80,14 +80,15 @@ pub fn cockpit_theme(name: &str) -> catui::Theme {
         .adapt(depth)
 }
 
-/// Uniform dashboard panel border. Neutral `border` by default,
-/// `border_focus` (same hue as the active tab) when the panel has keyboard
-/// focus, and `danger` only for a real critical condition. Softer status
-/// (warnings, counts) lives in the panel title, not the border colour.
+/// Uniform dashboard panel border. Normal `border` (blue) by default, green
+/// (`success`) when the panel has keyboard focus — the theme's own
+/// `border_focus` equals `border`, so focus would be invisible — and `danger`
+/// only for a real critical condition (e.g. overheating). Item counts such as
+/// "2 down" never colour the border; they show in the cells and the title.
 fn panel_border(palette: &catui::Theme, focused: bool, critical: bool) -> Style {
     if focused {
         Style::default()
-            .fg(palette.border_focus)
+            .fg(palette.success)
             .add_modifier(Modifier::BOLD)
     } else if critical {
         Style::default().fg(palette.danger)
@@ -8793,11 +8794,7 @@ fn draw_fleet_nodes_resume_panel(
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .border_style(panel_border(
-            palette,
-            is_focused,
-            total_count > 0 && online_count < total_count,
-        ));
+        .border_style(panel_border(palette, is_focused, false));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -8938,11 +8935,7 @@ fn draw_services_health_resume_panel(
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .border_style(panel_border(
-            palette,
-            is_focused,
-            total_count > 0 && active_count < total_count,
-        ));
+        .border_style(panel_border(palette, is_focused, false));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -9047,7 +9040,7 @@ fn draw_docker_containers_resume_panel(
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .border_style(panel_border(palette, is_focused, down_count > 0));
+        .border_style(panel_border(palette, is_focused, false));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -9216,7 +9209,7 @@ fn draw_uptime_monitors_resume_panel(
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .border_style(panel_border(palette, is_focused, down_count > 0));
+        .border_style(panel_border(palette, is_focused, false));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
