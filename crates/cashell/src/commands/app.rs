@@ -6,6 +6,12 @@
 //! - `cashell app down <name>`
 //! - `cashell app logs <name> [--lines <n>]`
 //! - `cashell app restart <name>`
+//! - `cashell app deploy <name> [--commit <sha>]`  (git → compose build → health)
+//! - `cashell app builds <name> [--log <id>]`
+//! - `cashell app rollback <name> [--target <sha>]`
+//!
+//! Apps deployed from a repository with a compose file are managed through
+//! their compose project; otherwise the single container named after the app.
 
 use crate::actions::docker::{DockerApi, SystemDocker};
 use crate::cli::{AppAction, AppCommand};
@@ -76,6 +82,12 @@ pub async fn run_with_docker(
                 .iter()
                 .find(|a| &a.name == name)
                 .ok_or_else(|| anyhow!("App '{name}' not found in configuration [[apps]]"))?;
+            let dir = crate::paths::app_dir(&app.name);
+            if crate::deploy::executor::is_compose_app(app, &dir) {
+                crate::deploy::executor::compose_cmd(app, &dir, &["up", "-d"])?;
+                output::success(&format!("Application '{}' is up (compose).", app.name));
+                return Ok(0);
+            }
 
             let secret_store = SecretStore::load_default().ok();
             let envs = app.resolve_env(secret_store.as_ref());
@@ -104,6 +116,12 @@ pub async fn run_with_docker(
                 .iter()
                 .find(|a| &a.name == name)
                 .ok_or_else(|| anyhow!("App '{name}' not found in configuration [[apps]]"))?;
+            let dir = crate::paths::app_dir(&app.name);
+            if crate::deploy::executor::is_compose_app(app, &dir) {
+                crate::deploy::executor::compose_cmd(app, &dir, &["stop"])?;
+                output::success(&format!("Application '{}' stopped (compose).", app.name));
+                return Ok(0);
+            }
 
             output::info(&format!("Stopping application '{}'...", app.name));
             let res = docker.container_action("stop", &app.name).await;
@@ -124,6 +142,12 @@ pub async fn run_with_docker(
                 .iter()
                 .find(|a| &a.name == name)
                 .ok_or_else(|| anyhow!("App '{name}' not found in configuration [[apps]]"))?;
+            let dir = crate::paths::app_dir(&app.name);
+            if crate::deploy::executor::is_compose_app(app, &dir) {
+                crate::deploy::executor::compose_cmd(app, &dir, &["restart"])?;
+                output::success(&format!("Application '{}' restarted (compose).", app.name));
+                return Ok(0);
+            }
 
             output::info(&format!("Restarting application '{}'...", app.name));
             let res = docker.container_action("restart", &app.name).await;
@@ -147,6 +171,17 @@ pub async fn run_with_docker(
                 .iter()
                 .find(|a| &a.name == name)
                 .ok_or_else(|| anyhow!("App '{name}' not found in configuration [[apps]]"))?;
+            let dir = crate::paths::app_dir(&app.name);
+            if crate::deploy::executor::is_compose_app(app, &dir) {
+                let tail = lines.to_string();
+                let out = crate::deploy::executor::compose_cmd(
+                    app,
+                    &dir,
+                    &["logs", "--tail", &tail],
+                )?;
+                println!("{out}");
+                return Ok(0);
+            }
 
             output::info(&format!(
                 "Fetching last {lines} lines of logs for '{}'...",
@@ -156,79 +191,115 @@ pub async fn run_with_docker(
             println!("{logs}");
             Ok(0)
         }
-        AppAction::Rollback { name, target } => {
-            let app = cfg
-                .apps
-                .iter()
-                .find(|a| &a.name == name)
-                .ok_or_else(|| anyhow!("App '{name}' not found in configuration [[apps]]"))?;
-
+        AppAction::Deploy { name, commit } => {
+            let app = find_app(cfg, name)?;
             output::info(&format!(
-                "Initiating rollback for application '{}'...",
-                app.name
+                "Deploying '{}' ({}{})...",
+                app.name,
+                app.branch,
+                commit.as_deref().map(|c| format!(" @ {c}")).unwrap_or_default()
             ));
-
+            recorded_deploy(app, commit.as_deref())
+        }
+        AppAction::Builds { name, log } => {
+            let app = find_app(cfg, name)?;
             let db = crate::db::get_db().or_else(|_| crate::db::Database::open())?;
-
+            if let Some(id) = log {
+                let b = db
+                    .get_deploy_build(*id)?
+                    .filter(|b| b.app_name == app.name)
+                    .ok_or_else(|| anyhow!("Build #{id} not found for '{}'", app.name))?;
+                println!("{}", b.log_output);
+                return Ok(0);
+            }
             let builds = db.list_deploy_builds(Some(&app.name), 20)?;
-            let successful_builds: Vec<_> = builds
+            if builds.is_empty() {
+                output::info(&format!("No builds yet for '{}'.", app.name));
+                return Ok(0);
+            }
+            for b in builds {
+                let when = chrono::DateTime::from_timestamp(b.created_at, 0)
+                    .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+                    .unwrap_or_default();
+                let short = b.commit_hash.get(..7).unwrap_or(&b.commit_hash).to_string();
+                println!("#{:<5} {:<8} {:<9} {}", b.id, short, b.status, when);
+            }
+            Ok(0)
+        }
+        AppAction::Rollback { name, target } => {
+            let app = find_app(cfg, name)?;
+            let db = crate::db::get_db().or_else(|_| crate::db::Database::open())?;
+            // Only commits that really built and passed health checks qualify.
+            let good: Vec<String> = db
+                .list_deploy_builds(Some(&app.name), 50)?
                 .into_iter()
                 .filter(|b| b.status == "success")
+                .map(|b| b.commit_hash)
+                .filter(|c| crate::deploy::git::is_valid_commit_sha(c))
                 .collect();
-
             let target_commit = match target {
-                Some(t) => t.clone(),
-                None => {
-                    if successful_builds.len() >= 2 {
-                        successful_builds[1].commit_hash.clone()
-                    } else if let Some(first) = successful_builds.first() {
-                        first.commit_hash.clone()
-                    } else {
-                        bail!("No previous successful build found to rollback for application '{name}'");
+                Some(t) => {
+                    if !good.iter().any(|c| c.starts_with(t.as_str())) {
+                        bail!(
+                            "Commit '{t}' has no successful build for '{name}' — run `cashell app builds {name}`"
+                        );
                     }
+                    t.clone()
+                }
+                None => {
+                    // good[0] is the current deploy; roll back to the previous distinct commit.
+                    let current = good.first().cloned();
+                    good.iter()
+                        .find(|c| Some(*c) != current.as_ref())
+                        .cloned()
+                        .ok_or_else(|| {
+                            anyhow!("No previous successful build found to rollback for application '{name}'")
+                        })?
                 }
             };
-
             output::info(&format!(
-                "Rolling back '{}' to commit '{}'...",
+                "Rolling back '{}' to commit '{}' (rebuild + health check)...",
                 app.name, target_commit
             ));
+            recorded_deploy(app, Some(&target_commit))
+        }
+    }
+}
 
-            let app_dir = crate::paths::app_dir(&app.name);
-            if app_dir.exists() {
-                let _ = crate::deploy::sync_app_repository(
-                    &app.repo,
-                    &app_dir,
-                    &app.branch,
-                    Some(&target_commit),
-                );
-            }
+fn find_app<'a>(cfg: &'a Config, name: &str) -> Result<&'a crate::config::AppConfig> {
+    cfg.apps
+        .iter()
+        .find(|a| a.name == name)
+        .ok_or_else(|| anyhow!("App '{name}' not found in configuration [[apps]]"))
+}
 
-            let restart_res = docker.container_action("restart", &app.name).await;
-            let healthy = docker.container_exists(&app.name).await.unwrap_or(false);
+/// Run a real deploy and record it (status + full log) in `deploy_builds`.
+fn recorded_deploy(app: &crate::config::AppConfig, commit: Option<&str>) -> Result<i32> {
+    let db = crate::db::get_db().or_else(|_| crate::db::Database::open())?;
+    let build_id = db.create_deploy_build(&app.name, commit.unwrap_or("HEAD"))?;
+    let started = chrono::Utc::now().timestamp();
+    db.update_deploy_build_status(build_id, "building", Some(started), None, None)?;
 
-            if !healthy || restart_res.is_err() {
-                let _ = db.create_deploy_build(&app.name, &target_commit);
-                bail!("Rollback healthcheck failed for application '{name}'!");
-            }
+    let store = SecretStore::load_default().ok();
+    let env = app.resolve_env(store.as_ref());
+    let dir = crate::paths::app_dir(&app.name);
+    let outcome = crate::deploy::deploy_app(app, &dir, commit, &env);
 
-            let build_id = db.create_deploy_build(&app.name, &target_commit)?;
-            let now = chrono::Utc::now().timestamp();
-            let _ = db.update_deploy_build_status(
-                build_id,
-                "success",
-                Some(now),
-                Some(now),
-                Some(&format!(
-                    "Rollback to {target_commit} succeeded. Healthcheck: PASSED"
-                )),
-            );
-
-            output::success(&format!(
-                "Application '{}' rolled back to commit '{}' successfully. Healthcheck: PASSED",
-                app.name, target_commit
-            ));
+    if let Some(c) = &outcome.commit {
+        db.update_deploy_build_commit(build_id, c)?;
+    }
+    let finished = chrono::Utc::now().timestamp();
+    let status = if outcome.result.is_ok() { "success" } else { "failed" };
+    db.update_deploy_build_status(build_id, status, None, Some(finished), Some(&outcome.log))?;
+    print!("{}", outcome.log);
+    match outcome.result {
+        Ok(msg) => {
+            output::success(&format!("{msg} (build #{build_id})"));
             Ok(0)
+        }
+        Err(e) => {
+            output::error(&format!("Deploy failed (build #{build_id}): {e}"));
+            bail!("deploy of '{}' failed: {e}", app.name)
         }
     }
 }

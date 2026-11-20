@@ -57,6 +57,17 @@ pub fn verify_webhook_signature(headers: &HeaderMap, body: &[u8], secret: &str) 
     false
 }
 
+/// The pushed ref (`refs/heads/<branch>` / `refs/tags/<tag>`) from a push
+/// webhook (GitHub, Gitea, GitLab all use `ref`).
+pub fn extract_ref_from_payload(body: &[u8]) -> Option<String> {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()?
+        .get("ref")?
+        .as_str()
+        .filter(|r| !r.is_empty())
+        .map(String::from)
+}
+
 /// Extract commit SHA from git webhook payload body (GitHub, GitLab, Gitea).
 pub fn extract_commit_from_payload(body: &[u8]) -> Option<String> {
     if let Ok(val) = serde_json::from_slice::<serde_json::Value>(body) {

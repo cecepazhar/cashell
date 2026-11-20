@@ -391,6 +391,22 @@ pub enum AppAction {
         /// Name of the app
         name: String,
     },
+    /// Build & deploy an application now: git sync → compose up --build → health check
+    Deploy {
+        /// Name of the app
+        name: String,
+        /// Deploy this commit instead of the branch tip
+        #[arg(long)]
+        commit: Option<String>,
+    },
+    /// Show recent builds (status, commit, time) for an application
+    Builds {
+        /// Name of the app
+        name: String,
+        /// Show the full log of this build id
+        #[arg(long)]
+        log: Option<i64>,
+    },
     /// Rollback an application to previous version (D-07)
     Rollback {
         /// Name of the app

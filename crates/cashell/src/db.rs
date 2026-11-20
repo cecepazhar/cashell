@@ -2704,6 +2704,15 @@ impl Database {
         Ok(())
     }
 
+    /// Record the commit a build actually deployed (resolved from a branch tip).
+    pub fn update_deploy_build_commit(&self, id: i64, commit_hash: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE deploy_builds SET commit_hash = ?1 WHERE id = ?2",
+            params![commit_hash, id],
+        )?;
+        Ok(())
+    }
+
     /// Append chunk of logs to the build record.
     pub fn append_deploy_build_log(&self, id: i64, chunk: &str) -> Result<()> {
         self.conn.execute(

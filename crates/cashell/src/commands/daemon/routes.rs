@@ -232,7 +232,8 @@ pub fn build_router(cfg: &Config) -> Router {
     let node_secrets = cfg.daemon.node_secrets.clone();
     let build_queue = match crate::db::Database::open() {
         Ok(db) => {
-            let (q, _) = crate::deploy::BuildQueue::new(db, None);
+            let executor = crate::deploy::queue::app_build_executor(cfg.apps.clone());
+            let (q, _) = crate::deploy::BuildQueue::new(db, Some(executor));
             Some(q)
         }
         Err(_) => None,
@@ -868,6 +869,23 @@ pub async fn deploy_webhook_handler(
             })),
         )
             .into_response();
+    }
+
+    // Only pushes to the app's configured branch deploy (tags / other
+    // branches are acknowledged and ignored).
+    if let Some(git_ref) = crate::deploy::webhook::extract_ref_from_payload(&body) {
+        if git_ref != format!("refs/heads/{}", app.branch) {
+            return (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({
+                    "ok": true,
+                    "status": "ignored",
+                    "reason": format!("ref '{git_ref}' is not refs/heads/{}", app.branch),
+                    "app": app_name,
+                })),
+            )
+                .into_response();
+        }
     }
 
     let commit_hash =

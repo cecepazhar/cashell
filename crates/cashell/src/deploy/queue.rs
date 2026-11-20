@@ -5,6 +5,7 @@ use anyhow::Result;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
+#[cfg(test)]
 use tokio::time::{sleep, Duration};
 
 /// A job payload placed in the deployment build queue (D-05).
@@ -20,6 +21,41 @@ pub struct BuildJob {
 pub type BuildExecutor = Arc<
     dyn Fn(BuildJob, Arc<Mutex<Database>>) -> tokio::task::JoinHandle<Result<String>> + Send + Sync,
 >;
+
+/// The real executor for configured `[[apps]]`: git sync → compose build →
+/// health gate, with the full command output stored in the build log.
+pub fn app_build_executor(apps: Vec<crate::config::AppConfig>) -> BuildExecutor {
+    let apps = Arc::new(apps);
+    Arc::new(move |job: BuildJob, db: Arc<Mutex<Database>>| {
+        let apps = apps.clone();
+        tokio::spawn(async move {
+            let app = apps
+                .iter()
+                .find(|a| a.name == job.app_name)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("app '{}' is not configured", job.app_name))?;
+            // Webhooks without a commit id deploy the branch tip.
+            let commit = crate::deploy::git::is_valid_commit_sha(&job.commit_hash)
+                .then(|| job.commit_hash.clone());
+            let dir = crate::paths::app_dir(&app.name);
+            let store = crate::secrets::SecretStore::load_default().ok();
+            let env = app.resolve_env(store.as_ref());
+            let outcome = tokio::task::spawn_blocking(move || {
+                crate::deploy::deploy_app(&app, &dir, commit.as_deref(), &env)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("deploy task failed: {e}"))?;
+            {
+                let db = db.lock().await;
+                let _ = db.append_deploy_build_log(job.build_id, &outcome.log);
+                if let Some(c) = &outcome.commit {
+                    let _ = db.update_deploy_build_commit(job.build_id, c);
+                }
+            }
+            outcome.result.map_err(|e| anyhow::anyhow!(e))
+        })
+    })
+}
 
 /// Sequential build queue processing builds one by one (D-05).
 pub struct BuildQueue {
@@ -96,9 +132,10 @@ impl BuildQueue {
                     let handle = exec(job.clone(), db_arc.clone());
                     handle.await.unwrap_or_else(|e| Err(anyhow::anyhow!("{e}")))
                 } else {
-                    // Default step: simulate/execute compose build step
-                    sleep(Duration::from_millis(50)).await;
-                    Ok("Build completed successfully via Docker Engine.".to_string())
+                    // Never report a build that did not run.
+                    Err(anyhow::anyhow!(
+                        "no build executor configured — nothing was built or deployed"
+                    ))
                 };
 
                 let finished_now = chrono::Utc::now().timestamp();
