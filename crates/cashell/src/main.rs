@@ -29,15 +29,37 @@ fn main() -> ExitCode {
     }
 }
 
+/// The Rust runtime ignores SIGPIPE, so `println!` panics with "Broken
+/// pipe" once the reader of stdout has gone. Restoring the default action
+/// makes the process end silently instead, as coreutils do. Long-running
+/// commands (daemon, TUI) keep ignoring it so a closed pipe cannot kill them.
+#[cfg(unix)]
+fn restore_default_sigpipe() {
+    // SAFETY: only changes the process-wide disposition of SIGPIPE to the
+    // valid value SIG_DFL; no handler code or Rust state is involved.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn restore_default_sigpipe() {}
+
 fn run_app() -> Result<i32> {
     let args = Cashell::parse();
     let cfg = commands::load_config(&args.config_file)?;
 
-    // Suppress banner for full-screen TUI or background daemon operations
-    let suppress_banner = matches!(
+    // Full-screen TUI or background daemon operations.
+    let long_running = matches!(
         args.command,
         None | Some(Commands::Cockpit(_)) | Some(Commands::Chat(_)) | Some(Commands::Daemon(_))
     );
+    if !long_running {
+        // One-shot commands behave like other Unix tools when piped into
+        // `head` & co: exit quietly instead of panicking on EPIPE.
+        restore_default_sigpipe();
+    }
+    let suppress_banner = long_running;
     if !suppress_banner {
         banner::print(args.quiet);
     }
