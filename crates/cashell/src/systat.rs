@@ -779,6 +779,16 @@ pub fn probe_fleet_nodes(
 
 // ── Ecosystem Daemon Health Probe ───────────────────────────────────────────
 
+/// True when `bin` is on `$PATH` or any of `files` exists. Optional services
+/// (tailscale, cloudflared) are only listed when they are installed, so a
+/// machine without them doesn't show permanent INACTIVE rows.
+fn service_installed(bin: &str, files: &[&str]) -> bool {
+    let in_path = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
+        .unwrap_or(false);
+    in_path || files.iter().any(|f| std::path::Path::new(f).exists())
+}
+
 pub fn probe_services_health(docker_running: usize, docker_total: usize) -> Vec<DaemonHealthInfo> {
     let mut list = Vec::new();
 
@@ -808,14 +818,24 @@ pub fn probe_services_health(docker_running: usize, docker_total: usize) -> Vec<
             "Inactive (tailscaled socket missing)".to_string(),
         )
     };
-    list.push(DaemonHealthInfo {
-        name: "tailscaled".to_string(),
-        display_name: "Tailscale Mesh VPN".to_string(),
-        category: "Mesh VPN".to_string(),
-        state: ts_state,
-        endpoint: "/run/tailscale/tailscaled.sock".to_string(),
-        detail: ts_detail,
-    });
+    if ts_sock
+        || service_installed(
+            "tailscale",
+            &[
+                "/usr/lib/systemd/system/tailscaled.service",
+                "/etc/systemd/system/tailscaled.service",
+            ],
+        )
+    {
+        list.push(DaemonHealthInfo {
+            name: "tailscaled".to_string(),
+            display_name: "Tailscale Mesh VPN".to_string(),
+            category: "Mesh VPN".to_string(),
+            state: ts_state,
+            endpoint: "/run/tailscale/tailscaled.sock".to_string(),
+            detail: ts_detail,
+        });
+    }
 
     // 2. cloudflared
     let cf_running = Command::new("systemctl")
@@ -834,14 +854,24 @@ pub fn probe_services_health(docker_running: usize, docker_total: usize) -> Vec<
             "Inactive (cloudflared stopped)".to_string(),
         )
     };
-    list.push(DaemonHealthInfo {
-        name: "cloudflared".to_string(),
-        display_name: "Cloudflare Edge Tunnel".to_string(),
-        category: "Edge Tunnel".to_string(),
-        state: cf_state,
-        endpoint: "systemd:cloudflared".to_string(),
-        detail: cf_detail,
-    });
+    if cf_running
+        || service_installed(
+            "cloudflared",
+            &[
+                "/usr/lib/systemd/system/cloudflared.service",
+                "/etc/systemd/system/cloudflared.service",
+            ],
+        )
+    {
+        list.push(DaemonHealthInfo {
+            name: "cloudflared".to_string(),
+            display_name: "Cloudflare Edge Tunnel".to_string(),
+            category: "Edge Tunnel".to_string(),
+            state: cf_state,
+            endpoint: "systemd:cloudflared".to_string(),
+            detail: cf_detail,
+        });
+    }
 
     // H-09: hardcoded personal gateway check removed — no private hosts
     // or personal gateway endpoints may appear in defaults.
@@ -879,38 +909,6 @@ pub fn probe_services_health(docker_running: usize, docker_total: usize) -> Vec<
         state: dk_state,
         endpoint: "/var/run/docker.sock".to_string(),
         detail: dk_detail,
-    });
-
-    // 5. hermes agent gateway
-    let port_8090 = "127.0.0.1:8090"
-        .parse::<SocketAddr>()
-        .ok()
-        .map(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(40)).is_ok())
-        .unwrap_or(false);
-    let hermes_active = port_8090
-        || Command::new("systemctl")
-            .args(["is-active", "hermes-agent"])
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "active")
-            .unwrap_or(false);
-    let (hm_state, hm_detail) = if hermes_active || port_8090 {
-        (
-            DaemonState::Active,
-            "Active (Autonomous runtime / :8090)".to_string(),
-        )
-    } else {
-        (
-            DaemonState::Degraded,
-            "Standby (CLI session active)".to_string(),
-        )
-    };
-    list.push(DaemonHealthInfo {
-        name: "hermes agent gateway".to_string(),
-        display_name: "Hermes Agent Gateway".to_string(),
-        category: "Agent Gateway".to_string(),
-        state: hm_state,
-        endpoint: ":8090 / agent runtime".to_string(),
-        detail: hm_detail,
     });
 
     list
@@ -2786,15 +2784,21 @@ mod tests {
     #[test]
     fn test_services_health_probe() {
         let health = probe_services_health(2, 8);
-        let expected_names = vec![
-            "tailscaled",
-            "cloudflared",
-            "docker / podman",
-            "hermes agent gateway",
-        ];
-        for n in expected_names {
-            assert!(health.iter().any(|h| h.name == n), "missing {n}");
-        }
+        // The container engine row is always present; tailscale/cloudflared
+        // only when installed; no owner-specific entries.
+        assert!(health.iter().any(|h| h.name == "docker / podman"));
+        assert!(!health.iter().any(|h| h.name.contains("hermes")));
+        let ts_listed = health.iter().any(|h| h.name == "tailscaled");
+        let ts_expected = std::path::Path::new("/var/run/tailscale/tailscaled.sock").exists()
+            || std::path::Path::new("/run/tailscale/tailscaled.sock").exists()
+            || service_installed(
+                "tailscale",
+                &[
+                    "/usr/lib/systemd/system/tailscaled.service",
+                    "/etc/systemd/system/tailscaled.service",
+                ],
+            );
+        assert_eq!(ts_listed, ts_expected);
     }
 
     #[test]

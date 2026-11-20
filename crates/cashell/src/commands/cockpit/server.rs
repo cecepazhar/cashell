@@ -280,7 +280,7 @@ pub fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         sysinfo::System::cpu_arch().unwrap_or_default()
     );
     let mut details = Vec::new();
-    if sel_name.contains("X1") || sel_name.contains("Local") {
+    if super::is_local_node_name(sel_name) {
         details.push(Line::from(vec![
             Span::styled("Hardware:     ", Style::default().fg(palette.text_muted)),
             Span::styled(

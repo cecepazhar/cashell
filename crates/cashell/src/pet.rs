@@ -883,7 +883,7 @@ pub const SOVEREIGN_EXPRESSIONS: [MascotExpression; 100] = [
         id: 65,
         archetype: "ANGRY",
         label: "Steaming Core",
-        desc: "High fan RPM on ThinkPad X1",
+        desc: "High fan RPM",
         has_glasses: false,
         mouth_type: 9,
         eye_type: 5,

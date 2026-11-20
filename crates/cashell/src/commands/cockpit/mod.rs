@@ -112,6 +112,19 @@ fn dash_step(current: usize, step: usize) -> usize {
         .unwrap_or(DASH_ORDER[0])
 }
 
+/// Display name of this machine in the fleet/server lists: `Local (<hostname>)`.
+pub(crate) fn local_node_label() -> String {
+    format!(
+        "Local ({})",
+        sysinfo::System::host_name().unwrap_or_else(|| "Host".to_string())
+    )
+}
+
+/// True for the built-in local node entry (never a configured remote).
+pub(crate) fn is_local_node_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case("local") || name.starts_with("Local")
+}
+
 // ── Mouse Hitboxes ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1323,7 +1336,7 @@ impl CockpitApp {
     // ── CRUD Edit & Delete Functions ─────────────────────────────────────────
 
     pub fn project_server_targets(&self) -> Vec<(String, String)> {
-        let mut list = vec![("local".to_string(), "ThinkPad X1 (Local)".to_string())];
+        let mut list = vec![("local".to_string(), local_node_label())];
         for (name, node) in &self.cfg.daemon.nodes {
             list.push((
                 name.clone(),
@@ -1464,10 +1477,7 @@ impl CockpitApp {
             .min(self.server_probe_results.len() - 1);
         let server_name = self.server_probe_results[idx].0.clone();
 
-        if server_name.starts_with("ThinkPad X1")
-            || server_name.starts_with("Local")
-            || server_name == "local"
-        {
+        if is_local_node_name(&server_name) {
             self.set_notification("Local machine node cannot be removed.");
             return;
         }
@@ -1772,19 +1782,18 @@ impl CockpitApp {
             .min(self.server_probe_results.len() - 1);
         let server_name = self.server_probe_results[idx].0.clone();
 
-        let (ip, user, port) =
-            if server_name.eq_ignore_ascii_case("Local") || server_name.starts_with("ThinkPad") {
-                let default_user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
-                ("127.0.0.1".to_string(), default_user, 22u16)
-            } else if let Some(cfg_node) = self.cfg.daemon.nodes.get(&server_name) {
-                (
-                    cfg_node.ip.clone(),
-                    cfg_node.user.clone(),
-                    cfg_node.services.first().map(|s| s.port).unwrap_or(22),
-                )
-            } else {
-                ("unknown".to_string(), "unknown".to_string(), 22u16)
-            };
+        let (ip, user, port) = if is_local_node_name(&server_name) {
+            let default_user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
+            ("127.0.0.1".to_string(), default_user, 22u16)
+        } else if let Some(cfg_node) = self.cfg.daemon.nodes.get(&server_name) {
+            (
+                cfg_node.ip.clone(),
+                cfg_node.user.clone(),
+                cfg_node.services.first().map(|s| s.port).unwrap_or(22),
+            )
+        } else {
+            ("unknown".to_string(), "unknown".to_string(), 22u16)
+        };
 
         let outcome = {
             let addr_str = format!("{ip}:{port}");
@@ -1818,8 +1827,10 @@ impl CockpitApp {
             .selected_server
             .min(self.server_probe_results.len() - 1);
         let server_name = self.server_probe_results[idx].0.clone();
-        if server_name.starts_with("ThinkPad X1") || server_name.starts_with("Local") {
-            self.set_notification("Node 'ThinkPad X1 (Local)' is a hardcoded system fleet node and cannot be removed.");
+        if is_local_node_name(&server_name) {
+            self.set_notification(
+                "The local node is a built-in system fleet node and cannot be removed.",
+            );
             return;
         }
         self.request_server_deletion(server_name);
@@ -1833,8 +1844,8 @@ impl CockpitApp {
 
     pub fn probe_servers(&mut self) {
         let mut results = Vec::new();
-        // 1. Local node ThinkPad X1
-        results.push(("ThinkPad X1 (Local)".to_string(), Some(0u128)));
+        // 1. Local node
+        results.push((local_node_label(), Some(0u128)));
 
         // 2. Nodes in config
         for (name, node) in &self.cfg.daemon.nodes {
@@ -1981,7 +1992,7 @@ impl CockpitApp {
         let target_desc = if let Some(ref r) = self.term_remote {
             format!("Remote ({r})")
         } else {
-            "Local (ThinkPad X1)".to_string()
+            local_node_label()
         };
         self.term_output.push(format!("$ [{target_desc}] > {cmd}"));
 
@@ -3679,9 +3690,7 @@ impl CockpitApp {
             self.set_notification(format!("✎ Editing fleet server '{}'", server_name));
         } else {
             // Built‑in preset not in config – construct from known preset or probe data.
-            let (ip, user, svcs) = if server_name.eq_ignore_ascii_case("Local")
-                || server_name.starts_with("ThinkPad")
-            {
+            let (ip, user, svcs) = if is_local_node_name(&server_name) {
                 let default_user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
                 (
                     "127.0.0.1".to_string(),
@@ -3729,7 +3738,7 @@ impl CockpitApp {
             .min(self.server_probe_results.len() - 1);
         let server_name = self.server_probe_results[idx].0.clone();
 
-        if server_name.starts_with("ThinkPad X1") || server_name.starts_with("Local") {
+        if is_local_node_name(&server_name) {
             self.set_notification("System local node cannot be cloned.");
             return;
         }
@@ -3779,7 +3788,7 @@ impl CockpitApp {
             .min(self.server_probe_results.len() - 1);
         let server_name = self.server_probe_results[idx].0.clone();
 
-        if server_name.starts_with("ThinkPad X1") || server_name.starts_with("Local") {
+        if is_local_node_name(&server_name) {
             self.set_notification("System local node cannot be disabled.");
             return;
         }
@@ -13334,16 +13343,12 @@ mod tests {
         let app = CockpitApp::new(&Config::default());
         // Verify the local node is present
         let nodes = &app.latest_snap.fleet_nodes;
-        assert!(nodes
-            .iter()
-            .any(|n| n.name.contains("ThinkPad X1") || n.name.contains("Local")));
+        assert!(nodes.iter().any(|n| n.name.starts_with("Local")));
 
         // Verify core daemons present
         let daemons = &app.latest_snap.service_health;
-        assert!(daemons.iter().any(|d| d.name == "tailscaled"));
-        assert!(daemons.iter().any(|d| d.name == "cloudflared"));
         assert!(daemons.iter().any(|d| d.name == "docker / podman"));
-        assert!(daemons.iter().any(|d| d.name == "hermes agent gateway"));
+        assert!(!daemons.iter().any(|d| d.name.contains("hermes")));
         // H-09: no private gateway entries (9router/omniroute) in service_health
         assert!(!daemons.iter().any(|d| d.name.contains("9router")));
     }
