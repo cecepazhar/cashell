@@ -904,7 +904,7 @@ impl CockpitApp {
             ram_history.push_back(ram_pct);
         }
 
-        let hostname = sysinfo::System::host_name().unwrap_or_else(|| "ThinkPad X1".to_string());
+        let hostname = sysinfo::System::host_name().unwrap_or_else(|| "Host".to_string());
 
         let db = match crate::db::Database::open() {
             Ok(d) => {
@@ -5330,7 +5330,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                             }
                         } else {
                             app.term_remote = None;
-                            app.set_notification("Terminal target: Local (ThinkPad X1)");
+                            app.set_notification("Terminal target: Local");
                         }
                         return Ok(false);
                     }
@@ -6840,7 +6840,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                         app.term_remote = target;
                         app.set_notification(match &app.term_remote {
                             Some(name) => format!("Terminal target: Remote [{name}]"),
-                            None => "Terminal target: Local (ThinkPad X1)".to_string(),
+                            None => "Terminal target: Local".to_string(),
                         });
                     }
                     HitboxAction::CycleAiModel => {
@@ -10035,7 +10035,7 @@ fn draw_terminal_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let target_label = match &app.term_remote {
         Some(name) => format!("Remote: [{name}]"),
-        None => "Local: ThinkPad X1".to_string(),
+        None => "Local".to_string(),
     };
 
     let bar_spans = vec![

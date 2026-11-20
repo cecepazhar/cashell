@@ -264,7 +264,7 @@ pub fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         .server_probe_results
         .get(app.selected_server)
         .map(|(n, _)| n.as_str())
-        .unwrap_or("ThinkPad X1");
+        .unwrap_or("Local");
     let detail_block = Block::default()
         .borders(Borders::ALL)
         .title(format!(" Node Resources — {} ", sel_name))
@@ -273,12 +273,18 @@ pub fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     f.render_widget(detail_block, sub_chunks[1]);
 
     let snap = &app.latest_snap;
+    let hardware = format!(
+        "{} · {} · {}",
+        sysinfo::System::host_name().unwrap_or_else(|| "Host".to_string()),
+        sysinfo::System::long_os_version().unwrap_or_else(|| "Linux".to_string()),
+        sysinfo::System::cpu_arch().unwrap_or_default()
+    );
     let mut details = Vec::new();
     if sel_name.contains("X1") || sel_name.contains("Local") {
         details.push(Line::from(vec![
             Span::styled("Hardware:     ", Style::default().fg(palette.text_muted)),
             Span::styled(
-                "ThinkPad X1 Carbon (Intel 8-Core / Btrfs NVMe)",
+                hardware,
                 Style::default()
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD),

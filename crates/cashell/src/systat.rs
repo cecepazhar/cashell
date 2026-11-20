@@ -727,7 +727,6 @@ pub fn probe_fleet_nodes(
                     }
                     if !is_online && text.contains("pong") {
                         is_online = true;
-                        latency = Some(15);
                     }
                 }
             }
@@ -752,9 +751,10 @@ pub fn probe_fleet_nodes(
                     ip: node_ip,
                     status: "ONLINE".to_string(),
                     latency_ms: latency,
-                    cpu_pct: Some(15.0),
-                    ram_pct: Some(40),
-                    disk_pct: Some(35),
+                    // No agent telemetry here: show "--", never invented numbers.
+                    cpu_pct: None,
+                    ram_pct: None,
+                    disk_pct: None,
                     role: "Registered Fleet Node".to_string(),
                 }
             } else {
