@@ -804,6 +804,8 @@ fn probe_remote_node(name: &str, node: &crate::config::NodeConfig) -> FleetNodeR
             res.disk_pct = Some(m.disk_pct);
         }
         ProbeOutcome::AuthFailed => res.status = "AUTH FAILED".to_string(),
+        ProbeOutcome::HostKeyUnknown => res.status = "TRUST HOST".to_string(),
+        ProbeOutcome::HostKeyChanged => res.status = "HOST KEY CHANGED".to_string(),
         ProbeOutcome::Unreachable => {}
     }
     res
@@ -1673,7 +1675,6 @@ pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
     use rayon::prelude::*;
 
     let default_targets: &[(&str, &str, &str)] = &[
-        ("Localhost Web", "http://127.0.0.1:8080/", "Localhost"),
         (
             "CAShell Local Daemon",
             "http://127.0.0.1:8090/api/health",

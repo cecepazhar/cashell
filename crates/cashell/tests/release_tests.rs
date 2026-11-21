@@ -6,8 +6,8 @@ use std::path::Path;
 fn test_rl01_version_synchronization_across_manifests() {
     let pkg_version = env!("CARGO_PKG_VERSION");
     assert_eq!(
-        pkg_version, "2.1.0-rc1",
-        "CAShell Cargo package version must be 2.1.0-rc1"
+        pkg_version, "2.1.0-rc2",
+        "CAShell Cargo package version must be 2.1.0-rc2"
     );
 
     let workspace_cargo = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -20,8 +20,8 @@ fn test_rl01_version_synchronization_across_manifests() {
         std::fs::read_to_string(&workspace_cargo).expect("must read workspace Cargo.toml");
 
     assert!(
-        content.contains("version = \"2.1.0-rc1\""),
-        "workspace Cargo.toml must declare version = 2.1.0-rc1"
+        content.contains("version = \"2.1.0-rc2\""),
+        "workspace Cargo.toml must declare version = 2.1.0-rc2"
     );
 }
 
@@ -76,22 +76,22 @@ fn test_rl03_readme_free_pro_matrix_and_measured_ram_integrity() {
 
     // Verify Version
     assert!(
-        readme.contains("version-2.1.0--rc1"),
-        "README must display version 2.1.0-rc1 badge"
+        readme.contains("version-2.1.0--rc2"),
+        "README must display version 2.1.0-rc2 badge"
     );
     assert!(
-        readme.contains("# CAShell (`cas`) v2.1.0-rc1"),
-        "README title must display v2.1.0-rc1"
+        readme.contains("# CAShell (`cas`) v2.1.0-rc2"),
+        "README title must display v2.1.0-rc2"
     );
 
     // Verify Measured RAM from V-02 (no unmeasured claims)
     assert!(
-        readme.contains("VmRSS 2.2 MB"),
-        "README must document measured daemon VmRSS 2.2 MB"
+        readme.contains("VmRSS 6.5 MB"),
+        "README must document measured daemon VmRSS 6.5 MB"
     );
     assert!(
-        readme.contains("VmRSS 4.8 MB"),
-        "README must document measured Cockpit VmRSS 4.8 MB"
+        readme.contains("VmRSS 9.0 MB"),
+        "README must document measured Cockpit VmRSS 9.0 MB"
     );
     assert!(
         !readme.contains("<15 MB"),

@@ -1,9 +1,9 @@
-# CAShell (`cas`) v2.1.0-rc1
+# CAShell (`cas`) v2.1.0-rc2
 
 > **Sovereign DevOps Cockpit & Cloud Shell**  
 > All-in-One CLI, TUI, dan 24/7 daemon mandiri untuk server engineering: btop-grade hardware telemetry, Caddy reverse proxy dengan SSL otomatis, UFW firewall + SSH auto-ban, zero-downtime container deploy, Uptime monitoring, privacy-first web analytics, dan AI BYOK.
 
-[![Version](https://img.shields.io/badge/version-2.1.0--rc1-blue.svg)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-2.1.0--rc2-blue.svg)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux-purple.svg)]()
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)]()
@@ -47,9 +47,9 @@ cas fix
 
 ## 📊 Measured Performance & Resource Footprint
 
-Diukur secara riil pada arsitektur Linux x86_64 (baseline task V-02):
-- **Daemon Memory (Idle 24/7)**: `VmRSS 2.2 MB` (2,248 kB)
-- **Cockpit TUI Memory**: `VmRSS 4.8 MB` (4,752 kB)
+Diukur secara riil pada Linux x86_64 (build `2.1.0-rc1`, 20 Nov 2026, VmRSS dari `/proc/<pid>/status`):
+- **Daemon Memory (Idle 24/7)**: `VmRSS 6.5 MB`
+- **Cockpit TUI Memory**: `VmRSS 9.0 MB`
 - **Storage Tracker Script (`ca-track.js`)**: `< 1.2 KB` (gzipped)
 - **Ketergantungan Eksternal**: Nol runtime dependencies, binary tunggal mandiri.
 

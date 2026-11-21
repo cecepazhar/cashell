@@ -319,6 +319,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_secret_store_encryption_and_permissions() {
         let tmp = std::env::temp_dir().join(format!("cashell-secrets-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);

@@ -884,7 +884,7 @@ fn persist_audit_to_db(report: &AuditReport, md_report: &str, cmd: &AuditCommand
     let project_name = report
         .repo_path
         .split('/')
-        .last()
+        .next_back()
         .unwrap_or("project")
         .to_string();
 

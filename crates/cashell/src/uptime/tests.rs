@@ -377,7 +377,7 @@ fn test_u07_uptime_consistency_tui_cli_db() -> anyhow::Result<()> {
         .expect("Monitor should exist in summary");
 
     assert_eq!(mon_summary.name, "ConsistencyMonitor");
-    assert_eq!(mon_summary.is_up, true);
+    assert!(mon_summary.is_up);
     assert_eq!(mon_summary.status_code, Some(200));
     assert_eq!(mon_summary.latency_ms, Some(35));
     assert_eq!(mon_summary.state, MonitorState::Up);

@@ -31,17 +31,6 @@ use crate::db::Database;
 pub fn default_endpoint_targets() -> Vec<MonitorConfig> {
     vec![
         MonitorConfig {
-            name: "Localhost Web".to_string(),
-            target: "http://127.0.0.1:8080/".to_string(),
-            monitor_type: MonitorType::Http,
-            interval_secs: 60,
-            timeout_ms: 2000,
-            expected_status: None,
-            expected_keyword: None,
-            public: false,
-            group: "Localhost".to_string(),
-        },
-        MonitorConfig {
             name: "CAShell Local Daemon".to_string(),
             target: "http://127.0.0.1:8090/api/health".to_string(),
             monitor_type: MonitorType::Http,

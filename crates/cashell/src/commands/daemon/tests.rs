@@ -292,14 +292,14 @@ async fn test_analytics_summary_wrong_token_401() {
 fn test_daemon_run_rejects_non_loopback_without_token() {
     let bind = "0.0.0.0";
     let token = String::new();
-    let should_reject = !is_loopback(&bind) && token.is_empty();
+    let should_reject = !is_loopback(bind) && token.is_empty();
     assert!(
         should_reject,
         "non-loopback bind with empty token must be rejected"
     );
 
     let bind2 = "127.0.0.1";
-    let should_reject2 = !is_loopback(&bind2) && token.is_empty();
+    let should_reject2 = !is_loopback(bind2) && token.is_empty();
     assert!(
         !should_reject2,
         "loopback bind with an empty token is allowed"
@@ -924,6 +924,7 @@ async fn test_a09_tracker_script_size_under_2kb_gzip_and_spa_support() {
 }
 
 #[test]
+#[allow(clippy::field_reassign_with_default)]
 fn test_a10_cockpit_tui_and_cli_analytics_consistency() {
     let db = crate::db::Database::open_in_memory().unwrap();
 

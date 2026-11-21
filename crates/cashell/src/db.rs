@@ -7,6 +7,9 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 
+/// (repo_path, project_name, latest_score, audit_count, last_audit_date)
+pub type AuditProjectSummary = (String, String, i32, i64, String);
+
 /// A heartbeat record from a remote node agent.
 #[derive(Debug, Clone)]
 pub struct NodeHeartbeat {
@@ -1914,7 +1917,7 @@ impl Database {
     }
 
     /// Get distinct audited projects summary: (repo_path, project_name, latest_score, audit_count, last_audit_date).
-    pub fn get_audit_project_summaries(&self) -> Result<Vec<(String, String, i32, i64, String)>> {
+    pub fn get_audit_project_summaries(&self) -> Result<Vec<AuditProjectSummary>> {
         let mut stmt = self.conn.prepare(
             "SELECT repo_path, COALESCE(project_name, ''), COALESCE(score, 100), count(*), COALESCE(max(created_at), '')
              FROM audit_reports

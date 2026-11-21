@@ -446,7 +446,7 @@ mod tests {
         );
     }
 
-    /// 4. Revoked: `is_license_valid` must return false, and a revoked
+    /// Case 4, revoked: `is_license_valid` must return false, and a revoked
     /// license must not count as Pro (tier stays but flag forces Free).
     #[test]
     fn test_revoked_license_invalid_and_not_pro() {

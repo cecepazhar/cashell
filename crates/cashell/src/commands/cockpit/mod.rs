@@ -709,6 +709,10 @@ pub struct CockpitApp {
     pub license_spinner_msg: Option<String>,
     pub license_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     pub show_upgrade_modal: bool,
+    /// Host-key confirmation (TOFU) before the first SSH connection to a server.
+    pub hostkey_pending: Option<HostKeyPending>,
+    /// Opt-in import of Tailscale peers as fleet servers.
+    pub ts_import: Option<TsImport>,
     pub show_factory_reset_modal: bool,
     pub factory_reset_input: String,
     pub factory_reset_btn_focus: usize,
@@ -1021,6 +1025,8 @@ impl CockpitApp {
             license_spinner_msg: None,
             license_rx: None,
             show_upgrade_modal: false,
+            hostkey_pending: None,
+            ts_import: None,
             show_factory_reset_modal: false,
             factory_reset_input: String::new(),
             factory_reset_btn_focus: 0,
@@ -1581,13 +1587,7 @@ impl CockpitApp {
 
         // Permanently record the deletion so the probe engine (systat.rs)
         // will not re-create this monitor from default_targets on the next tick.
-        if !self
-            .cfg
-            .uptime
-            .disabled_monitors
-            .iter()
-            .any(|d| *d == monitor_name)
-        {
+        if !self.cfg.uptime.disabled_monitors.contains(&monitor_name) {
             self.cfg.uptime.disabled_monitors.push(monitor_name.clone());
         }
 
@@ -5168,6 +5168,32 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         return Ok(false);
     }
 
+    // Host-key trust (TOFU) modal
+    if app.hostkey_pending.is_some() {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                if let Some(p) = app.hostkey_pending.take() {
+                    match crate::fleet_ssh::trust_host(&p.node, &p.scan) {
+                        Ok(()) => launch_ssh_session(app, terminal, &p.name, &p.node),
+                        Err(e) => app.set_notification(format!("✗ Could not save host key: {e}")),
+                    }
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                app.hostkey_pending = None;
+                app.set_notification("Host key not trusted — connection cancelled");
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
+    // Tailscale import modal
+    if app.ts_import.is_some() {
+        handle_ts_import_key(key, app);
+        return Ok(false);
+    }
+
     // Upgrade (Get Pro) modal key interception
     if app.show_upgrade_modal {
         settings::handle_upgrade_key(key, app);
@@ -5425,10 +5451,8 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                         app.audit_step = AuditStep::NaturalPrompt;
                         app.set_notification("Project folder selected");
                     }
-                } else if active_field == 1 {
-                    if !app.audit_natural_prompt.trim().is_empty() {
-                        app.tune_audit_directive();
-                    }
+                } else if active_field == 1 && !app.audit_natural_prompt.trim().is_empty() {
+                    app.tune_audit_directive();
                 }
                 return Ok(false);
             }
@@ -5957,16 +5981,14 @@ fn handle_key_event<B: ratatui::backend::Backend>(
                 }
             }
             CockpitTab::Uptime => {
-                if !app.show_uptime_detail_modal {
-                    if !app.latest_snap.uptime_monitors.is_empty() {
-                        let idx = app
-                            .selected_monitor
-                            .min(app.latest_snap.uptime_monitors.len().saturating_sub(1));
-                        app.uptime_detail_index = idx;
-                        app.show_uptime_detail_modal = true;
-                        let mon_name = app.latest_snap.uptime_monitors[idx].name.clone();
-                        app.set_notification(format!("Viewing detail: {mon_name}"));
-                    }
+                if !app.show_uptime_detail_modal && !app.latest_snap.uptime_monitors.is_empty() {
+                    let idx = app
+                        .selected_monitor
+                        .min(app.latest_snap.uptime_monitors.len().saturating_sub(1));
+                    app.uptime_detail_index = idx;
+                    app.show_uptime_detail_modal = true;
+                    let mon_name = app.latest_snap.uptime_monitors[idx].name.clone();
+                    app.set_notification(format!("Viewing detail: {mon_name}"));
                 }
             }
             CockpitTab::Setting => {
@@ -6052,6 +6074,9 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             app.server_wizard_field = 0;
             app.server_wizard_is_edit = false;
             app.server_wizard_orig_name.clear();
+        }
+        KeyCode::Char('i') if app.current_tab == CockpitTab::Server => {
+            open_ts_import(app);
         }
         KeyCode::Char('p') if app.current_tab == CockpitTab::Server => {
             app.probe_servers();
@@ -6566,7 +6591,135 @@ fn open_selected_server_terminal<B: ratatui::backend::Backend>(
         return Ok(());
     }
 
-    let mut cmd = crate::fleet_ssh::ssh_command(&name, &node, None);
+    use crate::fleet_ssh::{host_key_state, HostKeyState};
+    match host_key_state(&node) {
+        HostKeyState::Known => {
+            launch_ssh_session(app, terminal, &name, &node);
+        }
+        HostKeyState::Unknown { fingerprints, scan } => {
+            app.hostkey_pending = Some(HostKeyPending {
+                name,
+                node,
+                fingerprints,
+                scan,
+            });
+        }
+        HostKeyState::Unavailable => {
+            app.set_notification(format!(
+                "✗ Cannot read the host key of '{name}' (offline, or ssh-keyscan missing)"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A host key waiting for the user's "trust this server?" answer.
+pub struct HostKeyPending {
+    pub name: String,
+    pub node: crate::config::NodeConfig,
+    pub fingerprints: Vec<String>,
+    pub scan: String,
+}
+
+/// State of the "Import from Tailscale" picker.
+pub struct TsImport {
+    pub peers: Vec<crate::fleet_ssh::TailscalePeer>,
+    pub checked: Vec<bool>,
+    pub cursor: usize,
+}
+
+/// Open the picker with peers not yet registered. Nothing is imported until
+/// the user confirms; Tailscale is never read automatically.
+fn open_ts_import(app: &mut CockpitApp) {
+    let Some(peers) = crate::fleet_ssh::list_tailscale_peers() else {
+        app.set_notification("✗ Tailscale not available on this machine");
+        return;
+    };
+    let existing: Vec<&crate::config::NodeConfig> = app.cfg.daemon.nodes.values().collect();
+    let peers: Vec<_> = peers
+        .into_iter()
+        .filter(|p| {
+            !existing.iter().any(|n| n.ip == p.ip) && !app.cfg.daemon.nodes.contains_key(&p.name)
+        })
+        .collect();
+    if peers.is_empty() {
+        app.set_notification("No new Tailscale peers to import");
+        return;
+    }
+    let n = peers.len();
+    app.ts_import = Some(TsImport {
+        peers,
+        checked: vec![false; n],
+        cursor: 0,
+    });
+}
+
+fn handle_ts_import_key(key: event::KeyEvent, app: &mut CockpitApp) {
+    let Some(st) = app.ts_import.as_mut() else {
+        return;
+    };
+    let n = st.peers.len();
+    match key.code {
+        KeyCode::Esc => app.ts_import = None,
+        KeyCode::Up => st.cursor = st.cursor.saturating_sub(1),
+        KeyCode::Down => st.cursor = (st.cursor + 1).min(n.saturating_sub(1)),
+        KeyCode::Char(' ') => {
+            if let Some(c) = st.checked.get_mut(st.cursor) {
+                *c = !*c;
+            }
+        }
+        KeyCode::Char('a') | KeyCode::Char('A') => {
+            let all = st.checked.iter().all(|c| *c);
+            st.checked.iter_mut().for_each(|c| *c = !all);
+        }
+        KeyCode::Enter => {
+            let Some(st) = app.ts_import.take() else {
+                return;
+            };
+            let user = std::env::var("USER").unwrap_or_else(|_| "root".to_string());
+            let mut added = 0usize;
+            for (peer, on) in st.peers.iter().zip(st.checked.iter()) {
+                if !*on {
+                    continue;
+                }
+                app.cfg.daemon.nodes.insert(
+                    peer.name.clone(),
+                    crate::config::NodeConfig {
+                        ip: peer.ip.clone(),
+                        user: user.clone(),
+                        services: app.parse_services("ssh:22"),
+                        active: true,
+                        auth: crate::config::NodeAuth::Tailscale,
+                        key_path: String::new(),
+                    },
+                );
+                added += 1;
+            }
+            if added == 0 {
+                app.set_notification("Nothing selected — no server imported");
+                return;
+            }
+            if !app.save_config_silent() {
+                app.set_notification("✗ Gagal menyimpan konfigurasi");
+                return;
+            }
+            app.probe_servers();
+            app.set_notification(format!(
+                "✓ Imported {added} Tailscale server(s) — edit (e) to set the SSH user"
+            ));
+        }
+        _ => {}
+    }
+}
+
+/// Leave the TUI, run an interactive `ssh` session, then restore the TUI.
+fn launch_ssh_session<B: ratatui::backend::Backend>(
+    app: &mut CockpitApp,
+    terminal: &mut Terminal<B>,
+    name: &str,
+    node: &crate::config::NodeConfig,
+) {
+    let mut cmd = crate::fleet_ssh::ssh_command(name, node, None);
 
     // Hand the real terminal to ssh.
     let _ = crossterm::terminal::disable_raw_mode();
@@ -6602,7 +6755,6 @@ fn open_selected_server_terminal<B: ratatui::backend::Backend>(
         )),
         Err(e) => app.set_notification(format!("✗ Could not start ssh: {e}")),
     }
-    Ok(())
 }
 
 fn handle_mouse_event<B: ratatui::backend::Backend>(
@@ -7496,6 +7648,14 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     if app.show_upgrade_modal {
         settings::draw_upgrade_modal(f, app, area);
+    }
+
+    if app.hostkey_pending.is_some() {
+        server::draw_hostkey_modal(f, app, area);
+    }
+
+    if app.ts_import.is_some() {
+        server::draw_ts_import_modal(f, app, area);
     }
 
     if app.show_log_diagnosis_modal {
@@ -9989,7 +10149,10 @@ fn draw_topology_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         let (name, lat) = &app.server_probe_results[sel];
         let (status, color) = node_status(*lat);
         detail_lines.push(Line::from(vec![
-            Span::styled(format!("Node: "), Style::default().fg(palette.text_muted)),
+            Span::styled(
+                "Node: ".to_string(),
+                Style::default().fg(palette.text_muted),
+            ),
             Span::styled(
                 name.clone(),
                 Style::default()
@@ -13002,6 +13165,7 @@ fn draw_set_password_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     f.render_widget(Paragraph::new(body_lines), inner);
 }
+pub(crate) fn noop() {}
 
 // ── Unit Tests ───────────────────────────────────────────────────────────────
 
@@ -14262,18 +14426,18 @@ mod tests {
         // 1. Normal screen: Ctrl+C returns Ok(true) to cleanly exit
         let ctrl_c = event::KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         let res = handle_key_event(ctrl_c, &mut app, &mut terminal);
-        assert_eq!(res.unwrap(), true);
+        assert!(res.unwrap());
 
         // 2. Inside locked master password screen: Ctrl+C still returns Ok(true)
         app.is_locked = true;
         let res_locked = handle_key_event(ctrl_c, &mut app, &mut terminal);
-        assert_eq!(res_locked.unwrap(), true);
+        assert!(res_locked.unwrap());
 
         // 3. Inside server wizard modal: Ctrl+C still returns Ok(true)
         app.is_locked = false;
         app.show_server_wizard = true;
         let res_modal = handle_key_event(ctrl_c, &mut app, &mut terminal);
-        assert_eq!(res_modal.unwrap(), true);
+        assert!(res_modal.unwrap());
     }
 
     #[test]
@@ -14322,7 +14486,7 @@ mod tests {
         // 3. User cancels (presses 'n'): modal closes, NO action executed
         let cancel_key = event::KeyEvent::new(KeyCode::Char('n'), KeyModifiers::empty());
         let _ = handle_key_event(cancel_key, &mut app, &mut terminal);
-        assert_eq!(app.show_log_diagnosis_modal, false);
+        assert!(!app.show_log_diagnosis_modal);
         assert_eq!(
             app.notification.as_ref().map(|n| n.0.as_str()),
             Some("Log diagnosis dismissed without changes.")
@@ -14332,7 +14496,7 @@ mod tests {
         app.show_log_diagnosis_modal = true;
         let confirm_key = event::KeyEvent::new(KeyCode::Enter, KeyModifiers::empty());
         let _ = handle_key_event(confirm_key, &mut app, &mut terminal);
-        assert_eq!(app.show_log_diagnosis_modal, false);
+        assert!(!app.show_log_diagnosis_modal);
         let notif = app
             .notification
             .as_ref()
@@ -14365,6 +14529,50 @@ mod tests {
     }
 
     #[test]
+    fn test_tailscale_import_is_opt_in_and_registers_selected_only() {
+        let mut app = CockpitApp::new(&Config::default());
+        app.cfg.daemon.nodes.clear();
+        app.ts_import = Some(TsImport {
+            peers: vec![
+                crate::fleet_ssh::TailscalePeer {
+                    name: "ts-a".into(),
+                    ip: "100.64.0.1".into(),
+                    online: true,
+                },
+                crate::fleet_ssh::TailscalePeer {
+                    name: "ts-b".into(),
+                    ip: "100.64.0.2".into(),
+                    online: false,
+                },
+            ],
+            checked: vec![false, false],
+            cursor: 0,
+        });
+        let k = |c| event::KeyEvent::new(c, KeyModifiers::NONE);
+        handle_ts_import_key(k(KeyCode::Down), &mut app);
+        handle_ts_import_key(k(KeyCode::Char(' ')), &mut app); // select ts-b only
+        handle_ts_import_key(k(KeyCode::Enter), &mut app);
+        assert!(app.ts_import.is_none());
+        assert!(!app.cfg.daemon.nodes.contains_key("ts-a"));
+        let n = app.cfg.daemon.nodes.get("ts-b").expect("imported");
+        assert_eq!(n.auth, crate::config::NodeAuth::Tailscale);
+        assert_eq!(n.ip, "100.64.0.2");
+
+        // Esc imports nothing.
+        app.ts_import = Some(TsImport {
+            peers: vec![crate::fleet_ssh::TailscalePeer {
+                name: "ts-c".into(),
+                ip: "100.64.0.3".into(),
+                online: true,
+            }],
+            checked: vec![true],
+            cursor: 0,
+        });
+        handle_ts_import_key(k(KeyCode::Esc), &mut app);
+        assert!(!app.cfg.daemon.nodes.contains_key("ts-c"));
+    }
+
+    #[test]
     fn test_server_tab_lists_only_registered_nodes() {
         let mut app = CockpitApp::new(&Config::default());
         app.cfg.daemon.nodes.clear();
@@ -14380,4 +14588,3 @@ mod tests {
         assert_eq!(fleet.len(), 1, "no auto-discovered peers: {fleet:?}");
     }
 }
-pub(crate) fn noop() {}

@@ -345,6 +345,7 @@ pub mod tests {
     use crate::actions::docker::MockDocker;
     use crate::config::AppConfig;
 
+    #[allow(clippy::field_reassign_with_default)]
     fn sample_config() -> Config {
         let mut cfg = Config::default();
         cfg.apps = vec![

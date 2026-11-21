@@ -396,7 +396,7 @@ mod tests {
         // Thread-local override: no global env mutation, safe to run in
         // parallel with every other test in the process.
         let tmp = std::env::temp_dir().join("cashell-paths-test");
-        let got = with_test_home(&tmp, || {
+        with_test_home(&tmp, || {
             assert_eq!(home_dir(), tmp);
             assert_eq!(config_dir(), tmp.join(".config/cashell"));
             assert_eq!(data_dir(), tmp.join(".local/share/cashell"));
@@ -411,7 +411,6 @@ mod tests {
                 tmp.join(".local/share/cashell/daemon.pid")
             );
         });
-        let _ = got;
         // Outside `with_test_home` the override must not leak.
         assert_ne!(home_dir(), tmp, "override leaked outside with_test_home");
     }

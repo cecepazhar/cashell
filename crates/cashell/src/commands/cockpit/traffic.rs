@@ -611,8 +611,7 @@ fn draw_analytics_list_view(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let start_idx = app.analytics_scroll.min(total_sites.saturating_sub(1));
     let end_idx = (start_idx + max_visible).min(total_sites);
 
-    for i in start_idx..end_idx {
-        let site = &sites[i];
+    for (i, site) in sites.iter().enumerate().take(end_idx).skip(start_idx) {
         let is_selected = i
             == app
                 .analytics_selected_site

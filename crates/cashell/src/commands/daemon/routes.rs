@@ -938,6 +938,7 @@ mod deploy_route_tests {
     use sha2::Sha256;
 
     #[tokio::test]
+    #[allow(clippy::field_reassign_with_default)]
     async fn test_d06_webhook_route_signature_acceptance_and_rejection() {
         let mut cfg = Config::default();
         cfg.apps = vec![crate::config::AppConfig {

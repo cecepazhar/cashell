@@ -181,7 +181,7 @@ pub fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let list_block = Block::default()
         .borders(Borders::ALL)
-        .title(" Multi-Node Latency & Fleet Matrix ")
+        .title(" Fleet · a Add · i Import Tailscale · Enter SSH ")
         .border_style(Style::default().fg(palette.border));
     let list_inner = list_block.inner(sub_chunks[0]);
     f.render_widget(list_block, sub_chunks[0]);
@@ -218,6 +218,8 @@ pub fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             match n.status.as_str() {
                 "ONLINE" => (lat, "● ONLINE", palette.success),
                 "AUTH FAILED" => (lat, "⚠ AUTH FAILED", palette.warning),
+                "TRUST HOST" => (lat, "⚠ TRUST HOST ↵", palette.warning),
+                "HOST KEY CHANGED" => (lat, "✖ KEY CHANGED", palette.danger),
                 _ => ("--".to_string(), "✖ OFFLINE", palette.danger),
             }
         } else {
@@ -715,4 +717,109 @@ pub fn draw_server_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             },
         );
     }
+}
+
+/// Ask the user to confirm an unknown SSH host key (trust on first use).
+pub fn draw_hostkey_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = cockpit_theme(&app.cfg.output.theme);
+    let Some(p) = app.hostkey_pending.as_ref() else {
+        return;
+    };
+    let popup = centered_rect(72, 50, area);
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 🔑 Trust this server? ")
+        .border_style(
+            Style::default()
+                .fg(palette.warning)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+    let mut lines = vec![
+        Line::from(Span::styled(
+            format!(
+                "First connection to '{}' ({}@{}).",
+                p.name, p.node.user, p.node.ip
+            ),
+            Style::default().fg(palette.text),
+        )),
+        Line::from(Span::styled(
+            "Compare these fingerprints with the server before accepting:",
+            Style::default().fg(palette.text_muted),
+        )),
+        Line::from(""),
+    ];
+    for fp in &p.fingerprints {
+        lines.push(Line::from(Span::styled(
+            format!("  {fp}"),
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            " [✓ Trust & connect] (y/Enter) ",
+            Style::default().fg(Color::Black).bg(palette.success),
+        ),
+        Span::raw("   "),
+        Span::styled(
+            " [✖ Cancel] (n/Esc) ",
+            Style::default().fg(Color::Black).bg(palette.danger),
+        ),
+    ]));
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Opt-in picker to register Tailscale peers as fleet servers.
+pub fn draw_ts_import_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = cockpit_theme(&app.cfg.output.theme);
+    let Some(st) = app.ts_import.as_ref() else {
+        return;
+    };
+    let popup = centered_rect(64, 60, area);
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Import from Tailscale ")
+        .border_style(
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "Select peers to register as servers (login method: tailscale).",
+            Style::default().fg(palette.text_muted),
+        )),
+        Line::from(""),
+    ];
+    let visible = inner.height.saturating_sub(5) as usize;
+    let start = st.cursor.saturating_sub(visible.saturating_sub(1));
+    for (i, peer) in st.peers.iter().enumerate().skip(start).take(visible.max(1)) {
+        let on = st.checked.get(i).copied().unwrap_or(false);
+        let cur = i == st.cursor;
+        let mark = if on { "[x]" } else { "[ ]" };
+        let state = if peer.online { "online" } else { "offline" };
+        let style = if cur {
+            Style::default().fg(Color::Black).bg(palette.accent)
+        } else {
+            Style::default().fg(palette.text)
+        };
+        lines.push(Line::from(Span::styled(
+            format!(" {mark} {:<24} {:<16} {state}", peer.name, peer.ip),
+            style,
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "↑/↓ Move │ Space Toggle │ a All │ Enter Import │ Esc Cancel",
+        Style::default().fg(Color::DarkGray),
+    )));
+    f.render_widget(Paragraph::new(lines), inner);
 }
