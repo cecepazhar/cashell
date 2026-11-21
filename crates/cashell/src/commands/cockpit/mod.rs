@@ -416,7 +416,7 @@ impl CockpitTab {
     pub fn titles() -> [&'static str; 12] {
         [
             "[1] Dashboard",
-            "[2] Project",
+            "[2] Container",
             "[3] Uptime",
             "[4] Server",
             "[5] Analytics",
@@ -431,7 +431,7 @@ impl CockpitTab {
     }
 }
 
-/// Sub-views inside the Project tab.
+/// Sub-views inside the Container tab (internally `CockpitTab::Project`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ProjectView {
     /// Workspace hierarchy: project list (left) + selected project's
@@ -1025,7 +1025,7 @@ impl CockpitApp {
             dashboard_alert_scroll: 0,
 
             // ── Tab 2: Project & Containers state ───────────────────────────────────
-            project_view: ProjectView::Hierarchy,
+            project_view: ProjectView::Containers,
             selected_project: 0,
             selected_container: 0,
             project_server_target: 0,
@@ -4821,10 +4821,10 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
                     app.set_notification("Switched to Dashboard tab");
                     app.add_ai_response("✅ Switched to Dashboard tab");
                 }
-                "project" | "projects" | "2" => {
+                "container" | "containers" | "project" | "projects" | "2" => {
                     app.current_tab = CockpitTab::Project;
-                    app.set_notification("Switched to Project tab");
-                    app.add_ai_response("✅ Switched to Project tab");
+                    app.set_notification("Switched to Container tab");
+                    app.add_ai_response("✅ Switched to Container tab");
                 }
                 "topology" | "topo" | "apps" | "infra" | "audit" | "6" => {
                     app.current_tab = CockpitTab::Topology;
@@ -7553,10 +7553,26 @@ pub fn get_header_license_badge(palette: &catui::Theme, app: &CockpitApp) -> Spa
     }
 }
 
+/// Header clock in the server's local time (the machine running CAShell, also
+/// over SSH). Wide: `Fri 21 Nov 2026 · 22:21:46 +07:00`; medium: `21 Nov 22:21`;
+/// narrow: `22:21:46`.
+fn header_clock<Tz: chrono::TimeZone>(now: chrono::DateTime<Tz>, width: u16) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    if width >= 120 {
+        now.format("%a %d %b %Y · %H:%M:%S %:z").to_string()
+    } else if width >= 90 {
+        now.format("%d %b %H:%M").to_string()
+    } else {
+        now.format("%H:%M:%S").to_string()
+    }
+}
+
 fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let palette = cockpit_theme(&app.cfg.output.theme);
     let title = format!("CAShell v{}", env!("CARGO_PKG_VERSION"));
-    let time_str = chrono::Local::now().format("%H:%M:%S").to_string();
+    let time_str = header_clock(chrono::Local::now(), area.width);
 
     // Dynamic L-11 Header badge: FREE / PRO · Lifetime / PRO · N hari (yellow <= 14d, red if expired)
     let edition_badge = get_header_license_badge(&palette, app);
@@ -8220,10 +8236,10 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 ]));
             }
 
-            // RAM meter, RAM history graph (fills spare rows), SWP, DSK, details.
+            // RAM history graph (fills spare rows), then RAM, SWP, DSK meters, details.
             let fixed = 3 + detail.len();
             let graph_h = (mem_inner.height as usize).saturating_sub(fixed);
-            let mut lines = vec![ram_line];
+            let mut lines = Vec::new();
             if graph_h > 0 {
                 let ram_hist: Vec<f32> = app.ram_history.iter().copied().collect();
                 lines.extend(catui::widgets::braille_lines(
@@ -8234,6 +8250,7 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                     &|pct: f32| band(f64::from(pct) / 100.0),
                 ));
             }
+            lines.push(ram_line);
             lines.push(swap_line);
             lines.push(disk_line);
             lines.extend(detail);
@@ -13144,6 +13161,26 @@ mod tests {
 
         // Verify AppCard created
         assert!(app.apps.iter().any(|a| a.name == "test-node:web"));
+    }
+
+    #[test]
+    fn test_header_clock_formats_by_width() {
+        use chrono::TimeZone;
+        let tz = chrono::FixedOffset::east_opt(7 * 3600).expect("offset");
+        let t = tz
+            .with_ymd_and_hms(2026, 11, 21, 22, 21, 46)
+            .single()
+            .expect("time");
+        assert_eq!(header_clock(t, 150), "Sat 21 Nov 2026 · 22:21:46 +07:00");
+        assert_eq!(header_clock(t, 100), "21 Nov 22:21");
+        assert_eq!(header_clock(t, 60), "22:21:46");
+    }
+
+    #[test]
+    fn test_container_tab_label_and_default_view() {
+        assert_eq!(CockpitTab::titles()[1], "[2] Container");
+        let app = CockpitApp::new(&Config::default());
+        assert_eq!(app.project_view, ProjectView::Containers);
     }
 
     #[test]
