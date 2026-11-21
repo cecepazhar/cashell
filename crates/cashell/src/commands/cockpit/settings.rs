@@ -703,6 +703,159 @@ pub fn trigger_license_deactivate(app: &mut CockpitApp) {
     });
 }
 
+// ── Upgrade modal (header "Get Pro") ────────────────────────────────────────
+
+/// Where Pro is sold. Shown verbatim so it can be copied or auto-linked by the terminal.
+pub const BUY_URL: &str = "https://caterm.fathforce.com";
+
+pub fn open_upgrade_modal(app: &mut CockpitApp) {
+    app.show_upgrade_modal = true;
+}
+
+pub fn close_upgrade_modal(app: &mut CockpitApp) {
+    app.show_upgrade_modal = false;
+}
+
+/// Try to open [`BUY_URL`] in a browser. Only attempted on a local graphical
+/// session (never over SSH, never under `cargo test`); otherwise the user
+/// copies the URL shown in the modal.
+pub fn open_buy_url(app: &mut CockpitApp) {
+    let graphical =
+        std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let remote = std::env::var_os("SSH_CONNECTION").is_some();
+    if !crate::host_guard::allowed() || remote || !graphical {
+        app.set_notification(format!("Buka di browser: {BUY_URL}"));
+        return;
+    }
+    let spawned = std::process::Command::new("xdg-open")
+        .arg(BUY_URL)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    match spawned {
+        Ok(_) => app.set_notification(format!("Membuka {BUY_URL} di browser...")),
+        Err(_) => app.set_notification(format!("Buka di browser: {BUY_URL}")),
+    }
+}
+
+pub fn handle_upgrade_key(key: KeyEvent, app: &mut CockpitApp) {
+    use crossterm::event::KeyModifiers;
+    match key.code {
+        KeyCode::Esc => close_upgrade_modal(app),
+        KeyCode::Enter => trigger_license_activate(app),
+        KeyCode::Backspace => {
+            app.license_key_input.pop();
+        }
+        KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => open_buy_url(app),
+        KeyCode::Char(c) if !c.is_control() && !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.license_key_input.push(c);
+        }
+        _ => {}
+    }
+}
+
+pub fn draw_upgrade_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
+    let palette = cockpit_theme(&app.cfg.output.theme);
+    let popup = centered_rect(64, 45, area);
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" ★ Get Pro — Aktifkan lisensi ")
+        .border_style(
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+    if inner.width < 36 || inner.height < 8 {
+        return;
+    }
+
+    let muted = Style::default().fg(palette.text_muted);
+    let key_display = if app.license_key_input.is_empty() {
+        "█".to_string()
+    } else {
+        format!("{}█", app.license_key_input)
+    };
+    let btn = |label: &str, bg: Color| {
+        Span::styled(
+            label.to_string(),
+            Style::default()
+                .fg(Color::Black)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        )
+    };
+    let activate = " [✓ Aktifkan] ";
+    let buy = " [↗ Beli Pro] ";
+    let close = " [✖ Tutup] ";
+    let gap = "    ";
+    let spinner = app.license_spinner_msg.clone().unwrap_or_default();
+
+    let lines = vec![
+        Line::from(Span::styled(
+            "Masukkan kunci lisensi untuk mengaktifkan Pro.",
+            Style::default().fg(palette.text),
+        )),
+        Line::from(Span::styled("Format: CASH[99|24|12|01]-XXXXXX-C", muted)),
+        Line::from(vec![
+            Span::styled("▶ ", Style::default().fg(palette.accent)),
+            Span::styled(
+                format!(" [ {key_display} ] "),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(palette.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            btn(activate, palette.success),
+            Span::raw(gap),
+            btn(buy, Color::Yellow),
+            Span::raw(gap),
+            btn(close, palette.text_muted),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Belum punya lisensi? ", muted),
+            Span::styled(
+                BUY_URL,
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::UNDERLINED),
+            ),
+        ]),
+        Line::from(Span::styled(
+            "Enter: aktifkan · Ctrl+B: buka halaman beli · Esc: tutup",
+            muted,
+        )),
+        Line::from(Span::styled(spinner, Style::default().fg(Color::Yellow))),
+    ];
+    f.render_widget(Paragraph::new(lines), inner);
+
+    let w = |s: &str| catui::text::width(s) as u16;
+    let y_btn = inner.y + 4;
+    let x_act = inner.x;
+    let x_buy = x_act + w(activate) + w(gap);
+    let x_close = x_buy + w(buy) + w(gap);
+    app.register_hitbox(
+        Rect::new(inner.x + 2, inner.y + 2, inner.width.saturating_sub(4), 1),
+        HitboxAction::UpgradeFocusKey,
+    );
+    app.register_hitbox(
+        Rect::new(x_act, y_btn, w(activate), 1),
+        HitboxAction::UpgradeActivate,
+    );
+    app.register_hitbox(Rect::new(x_buy, y_btn, w(buy), 1), HitboxAction::UpgradeBuy);
+    app.register_hitbox(
+        Rect::new(x_close, y_btn, w(close), 1),
+        HitboxAction::CloseUpgradeModal,
+    );
+}
+
 pub fn poll_license_async(app: &mut CockpitApp) {
     if let Some(ref rx) = app.license_rx {
         if let Ok(res) = rx.try_recv() {
@@ -712,6 +865,7 @@ pub fn poll_license_async(app: &mut CockpitApp) {
                 Ok(msg) => {
                     app.set_notification(format!("✔ {msg}"));
                     crate::entitlements::invalidate_cache();
+                    app.show_upgrade_modal = false;
                 }
                 Err(err) => {
                     app.set_notification(format!("✖ {err}"));
@@ -1869,6 +2023,42 @@ mod tests {
     }
 
     #[test]
+    fn test_upgrade_modal_typing_close_and_buy_url() {
+        use crossterm::event::KeyModifiers;
+        let home = TempTestHome::new();
+        paths::with_test_home(&home.dir, || {
+            let mut app = CockpitApp::new(&Config::default());
+            open_upgrade_modal(&mut app);
+            assert!(app.show_upgrade_modal);
+            app.license_key_input.clear();
+            for c in "CASH99".chars() {
+                handle_upgrade_key(
+                    KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+                    &mut app,
+                );
+            }
+            handle_upgrade_key(
+                KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+                &mut app,
+            );
+            assert_eq!(app.license_key_input, "CASH9");
+            // Ctrl+B is a command, not text; under test it must not spawn a browser.
+            handle_upgrade_key(
+                KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL),
+                &mut app,
+            );
+            assert_eq!(app.license_key_input, "CASH9");
+            assert!(app
+                .notification
+                .as_ref()
+                .is_some_and(|n| n.0.contains(BUY_URL)));
+            handle_upgrade_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &mut app);
+            assert!(!app.show_upgrade_modal);
+            assert_eq!(BUY_URL, "https://caterm.fathforce.com");
+        });
+    }
+
+    #[test]
     fn test_header_license_badge_states() {
         let home = TempTestHome::new();
         paths::with_test_home(&home.dir, || {
@@ -1879,7 +2069,7 @@ mod tests {
             let _ = license_local::remove_license();
             crate::entitlements::invalidate_cache();
             let b = super::super::get_header_license_badge(&palette, &app);
-            assert_eq!(b.content, " [ FREE ] ");
+            assert_eq!(b.content, " [ FREE · Get Pro ▸ ] ");
 
             // 2. Lifetime license (tier 99, expires_at: None) -> [ PRO · Lifetime ]
             let now_iso = Utc::now().to_rfc3339();

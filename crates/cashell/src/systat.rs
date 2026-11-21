@@ -627,6 +627,99 @@ pub fn probe_docker_containers() -> Vec<DockerContainerInfo> {
     list
 }
 
+// ── Host specification ──────────────────────────────────────────────────────
+
+/// `PRETTY_NAME` from an os-release file body, e.g.
+/// `Fedora Linux 45 (KDE Plasma Desktop Edition)`.
+pub fn parse_os_release_pretty(text: &str) -> Option<String> {
+    text.lines()
+        .find_map(|l| l.strip_prefix("PRETTY_NAME="))
+        .map(|v| v.trim().trim_matches('"').trim_matches('\'').to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// Static host facts, collected once: OS, kernel, arch, CPU model and cores.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HostSpecs {
+    pub os: String,
+    pub kernel: String,
+    pub arch: String,
+    pub cpu: String,
+    pub cores: usize,
+}
+
+impl HostSpecs {
+    /// Cached after the first call (reads `/etc/os-release` and one CPU refresh).
+    pub fn current() -> &'static HostSpecs {
+        static SPECS: std::sync::OnceLock<HostSpecs> = std::sync::OnceLock::new();
+        SPECS.get_or_init(|| {
+            let os = std::fs::read_to_string("/etc/os-release")
+                .ok()
+                .and_then(|t| parse_os_release_pretty(&t))
+                .or_else(|| {
+                    let name = sysinfo::System::name()?;
+                    Some(match sysinfo::System::os_version() {
+                        Some(v) => format!("{name} {v}"),
+                        None => name,
+                    })
+                })
+                .unwrap_or_else(|| "Linux".to_string());
+            let sys = sysinfo::System::new_with_specifics(
+                sysinfo::RefreshKind::new().with_cpu(sysinfo::CpuRefreshKind::everything()),
+            );
+            let cpu = sys
+                .cpus()
+                .first()
+                .map(|c| c.brand().split_whitespace().collect::<Vec<_>>().join(" "))
+                .unwrap_or_default();
+            HostSpecs {
+                os,
+                kernel: sysinfo::System::kernel_version().unwrap_or_default(),
+                arch: sysinfo::System::cpu_arch().unwrap_or_default(),
+                cpu,
+                cores: sys
+                    .physical_core_count()
+                    .unwrap_or_else(|| sys.cpus().len()),
+            }
+        })
+    }
+
+    /// One line, longest form first, dropping trailing parts to fit `width`:
+    /// `OS · Kernel X · arch · CPU Nc · Up 3d 4h`.
+    pub fn summary(&self, uptime_secs: u64, width: usize) -> String {
+        let up = fmt_uptime(uptime_secs);
+        let mut parts: Vec<String> = vec![self.os.clone()];
+        if !self.kernel.is_empty() {
+            parts.push(format!("Kernel {}", self.kernel));
+        }
+        if !self.arch.is_empty() {
+            parts.push(self.arch.clone());
+        }
+        if !self.cpu.is_empty() {
+            parts.push(format!("{} {}c", self.cpu, self.cores));
+        }
+        parts.push(format!("Up {up}"));
+        while parts.len() > 1 && parts.join(" · ").chars().count() > width {
+            // Drop the least important part: CPU, then arch, then kernel, then uptime.
+            let drop = parts.len() - 2;
+            parts.remove(drop.max(1));
+        }
+        parts.join(" · ")
+    }
+}
+
+/// `3d 4h`, `4h 12m`, or `12m`.
+pub fn fmt_uptime(secs: u64) -> String {
+    let (d, h, m) = (secs / 86_400, secs % 86_400 / 3_600, secs % 3_600 / 60);
+    if d > 0 {
+        format!("{d}d {h}h")
+    } else if h > 0 {
+        format!("{h}h {m}m")
+    } else {
+        format!("{m}m")
+    }
+}
+
 // ── Server Fleet Nodes Probe ────────────────────────────────────────────────
 
 pub fn probe_fleet_nodes(
@@ -2779,6 +2872,34 @@ mod tests {
         assert_eq!(local.ram_pct, Some(55));
         assert_eq!(local.disk_pct, Some(24));
         assert!(node.iter().any(|n| n.ip == "127.0.0.1"));
+    }
+
+    #[test]
+    fn test_host_specs_summary_and_os_release() {
+        let osr = "NAME=\"Fedora Linux\"\nPRETTY_NAME=\"Fedora Linux 45 (KDE Plasma Desktop Edition)\"\nID=fedora\n";
+        assert_eq!(
+            parse_os_release_pretty(osr).as_deref(),
+            Some("Fedora Linux 45 (KDE Plasma Desktop Edition)")
+        );
+        assert_eq!(parse_os_release_pretty("ID=x\n"), None);
+        let h = HostSpecs {
+            os: "Fedora Linux 45 (KDE Plasma Desktop Edition)".into(),
+            kernel: "7.2.11-300.fc45.x86_64".into(),
+            arch: "x86_64".into(),
+            cpu: "Intel Core i7".into(),
+            cores: 8,
+        };
+        let full = h.summary(3 * 86_400 + 4 * 3_600, 200);
+        assert_eq!(
+            full,
+            "Fedora Linux 45 (KDE Plasma Desktop Edition) · Kernel 7.2.11-300.fc45.x86_64 · x86_64 · Intel Core i7 8c · Up 3d 4h"
+        );
+        let short = h.summary(60, 60);
+        assert!(short.starts_with("Fedora Linux 45"));
+        assert!(short.chars().count() <= 60 || !short.contains(" · "));
+        assert_eq!(fmt_uptime(3_700), "1h 1m");
+        assert_eq!(fmt_uptime(120), "2m");
+        assert!(!HostSpecs::current().os.is_empty());
     }
 
     #[test]

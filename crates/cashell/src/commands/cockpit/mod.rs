@@ -142,6 +142,11 @@ pub enum HitboxAction {
     ReloadSettings,
     SettingsSelectSubView(usize),
     LicenseFocusKeyInput,
+    OpenUpgradeModal,
+    CloseUpgradeModal,
+    UpgradeFocusKey,
+    UpgradeActivate,
+    UpgradeBuy,
     LicenseActivate,
     LicenseVerify,
     LicenseDeactivate,
@@ -703,6 +708,7 @@ pub struct CockpitApp {
     pub license_action_focus: usize,
     pub license_spinner_msg: Option<String>,
     pub license_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    pub show_upgrade_modal: bool,
     pub show_factory_reset_modal: bool,
     pub factory_reset_input: String,
     pub factory_reset_btn_focus: usize,
@@ -1010,6 +1016,7 @@ impl CockpitApp {
             license_action_focus: 0,
             license_spinner_msg: None,
             license_rx: None,
+            show_upgrade_modal: false,
             show_factory_reset_modal: false,
             factory_reset_input: String::new(),
             factory_reset_btn_focus: 0,
@@ -5135,6 +5142,12 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         return Ok(false);
     }
 
+    // Upgrade (Get Pro) modal key interception
+    if app.show_upgrade_modal {
+        settings::handle_upgrade_key(key, app);
+        return Ok(false);
+    }
+
     // Factory reset modal key interception (R-06)
     if app.show_factory_reset_modal {
         settings::handle_factory_reset_key(key, app);
@@ -6643,9 +6656,13 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                         app.license_action_focus = 0;
                         app.license_input_editing = true;
                     }
-                    HitboxAction::LicenseActivate => {
+                    HitboxAction::LicenseActivate | HitboxAction::UpgradeActivate => {
                         settings::trigger_license_activate(app);
                     }
+                    HitboxAction::OpenUpgradeModal => settings::open_upgrade_modal(app),
+                    HitboxAction::CloseUpgradeModal => settings::close_upgrade_modal(app),
+                    HitboxAction::UpgradeBuy => settings::open_buy_url(app),
+                    HitboxAction::UpgradeFocusKey => {}
                     HitboxAction::LicenseVerify => {
                         settings::trigger_license_verify(app);
                     }
@@ -7369,6 +7386,10 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         settings::draw_factory_reset_modal(f, app, area);
     }
 
+    if app.show_upgrade_modal {
+        settings::draw_upgrade_modal(f, app, area);
+    }
+
     if app.show_log_diagnosis_modal {
         draw_log_diagnosis_modal(f, app, area);
     }
@@ -7549,7 +7570,12 @@ pub fn get_header_license_badge(palette: &catui::Theme, app: &CockpitApp) -> Spa
                 }
             }
         }
-        None => Span::styled(" [ FREE ] ", Style::default().fg(palette.text_muted)),
+        None => Span::styled(
+            " [ FREE · Get Pro ▸ ] ",
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
     }
 }
 
@@ -7622,6 +7648,33 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         )
     };
     let time_badge = Span::styled(format!(" {time_str} "), Style::default().fg(palette.accent));
+
+    // Clickable "Get Pro" badge: HeaderBar right-aligns its items (1-col "│"
+    // separators), so the edition badge starts at `total` columns from the
+    // right edge of the inner area — but only if everything still fits.
+    let upgradeable =
+        edition_badge.content.contains("Get Pro") || edition_badge.content.contains("Kedaluwarsa");
+    if upgradeable {
+        let w = |s: &Span| catui::text::width(&s.content) as u16;
+        let right = [
+            &edition_badge,
+            &pet_badge,
+            &host_badge,
+            &router_badge,
+            &tailscale_badge,
+            &time_badge,
+        ];
+        let total: u16 = right.iter().map(|s| w(s)).sum::<u16>() + 5;
+        let inner_w = area.width.saturating_sub(2);
+        let title_w = catui::text::width(&title) as u16 + 2;
+        if title_w + total <= inner_w {
+            let x = area.x + 1 + inner_w - total;
+            app.register_hitbox(
+                Rect::new(x, area.y + 1, w(&edition_badge), 1),
+                HitboxAction::OpenUpgradeModal,
+            );
+        }
+    }
 
     f.render_widget(
         catui::widgets::HeaderBar::new(&palette, title)
@@ -7929,11 +7982,15 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         (16u16, true)
     };
 
+    // Extra "System" line in the banner only when the terminal is tall enough
+    // to keep the 3-row panel grid (needs >= 20 rows below the banner).
+    let show_system_line = area.height >= 42;
+    let banner_h = if show_system_line { 5 } else { 4 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(top_h),
-            Constraint::Length(4),
+            Constraint::Length(banner_h),
             Constraint::Min(8),
         ])
         .split(area);
@@ -8660,7 +8717,16 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ));
     }
 
-    let summary_lines = vec![Line::from(alerts_spans), Line::from(alert_line2)];
+    let mut summary_lines = vec![Line::from(alerts_spans), Line::from(alert_line2)];
+    if show_system_line {
+        let width = alerts_inner.width.saturating_sub(10) as usize;
+        let sys_text =
+            crate::systat::HostSpecs::current().summary(sysinfo::System::uptime(), width);
+        summary_lines.push(Line::from(vec![
+            Span::styled("System: ", Style::default().fg(palette.text_muted)),
+            Span::styled(sys_text, Style::default().fg(palette.text)),
+        ]));
+    }
     f.render_widget(Paragraph::new(summary_lines), alerts_inner);
 
     // ── Bottom: Six Executive Command Center Panels ──────────────────────────
