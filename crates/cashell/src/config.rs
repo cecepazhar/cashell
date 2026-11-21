@@ -145,6 +145,63 @@ pub struct NodeConfig {
     /// during probes, latencies, and fleet management.
     #[serde(default = "default_node_active")]
     pub active: bool,
+    /// How CAShell logs in to this server. Old configs without this field
+    /// behave as `key`.
+    #[serde(default)]
+    pub auth: NodeAuth,
+    /// Private key path for `auth = "key"`; empty = ssh-agent / default keys.
+    /// Passwords are never stored here (see `secrets.enc`).
+    #[serde(default)]
+    pub key_path: String,
+}
+
+/// Login method for a manually registered fleet server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NodeAuth {
+    #[default]
+    Key,
+    Password,
+    Tailscale,
+}
+
+impl NodeAuth {
+    pub fn label(self) -> &'static str {
+        match self {
+            NodeAuth::Key => "key",
+            NodeAuth::Password => "password",
+            NodeAuth::Tailscale => "tailscale",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "key" | "k" => Some(NodeAuth::Key),
+            "password" | "pass" | "p" => Some(NodeAuth::Password),
+            "tailscale" | "ts" | "t" => Some(NodeAuth::Tailscale),
+            _ => None,
+        }
+    }
+
+    /// Next method in the cycle key → password → tailscale.
+    pub fn next(self) -> Self {
+        match self {
+            NodeAuth::Key => NodeAuth::Password,
+            NodeAuth::Password => NodeAuth::Tailscale,
+            NodeAuth::Tailscale => NodeAuth::Key,
+        }
+    }
+}
+
+impl NodeConfig {
+    /// SSH port: the service named `ssh` if present, otherwise 22.
+    pub fn ssh_port(&self) -> u16 {
+        self.services
+            .iter()
+            .find(|s| s.name.eq_ignore_ascii_case("ssh"))
+            .map(|s| s.port)
+            .unwrap_or(22)
+    }
 }
 
 fn default_node_active() -> bool {
@@ -964,5 +1021,20 @@ mod tests {
             Some("postgres://user:pass@localhost/db")
         );
         assert_eq!(resolved.get("PORT").map(|s| s.as_str()), Some("8080"));
+    }
+    #[test]
+    fn test_node_config_old_format_defaults_to_key_auth() {
+        let toml_src = "ip = \"10.0.0.2\"\nuser = \"root\"\n";
+        let n: NodeConfig = toml::from_str(toml_src).expect("old config parses");
+        assert_eq!(n.auth, NodeAuth::Key);
+        assert!(n.key_path.is_empty());
+        assert_eq!(n.ssh_port(), 22);
+
+        let new_src = "ip = \"10.0.0.2\"\nuser = \"root\"\nauth = \"password\"\n\n[[services]]\nname = \"ssh\"\nport = 2222\n";
+        let n: NodeConfig = toml::from_str(new_src).expect("new config parses");
+        assert_eq!(n.auth, NodeAuth::Password);
+        assert_eq!(n.ssh_port(), 2222);
+        assert_eq!(NodeAuth::parse("TS"), Some(NodeAuth::Tailscale));
+        assert_eq!(NodeAuth::Key.next().next().next(), NodeAuth::Key);
     }
 }

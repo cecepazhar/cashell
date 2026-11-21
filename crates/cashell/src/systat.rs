@@ -743,131 +743,70 @@ pub fn probe_fleet_nodes(
         role: "Armada Control Plane / Local".to_string(),
     };
 
-    let nodes_cfg: std::collections::HashMap<String, crate::config::NodeConfig> = {
-        crate::config::Config::load(None)
-            .ok()
-            .map(|c| c.daemon.nodes)
-            .unwrap_or_default()
-    };
-
-    let mut remotes_map: std::collections::HashMap<String, (String, u16)> =
-        std::collections::HashMap::new();
-
-    for (name, node) in nodes_cfg {
-        if name != "local" {
-            let port = node.services.first().map(|s| s.port).unwrap_or(22);
-            remotes_map.insert(name, (node.ip, port));
-        }
-    }
-
-    if let Ok(out) = Command::new("tailscale")
-        .args(["status", "--json"])
-        .output()
-    {
-        if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
-            if let Some(peers) = json.get("Peer").and_then(|p| p.as_object()) {
-                for (_, peer) in peers {
-                    let hostname = peer
-                        .get("HostName")
-                        .and_then(|h| h.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let ips = peer.get("TailscaleIPs").and_then(|i| i.as_array());
-                    let ip = ips
-                        .and_then(|arr| arr.first())
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    if !hostname.is_empty() && !ip.is_empty() {
-                        let exists = remotes_map
-                            .iter()
-                            .any(|(k, (val_ip, _))| k == &hostname || val_ip == &ip);
-                        if !exists {
-                            remotes_map.insert(hostname, (ip, 22));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let remotes: Vec<(String, String, u16)> = remotes_map
+    // Manual-only: the fleet is exactly what the user registered in
+    // `[daemon.nodes]`. Tailscale peers are never added automatically.
+    let mut remotes: Vec<(String, crate::config::NodeConfig)> = crate::config::Config::load(None)
+        .ok()
+        .map(|c| c.daemon.nodes)
+        .unwrap_or_default()
         .into_iter()
-        .map(|(name, (ip, port))| (name, ip, port))
+        .filter(|(name, _)| name != "local")
         .collect();
+    remotes.sort_by(|a, b| a.0.cmp(&b.0));
 
     let probed_remotes: Vec<FleetNodeResume> = remotes
         .par_iter()
-        .map(|(name, ip, port)| {
-            let mut latency = None;
-            let mut is_online = false;
-
-            // 1. Probe via tailscale ping
-            if let Ok(out) = Command::new("tailscale")
-                .args(["ping", "--timeout=450ms", "--c=1", ip])
-                .output()
-            {
-                if out.status.success() {
-                    let text = String::from_utf8_lossy(&out.stdout);
-                    if let Some(pos) = text.rfind(" in ") {
-                        let rem = &text[pos + 4..];
-                        if let Some(end) = rem.find("ms") {
-                            if let Ok(ms) = rem[..end].trim().parse::<u64>() {
-                                latency = Some(ms);
-                                is_online = true;
-                            }
-                        }
-                    }
-                    if !is_online && text.contains("pong") {
-                        is_online = true;
-                    }
-                }
-            }
-
-            // 2. Fallback to TCP connect
-            if !is_online {
-                let addr_str = format!("{}:{}", ip, port);
-                if let Ok(addr) = addr_str.parse::<SocketAddr>() {
-                    let start = Instant::now();
-                    if TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok() {
-                        latency = Some(start.elapsed().as_millis().max(1) as u64);
-                        is_online = true;
-                    }
-                }
-            }
-
-            let node_name = name.to_string();
-            let node_ip = ip.to_string();
-            if is_online {
-                FleetNodeResume {
-                    name: node_name,
-                    ip: node_ip,
-                    status: "ONLINE".to_string(),
-                    latency_ms: latency,
-                    // No agent telemetry here: show "--", never invented numbers.
-                    cpu_pct: None,
-                    ram_pct: None,
-                    disk_pct: None,
-                    role: "Registered Fleet Node".to_string(),
-                }
-            } else {
-                FleetNodeResume {
-                    name: node_name,
-                    ip: node_ip,
-                    status: "OFFLINE".to_string(),
-                    latency_ms: None,
-                    cpu_pct: None,
-                    ram_pct: None,
-                    disk_pct: None,
-                    role: "Registered Fleet Node".to_string(),
-                }
-            }
-        })
+        .map(|(name, node)| probe_remote_node(name, node))
         .collect();
 
     let mut list = vec![local];
     list.extend(probed_remotes);
     list
+}
+
+/// Probe one registered server: TCP reachability of its SSH port, then (when
+/// reachable and active) CPU/RAM/disk over SSH. Failure to read a value
+/// leaves it `None` ("--" in the UI), never an invented number.
+fn probe_remote_node(name: &str, node: &crate::config::NodeConfig) -> FleetNodeResume {
+    use crate::fleet_ssh::{probe_ssh_cached, ProbeOutcome};
+    use std::net::ToSocketAddrs;
+
+    let mut res = FleetNodeResume {
+        name: name.to_string(),
+        ip: node.ip.clone(),
+        status: "OFFLINE".to_string(),
+        latency_ms: None,
+        cpu_pct: None,
+        ram_pct: None,
+        disk_pct: None,
+        role: format!("Fleet Node · {}", node.auth.label()),
+    };
+    if !node.active {
+        res.status = "STANDBY".to_string();
+        return res;
+    }
+    let start = Instant::now();
+    let reachable = (node.ip.as_str(), node.ssh_port())
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut it| it.next())
+        .map(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(600)).is_ok())
+        .unwrap_or(false);
+    if !reachable {
+        return res;
+    }
+    res.latency_ms = Some(start.elapsed().as_millis().max(1) as u64);
+    res.status = "ONLINE".to_string();
+    match probe_ssh_cached(name, node) {
+        ProbeOutcome::Metrics(m) => {
+            res.cpu_pct = Some(m.cpu_pct);
+            res.ram_pct = Some(m.ram_pct);
+            res.disk_pct = Some(m.disk_pct);
+        }
+        ProbeOutcome::AuthFailed => res.status = "AUTH FAILED".to_string(),
+        ProbeOutcome::Unreachable => {}
+    }
+    res
 }
 
 // ── Ecosystem Daemon Health Probe ───────────────────────────────────────────

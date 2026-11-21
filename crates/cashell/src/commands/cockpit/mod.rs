@@ -842,6 +842,10 @@ pub struct CockpitApp {
     pub server_ip_buf: String,
     pub server_user_buf: String,
     pub server_services_buf: String,
+    /// Login method of the server being added/edited (key | password | tailscale).
+    pub server_auth: crate::config::NodeAuth,
+    /// Key path (auth=key) or password (auth=password; stored in secrets.enc).
+    pub server_cred_buf: String,
     pub server_wizard_is_edit: bool,
     pub server_wizard_orig_name: String,
 
@@ -1134,6 +1138,8 @@ impl CockpitApp {
             server_ip_buf: String::new(),
             server_user_buf: "root".to_string(),
             server_services_buf: "http:80,ssh:22".to_string(),
+            server_auth: crate::config::NodeAuth::Key,
+            server_cred_buf: String::new(),
             server_wizard_is_edit: false,
             server_wizard_orig_name: String::new(),
 
@@ -2005,14 +2011,7 @@ impl CockpitApp {
 
         let output = if let Some(ref r) = self.term_remote {
             if let Some(node) = self.cfg.daemon.nodes.get(r) {
-                std::process::Command::new("ssh")
-                    .args([
-                        "-o",
-                        "ConnectTimeout=3",
-                        &format!("{}@{}", node.user, node.ip),
-                        &cmd,
-                    ])
-                    .output()
+                crate::fleet_ssh::ssh_command(r, node, Some(&cmd)).output()
             } else {
                 std::process::Command::new("sh").args(["-c", &cmd]).output()
             }
@@ -3583,12 +3582,28 @@ impl CockpitApp {
         };
         let active = existing_cfg.as_ref().map(|c| c.active).unwrap_or(true);
 
+        let auth = self.server_auth;
+        let cred = self.server_cred_buf.trim().to_string();
         let node_cfg = crate::config::NodeConfig {
             ip: ip.clone(),
             user,
             services,
             active,
+            auth,
+            key_path: if auth == crate::config::NodeAuth::Key {
+                cred.clone()
+            } else {
+                String::new()
+            },
         };
+        // Password goes to the encrypted secret store, never to config.toml.
+        // Empty on edit = keep the stored one.
+        if auth == crate::config::NodeAuth::Password && !cred.is_empty() {
+            if let Err(e) = crate::fleet_ssh::store_password(&name, &cred) {
+                self.set_notification(format!("✗ Could not store password securely: {e}"));
+                return;
+            }
+        }
 
         // When renaming (edit mode and name changed), remove the old key first.
         if self.server_wizard_is_edit && self.server_wizard_orig_name != name {
@@ -3659,6 +3674,8 @@ impl CockpitApp {
         self.server_ip_buf.clear();
         self.server_user_buf = "root".to_string();
         self.server_services_buf = "http:80,ssh:22".to_string();
+        self.server_auth = crate::config::NodeAuth::Key;
+        self.server_cred_buf.clear();
         self.server_wizard_is_edit = false;
         self.server_wizard_orig_name.clear();
     }
@@ -3685,6 +3702,13 @@ impl CockpitApp {
             self.server_name_buf = server_name.clone();
             self.server_ip_buf = cfg_node.ip.clone();
             self.server_user_buf = cfg_node.user.clone();
+            self.server_auth = cfg_node.auth;
+            // Password is never shown again; empty = keep the stored one.
+            self.server_cred_buf = if cfg_node.auth == crate::config::NodeAuth::Key {
+                cfg_node.key_path.clone()
+            } else {
+                String::new()
+            };
             self.server_services_buf = if services_str.is_empty() {
                 "http:80,ssh:22".to_string()
             } else {
@@ -3720,6 +3744,8 @@ impl CockpitApp {
                     user: user.clone(),
                     services: parsed_svcs,
                     active: true,
+                    auth: crate::config::NodeAuth::Key,
+                    key_path: String::new(),
                 },
             );
             self.server_name_buf = server_name.clone();
@@ -5946,6 +5972,9 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             CockpitTab::Setting => {
                 start_field_edit(app);
             }
+            CockpitTab::Server => {
+                open_selected_server_terminal(app, terminal)?;
+            }
             CockpitTab::Turbo => {
                 let action_idx = app.turbo_selected_action;
                 app.execute_turbo_action(action_idx);
@@ -6270,10 +6299,14 @@ fn handle_server_wizard_key(key: event::KeyEvent, app: &mut CockpitApp) {
             app.submit_server_wizard();
         }
         KeyCode::Tab | KeyCode::Down => {
-            app.server_wizard_field = (app.server_wizard_field + 1) % 4;
+            app.server_wizard_field = (app.server_wizard_field + 1) % 6;
         }
         KeyCode::BackTab | KeyCode::Up => {
-            app.server_wizard_field = (app.server_wizard_field + 3) % 4;
+            app.server_wizard_field = (app.server_wizard_field + 5) % 6;
+        }
+        // Field 4 is a selector: Left/Right/Space cycle key → password → tailscale.
+        KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') if app.server_wizard_field == 4 => {
+            app.server_auth = app.server_auth.next();
         }
         KeyCode::Backspace => match app.server_wizard_field {
             0 => {
@@ -6288,6 +6321,9 @@ fn handle_server_wizard_key(key: event::KeyEvent, app: &mut CockpitApp) {
             3 => {
                 app.server_services_buf.pop();
             }
+            5 => {
+                app.server_cred_buf.pop();
+            }
             _ => {}
         },
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -6296,6 +6332,7 @@ fn handle_server_wizard_key(key: event::KeyEvent, app: &mut CockpitApp) {
                 1 => app.server_ip_buf.push(c),
                 2 => app.server_user_buf.push(c),
                 3 => app.server_services_buf.push(c),
+                5 => app.server_cred_buf.push(c),
                 _ => {}
             }
         }
@@ -6501,6 +6538,72 @@ fn handle_pro_wizard_key(key: event::KeyEvent, app: &mut CockpitApp) {
 }
 
 // ── Mouse Event Handling ─────────────────────────────────────────────────────
+
+/// Leave the TUI, run an interactive `ssh` session to the selected fleet
+/// server (using its configured login method), then restore the TUI.
+fn open_selected_server_terminal<B: ratatui::backend::Backend>(
+    app: &mut CockpitApp,
+    terminal: &mut Terminal<B>,
+) -> Result<()> {
+    let Some((name, _)) = app.server_probe_results.get(app.selected_server).cloned() else {
+        app.set_notification("⚠ No fleet servers to connect to");
+        return Ok(());
+    };
+    if is_local_node_name(&name) {
+        app.set_notification("Local node: use the [9] Terminal tab");
+        return Ok(());
+    }
+    let Some(node) = app.cfg.daemon.nodes.get(&name).cloned() else {
+        app.set_notification(format!("✗ '{name}' is not a registered server"));
+        return Ok(());
+    };
+    if !node.active {
+        app.set_notification(format!("◌ '{name}' is inactive — activate it first (v)"));
+        return Ok(());
+    }
+    if !crate::host_guard::allowed() {
+        app.set_notification("SSH session disabled in test mode");
+        return Ok(());
+    }
+
+    let mut cmd = crate::fleet_ssh::ssh_command(&name, &node, None);
+
+    // Hand the real terminal to ssh.
+    let _ = crossterm::terminal::disable_raw_mode();
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::DisableMouseCapture,
+        crossterm::terminal::LeaveAlternateScreen
+    );
+    println!(
+        "── CAShell ▸ ssh {}@{} ({}) — type `exit` to return ──",
+        node.user,
+        node.ip,
+        node.auth.label()
+    );
+    let status = cmd.status();
+
+    // Back to the cockpit.
+    let _ = crossterm::terminal::enable_raw_mode();
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::terminal::EnterAlternateScreen,
+        crossterm::event::EnableMouseCapture
+    );
+    let _ = terminal.clear();
+
+    match status {
+        Ok(s) if s.success() => app.set_notification(format!("↩ Back from '{name}'")),
+        Ok(s) => app.set_notification(format!(
+            "↩ ssh to '{name}' ended ({})",
+            s.code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".into())
+        )),
+        Err(e) => app.set_notification(format!("✗ Could not start ssh: {e}")),
+    }
+    Ok(())
+}
 
 fn handle_mouse_event<B: ratatui::backend::Backend>(
     mouse: event::MouseEvent,
@@ -6838,7 +6941,12 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                         app.show_site_import_modal = false;
                     }
                     HitboxAction::SelectServer(idx) => {
-                        app.selected_server = idx;
+                        // First click selects; clicking the selected server opens its terminal.
+                        if app.selected_server == idx {
+                            open_selected_server_terminal(app, terminal)?;
+                        } else {
+                            app.selected_server = idx;
+                        }
                     }
                     HitboxAction::ProbeServers => {
                         app.probe_servers();
@@ -13517,6 +13625,8 @@ mod tests {
             user: "root".to_string(),
             services: vec![],
             active: true,
+            auth: Default::default(),
+            key_path: String::new(),
         };
         app.cfg
             .daemon
@@ -13585,6 +13695,8 @@ mod tests {
                 user: "root".to_string(),
                 services: vec![],
                 active: true,
+                auth: Default::default(),
+                key_path: String::new(),
             },
         );
         app.remove_selected_server();
@@ -14227,6 +14339,45 @@ mod tests {
             .map(|n| n.0.as_str())
             .unwrap_or_default();
         assert!(notif.contains("Remediated: restarted container 'web-prod'"));
+    }
+    #[test]
+    fn test_server_wizard_persists_auth_without_leaking_password() {
+        let mut app = CockpitApp::new(&Config::default());
+        app.server_name_buf = "vps-a".into();
+        app.server_ip_buf = "203.0.113.7".into();
+        app.server_user_buf = "deploy".into();
+        app.server_auth = crate::config::NodeAuth::Key;
+        app.server_cred_buf = "/home/u/.ssh/id_ed25519".into();
+        app.submit_server_wizard();
+        let n = app.cfg.daemon.nodes.get("vps-a").expect("saved");
+        assert_eq!(n.auth, crate::config::NodeAuth::Key);
+        assert_eq!(n.key_path, "/home/u/.ssh/id_ed25519");
+
+        // Tailscale: no key path is kept.
+        app.server_name_buf = "vps-b".into();
+        app.server_ip_buf = "100.64.0.9".into();
+        app.server_auth = crate::config::NodeAuth::Tailscale;
+        app.server_cred_buf = "ignored".into();
+        app.submit_server_wizard();
+        let n = app.cfg.daemon.nodes.get("vps-b").expect("saved");
+        assert_eq!(n.auth, crate::config::NodeAuth::Tailscale);
+        assert!(n.key_path.is_empty());
+    }
+
+    #[test]
+    fn test_server_tab_lists_only_registered_nodes() {
+        let mut app = CockpitApp::new(&Config::default());
+        app.cfg.daemon.nodes.clear();
+        app.probe_servers();
+        assert_eq!(app.server_probe_results.len(), 1, "only the local node");
+        // Isolated home: no registered nodes, so nothing but Local may appear
+        // (Tailscale peers must never be added automatically).
+        let tmp = std::env::temp_dir().join(format!("cashell-fleet-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).expect("tmp dir");
+        let fleet =
+            crate::paths::with_test_home(&tmp, || crate::systat::probe_fleet_nodes(0.0, 0, 0));
+        let _ = std::fs::remove_dir_all(&tmp);
+        assert_eq!(fleet.len(), 1, "no auto-discovered peers: {fleet:?}");
     }
 }
 pub(crate) fn noop() {}

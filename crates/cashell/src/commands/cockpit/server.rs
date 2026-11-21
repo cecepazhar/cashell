@@ -176,7 +176,7 @@ pub fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let sub_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
         .split(chunks[1]);
 
     let list_block = Block::default()
@@ -202,14 +202,34 @@ pub fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             .map(|n| n.active)
             .unwrap_or(true);
 
+        // Same data the Dashboard uses: one source of truth for the fleet.
+        let live = app
+            .latest_snap
+            .fleet_nodes
+            .iter()
+            .find(|n| &n.name == node_name);
         let (lat_str, status_str, status_col) = if !is_active {
             ("--".to_string(), "◌ INACTIVE", palette.text_muted)
+        } else if let Some(n) = live {
+            let lat = n
+                .latency_ms
+                .map(|ms| format!("{ms}ms"))
+                .unwrap_or_else(|| "--".to_string());
+            match n.status.as_str() {
+                "ONLINE" => (lat, "● ONLINE", palette.success),
+                "AUTH FAILED" => (lat, "⚠ AUTH FAILED", palette.warning),
+                _ => ("--".to_string(), "✖ OFFLINE", palette.danger),
+            }
         } else {
             match lat {
                 Some(ms) => (format!("{ms}ms"), "● REACHABLE", palette.success),
                 None => ("--".to_string(), "✖ UNREACHABLE", palette.danger),
             }
         };
+        let pct = |v: Option<String>| v.unwrap_or_else(|| "--".to_string());
+        let cpu_s = pct(live.and_then(|n| n.cpu_pct).map(|v| format!("{v:.0}%")));
+        let ram_s = pct(live.and_then(|n| n.ram_pct).map(|v| format!("{v}%")));
+        let dsk_s = pct(live.and_then(|n| n.disk_pct).map(|v| format!("{v}%")));
         rows.push(
             Row::new(vec![
                 Cell::from(node_name.clone()).style(
@@ -224,6 +244,9 @@ pub fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 Cell::from(status_str)
                     .style(Style::default().fg(status_col).add_modifier(Modifier::BOLD)),
                 Cell::from(lat_str).style(Style::default().fg(palette.accent)),
+                Cell::from(cpu_s),
+                Cell::from(ram_s),
+                Cell::from(dsk_s),
             ])
             .style(Style::default().bg(bg)),
         );
@@ -232,13 +255,16 @@ pub fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let table = Table::new(
         rows,
         [
-            Constraint::Length(22),
-            Constraint::Length(16),
-            Constraint::Min(10),
+            Constraint::Length(20),
+            Constraint::Length(15),
+            Constraint::Length(7),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Min(6),
         ],
     )
     .header(
-        Row::new(vec!["SERVER NODE", "STATUS", "RTT LATENCY"]).style(
+        Row::new(vec!["SERVER NODE", "STATUS", "RTT", "CPU", "RAM", "DISK"]).style(
             Style::default()
                 .fg(palette.warning)
                 .add_modifier(Modifier::BOLD),
@@ -463,7 +489,7 @@ pub fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
 pub fn draw_server_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let palette = cockpit_theme(&app.cfg.output.theme);
-    let popup_area = centered_rect(65, 52, area);
+    let popup_area = centered_rect(70, 62, area);
     f.render_widget(Clear, popup_area);
 
     let is_edit = app.server_wizard_is_edit;
@@ -493,6 +519,30 @@ pub fn draw_server_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         return;
     }
 
+    use crate::config::NodeAuth;
+    let auth = app.server_auth;
+    let cred_label = match auth {
+        NodeAuth::Key => "SSH Key Path:",
+        NodeAuth::Password => "SSH Password:",
+        NodeAuth::Tailscale => "(Tailscale: no secret)",
+    };
+    let cred_val = match auth {
+        NodeAuth::Password => "•".repeat(app.server_cred_buf.chars().count()),
+        NodeAuth::Tailscale => String::new(),
+        NodeAuth::Key => app.server_cred_buf.clone(),
+    };
+    let cred_hint = match auth {
+        NodeAuth::Key => "empty = ssh-agent / default key, e.g. ~/.ssh/id_ed25519",
+        NodeAuth::Password => {
+            if is_edit {
+                "empty = keep stored password (encrypted in secrets.enc)"
+            } else {
+                "stored encrypted in secrets.enc, never in config.toml"
+            }
+        }
+        NodeAuth::Tailscale => "uses the node's Tailscale address over plain ssh",
+    };
+    let auth_val = format!("◀ {} ▶", auth.label());
     let fields = [
         (
             "Server Name:",
@@ -502,18 +552,24 @@ pub fn draw_server_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         (
             "Host / IP Address:",
             app.server_ip_buf.clone(),
-            "e.g. 100.127.232.32",
+            "e.g. 203.0.113.10 or 100.x.y.z (Tailscale)",
         ),
         (
             "SSH Username:",
             app.server_user_buf.clone(),
-            "e.g. root, cecep",
+            "e.g. root, deploy",
         ),
         (
             "Services (CSV):",
             app.server_services_buf.clone(),
             "e.g. http:80,ssh:22",
         ),
+        (
+            "Login Method:",
+            auth_val,
+            "←/→ or Space: key · password · tailscale",
+        ),
+        (cred_label, cred_val, cred_hint),
     ];
 
     let mut lines = Vec::new();
@@ -587,7 +643,7 @@ pub fn draw_server_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "Tab/Down: Next │ BackTab/Up: Prev │ Enter/Ctrl+S: Save │ Esc: Cancel",
+        "Tab/↓ Next │ ←/→ Login Method │ Enter/Ctrl+S Save │ Esc Cancel",
         Style::default().fg(Color::DarkGray),
     )));
 
