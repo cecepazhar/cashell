@@ -46,7 +46,18 @@ fn restore_default_sigpipe() {
 fn restore_default_sigpipe() {}
 
 fn run_app() -> Result<i32> {
-    let args = Cashell::parse();
+    let args = match Cashell::try_parse() {
+        Ok(a) => a,
+        Err(e) => {
+            use clap::error::ErrorKind;
+            // `--help` / `--version` carry the brandmark like other modern CLIs.
+            if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) {
+                let quiet = std::env::args().any(|a| a == "-q" || a == "--quiet");
+                banner::print(quiet);
+            }
+            e.exit();
+        }
+    };
     let cfg = commands::load_config(&args.config_file)?;
 
     // Full-screen TUI or background daemon operations.

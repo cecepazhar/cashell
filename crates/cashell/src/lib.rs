@@ -5,6 +5,7 @@ pub mod app_groups;
 pub mod audit_interview;
 pub mod audit_tui;
 pub mod banner;
+pub mod brand;
 pub mod cli;
 pub mod commands;
 pub mod config;

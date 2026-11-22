@@ -7870,7 +7870,7 @@ where
 
 fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let palette = cockpit_theme(&app.cfg.output.theme);
-    let title = format!("CAShell v{}", env!("CARGO_PKG_VERSION"));
+    let title = format!("❯❯ CAShell v{}", env!("CARGO_PKG_VERSION"));
     let time_str = header_clock(chrono::Local::now(), area.width);
 
     // Dynamic L-11 Header badge: FREE / PRO · Lifetime / PRO · N hari (yellow <= 14d, red if expired)
@@ -7959,6 +7959,28 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             .item(time_badge),
         area,
     );
+}
+
+/// Overlay the CAShell `>>_` brandmark on the centre of the avatar screen.
+fn draw_brand_mark(f: &mut Frame, screen: Rect) {
+    const LW: u16 = 16;
+    const LH: u16 = 6; // text rows (12 pixel rows)
+    if screen.width < LW + 2 || screen.height < LH + 2 {
+        return;
+    }
+    let ox = screen.x + (screen.width - LW) / 2;
+    let oy = screen.y + (screen.height - LH) / 2;
+    let rgb = |c: (u8, u8, u8)| Color::Rgb(c.0, c.1, c.2);
+    let buf = f.buffer_mut();
+    for (x, y, ch, fgc, bgc) in crate::brand::cells(LW as usize, (LH * 2) as usize) {
+        if let Some(cell) = buf.cell_mut((ox + x, oy + y)) {
+            cell.set_char(ch);
+            cell.set_fg(rgb(fgc));
+            if let Some(b) = bgc {
+                cell.set_bg(rgb(b));
+            }
+        }
+    }
 }
 
 // ── Tab Bar Navigation ───────────────────────────────────────────────────────
@@ -10715,6 +10737,7 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         Paragraph::new(token_lines).alignment(ratatui::layout::Alignment::Center),
         screen,
     );
+    draw_brand_mark(f, screen);
 
     // 2. Navigation Bar (Compact layout for smaller column)
     let nav_spans = vec![
@@ -11890,7 +11913,7 @@ fn draw_compact_fallback(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let snap = &app.latest_snap;
     let lines = vec![
         Line::from(Span::styled(
-            format!("CAShell v{} (Compact Mode)", env!("CARGO_PKG_VERSION")),
+            format!("❯❯ CAShell v{} (Compact Mode)", env!("CARGO_PKG_VERSION")),
             Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
         )),
         Line::from(format!(
