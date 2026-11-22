@@ -25,6 +25,7 @@ pub mod agent;
 pub mod ai;
 pub mod applications;
 pub mod apps;
+pub mod cron_tab;
 pub mod privacy;
 pub mod pty;
 pub mod server;
@@ -862,6 +863,11 @@ pub struct CockpitApp {
     pub cron_schedule_buffer: String,
     pub cron_command_buffer: String,
     pub selected_cron_job: usize,
+    pub cron_wizard_field: usize,
+    pub cron_desc_buffer: String,
+    pub cron_cache: Vec<crate::cron::CronEntry>,
+    pub cron_cache_at: Option<std::time::Instant>,
+    pub cron_error: Option<String>,
 
     // Add & Edit Wizard (Server / Project / Docker Container / Uptime Monitor)
     pub show_server_wizard: bool,
@@ -1169,6 +1175,11 @@ impl CockpitApp {
             cron_schedule_buffer: "0 * * * *".to_string(),
             cron_command_buffer: "echo 'hello'".to_string(),
             selected_cron_job: 0,
+            cron_wizard_field: 0,
+            cron_desc_buffer: String::new(),
+            cron_cache: Vec::new(),
+            cron_cache_at: None,
+            cron_error: None,
 
             show_server_wizard: false,
             server_wizard_field: 0,
@@ -1682,6 +1693,7 @@ impl CockpitApp {
                 let job_id = jobs[target].id;
                 let _ = d.delete_cron_job(job_id);
                 self.set_notification(format!("🗑 Scheduled cron job {job_id} removed"));
+                self.sync_cron();
             } else {
                 self.set_notification("⚠ No managed cron jobs to remove");
             }
@@ -3459,6 +3471,23 @@ impl CockpitApp {
         crate::entitlements::current().is_pro
     }
 
+    /// True while the user is typing into a field, so symbol keys such as
+    /// `@ # $ % *` are text, not Shift+digit tab shortcuts.
+    pub fn text_input_active(&self) -> bool {
+        self.editing_field.is_some()
+            || self.show_cron_wizard
+            || self.show_server_wizard
+            || self.show_project_wizard
+            || self.show_container_wizard
+            || self.show_monitor_wizard
+            || self.show_site_import_modal
+            || self.show_upgrade_modal
+            || self.show_factory_reset_modal
+            || self.show_pro_wizard
+            || self.license_input_editing
+            || (self.current_tab == CockpitTab::AI && !self.chat_input.is_empty())
+    }
+
     /// Privacy mask is on and allowed (Pro) and the lock screen is not shown.
     pub fn privacy_active(&self) -> bool {
         self.cfg.output.privacy_mode && !self.is_locked && self.is_pro()
@@ -5228,7 +5257,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Char('-') if key.modifiers.contains(KeyModifiers::SHIFT) => Some(10),
         _ => None,
     };
-    if let Some(tab_idx) = shift_tab {
+    if let Some(tab_idx) = shift_tab.filter(|_| !app.text_input_active()) {
         app.current_tab = CockpitTab::from_index(tab_idx);
         app.show_help_modal = false;
         app.editing_field = None;
@@ -5278,15 +5307,15 @@ fn handle_key_event<B: ratatui::backend::Backend>(
     // Global Help shortcut
     if key.code == KeyCode::F(1)
         || (key.code == KeyCode::Char('?')
-            && app.editing_field.is_none()
-            && !app.show_server_wizard
-            && !app.show_project_wizard
-            && !app.show_container_wizard
-            && !app.show_monitor_wizard
-            && (app.current_tab != CockpitTab::AI || app.chat_input.is_empty())
+            && !app.text_input_active()
             && (app.current_tab != CockpitTab::Terminal || app.term_input.is_empty()))
     {
         app.show_help_modal = !app.show_help_modal;
+        return Ok(false);
+    }
+
+    if app.show_cron_wizard {
+        cron_tab::handle_cron_wizard_key(&key, app);
         return Ok(false);
     }
 
@@ -5847,7 +5876,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             CockpitTab::Topology => {
                 app.topology_nav_up();
             }
-            CockpitTab::Cron => {}
+            CockpitTab::Cron => app.selected_cron_job = app.selected_cron_job.saturating_sub(1),
             CockpitTab::Log => {
                 app.log_scroll = app.log_scroll.saturating_sub(1);
             }
@@ -5932,7 +5961,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             CockpitTab::Topology => {
                 app.topology_nav_down();
             }
-            CockpitTab::Cron => {}
+            CockpitTab::Cron => app.selected_cron_job = app.selected_cron_job.saturating_add(1),
             CockpitTab::Log => {
                 app.log_scroll = (app.log_scroll + 1).min(app.log_buffer.len().saturating_sub(1));
             }
@@ -5995,17 +6024,6 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             _ => {}
         },
 
-        KeyCode::Enter if app.show_cron_wizard => {
-            if let Some(ref d) = app.db {
-                let _ = d.add_cron_job(
-                    &app.cron_schedule_buffer,
-                    &app.cron_command_buffer,
-                    "Custom task",
-                );
-                app.set_notification("✔ Saved scheduled job");
-            }
-            app.show_cron_wizard = false;
-        }
         KeyCode::Enter => match app.current_tab {
             CockpitTab::Analytics => {
                 if !app.show_analytics_detail {
@@ -6266,8 +6284,15 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         // Cron Tab shortcuts: 'n': New Cron Job, 'x': Remove selected managed cron job
         KeyCode::Char('x') | KeyCode::Delete if app.current_tab == CockpitTab::Cron => {
             app.pending_delete_target = DeleteTarget::CronJob;
-            app.pending_delete_label =
-                format!("selected scheduled cron job #{}", app.selected_cron_job);
+            let jobs = app.managed_jobs();
+            let Some(job) = jobs.get(app.selected_cron_job) else {
+                app.set_notification("⚠ No CAShell job selected");
+                return Ok(false);
+            };
+            app.pending_delete_label = format!(
+                "cron job '{}' ({}) — it is removed from your crontab too",
+                job.description, job.schedule
+            );
             app.show_delete_confirm = true;
         }
 
@@ -6282,9 +6307,8 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         }
 
         // Cron Tab shortcuts: 'n': New Cron Job
-        KeyCode::Char('n') if app.current_tab == CockpitTab::Cron => {
-            app.show_cron_wizard = true;
-        }
+        KeyCode::Char('n') if app.current_tab == CockpitTab::Cron => app.open_cron_wizard(),
+        KeyCode::Char('r') if app.current_tab == CockpitTab::Cron => app.run_selected_cron_job(),
 
         // Log Tab shortcuts: 'r': Reload logs, 'l': Cycle log level, 'e': AI Diagnosis (AI-07)
         KeyCode::Char('e') if app.current_tab == CockpitTab::Log => {
@@ -6850,7 +6874,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
             CockpitTab::Server => app.selected_server = app.selected_server.saturating_sub(1),
             CockpitTab::Analytics => app.analytics_scroll = app.analytics_scroll.saturating_sub(3),
             CockpitTab::Topology => app.topology_nav_up(),
-            CockpitTab::Cron => {}
+            CockpitTab::Cron => app.selected_cron_job = app.selected_cron_job.saturating_sub(1),
             CockpitTab::Log => app.log_scroll = app.log_scroll.saturating_sub(1),
             CockpitTab::Terminal => app.term_scroll = app.term_scroll.saturating_sub(1),
             CockpitTab::AI => app.scroll_chat_up(),
@@ -6901,7 +6925,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                 app.analytics_scroll = (app.analytics_scroll + 3).min(30);
             }
             CockpitTab::Topology => app.topology_nav_down(),
-            CockpitTab::Cron => {}
+            CockpitTab::Cron => app.selected_cron_job = app.selected_cron_job.saturating_add(1),
             CockpitTab::Log => {
                 app.log_scroll = (app.log_scroll + 1).min(app.log_buffer.len().saturating_sub(1));
             }
@@ -7196,7 +7220,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                         app.clear_chat_history();
                     }
                     HitboxAction::NewCronWizard => {
-                        app.show_cron_wizard = true;
+                        app.open_cron_wizard();
                     }
                     HitboxAction::ToggleHelp => {
                         app.show_help_modal = !app.show_help_modal;
@@ -7622,7 +7646,7 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         CockpitTab::Server => draw_server_tab(f, app, chunks[2]),
         CockpitTab::Analytics => draw_analytics_tab(f, app, chunks[2]),
         CockpitTab::Topology => topology::draw_topology_tab(f, app, chunks[2]),
-        CockpitTab::Cron => draw_cron_tab(f, app, chunks[2]),
+        CockpitTab::Cron => cron_tab::draw_cron_tab(f, app, chunks[2]),
         CockpitTab::Log => draw_log_tab(f, app, chunks[2]),
         CockpitTab::Terminal => terminal_tab::draw_terminal_tab(f, app, chunks[2]),
         CockpitTab::AI => draw_ai_tab(f, app, chunks[2]),
@@ -7646,7 +7670,7 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     }
 
     if app.show_cron_wizard {
-        draw_cron_wizard(f, app, area);
+        cron_tab::draw_cron_wizard(f, app, area);
     }
 
     if app.show_server_wizard {
@@ -11873,106 +11897,6 @@ fn draw_help_modal(f: &mut Frame, app: &CockpitApp, area: Rect) {
 
 // ── Cron & Scheduled Jobs View ─────────────────────────────────────────────
 
-fn draw_cron_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = cockpit_theme(&app.cfg.output.theme);
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(5)])
-        .split(area);
-
-    let new_job_btn_w = 32u16;
-    let new_job_btn_rect = Rect {
-        x: chunks[0].x.saturating_add(120),
-        y: chunks[0].y,
-        width: new_job_btn_w,
-        height: 1,
-    };
-    app.register_hitbox(new_job_btn_rect, HitboxAction::NewCronWizard);
-
-    let top_bar = Paragraph::new(Line::from(vec![
-        Span::styled(
-            " [6] CRON & SCHEDULED JOBS ",
-            Style::default()
-                .fg(palette.accent)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" │ Manage user crontab, systemd timers & managed CAShell jobs  "),
-        Span::styled(
-            "[+ New Cron Job] (Press 'n')",
-            Style::default()
-                .fg(Color::Rgb(0, 0, 0))
-                .bg(palette.highlight_bg)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]))
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(palette.border)),
-    );
-    f.render_widget(top_bar, chunks[0]);
-
-    // Read crontab + db jobs
-    let mut items = Vec::new();
-    if let Ok(user_jobs) = crate::cron::CronEntry::read_user_crontab() {
-        for j in user_jobs {
-            items.push(ListItem::new(Line::from(vec![
-                Span::styled(
-                    format!("{:<15} ", j.schedule),
-                    Style::default()
-                        .fg(palette.highlight_fg)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    format!("{:<30} ", j.command),
-                    Style::default().fg(Color::White),
-                ),
-                Span::styled("[User Crontab] ", Style::default().fg(palette.text_muted)),
-                Span::styled("● ACTIVE", Style::default().fg(palette.success)),
-            ])));
-        }
-    }
-
-    if let Some(ref d) = app.db {
-        if let Ok(db_jobs) = d.get_cron_jobs() {
-            for j in db_jobs {
-                items.push(ListItem::new(Line::from(vec![
-                    Span::styled(
-                        format!("{:<15} ", j.schedule),
-                        Style::default()
-                            .fg(palette.highlight_fg)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        format!("{:<30} ", j.command),
-                        Style::default().fg(Color::White),
-                    ),
-                    Span::styled(
-                        format!("[{}] ", j.description),
-                        Style::default().fg(palette.accent),
-                    ),
-                    Span::styled("● MANAGED", Style::default().fg(palette.success)),
-                ])));
-            }
-        }
-    }
-
-    if items.is_empty() {
-        items.push(ListItem::new(Line::from(vec![Span::styled(
-            "No scheduled cron jobs found. Press 'n' to create one.",
-            Style::default().fg(palette.text_muted),
-        )])));
-    }
-
-    let list_widget = List::new(items).block(
-        Block::default()
-            .title(" Active Scheduled Jobs (User Crontab & CAShell Managed Jobs) ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(palette.border)),
-    );
-    f.render_widget(list_widget, chunks[1]);
-}
-
 // ── Virtual Pet (Tamagotchi) Modal ──────────────────────────────────────────
 
 fn draw_pet_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
@@ -12099,53 +12023,6 @@ fn draw_pet_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 }
 
 // ── Cron Job Wizard Modal ───────────────────────────────────────────────────
-
-fn draw_cron_wizard(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = cockpit_theme(&app.cfg.output.theme);
-    let popup_area = centered_rect(50, 40, area);
-    f.render_widget(Clear, popup_area);
-
-    let block = Block::default()
-        .title(" ⏰ Create New Scheduled Job ")
-        .borders(Borders::ALL)
-        .border_style(
-            Style::default()
-                .fg(palette.accent)
-                .add_modifier(Modifier::BOLD),
-        );
-    let inner = block.inner(popup_area);
-    f.render_widget(block, popup_area);
-
-    let text = vec![
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("Schedule: ", Style::default().fg(palette.text_muted)),
-            Span::styled(
-                &app.cron_schedule_buffer,
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("Command:  ", Style::default().fg(palette.text_muted)),
-            Span::styled(&app.cron_command_buffer, Style::default().fg(Color::White)),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "[Save Job] (Enter)",
-                Style::default()
-                    .fg(Color::Rgb(0, 0, 0))
-                    .bg(palette.success)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("  "),
-            Span::styled("[Cancel] (Esc)", Style::default().fg(palette.text_muted)),
-        ]),
-    ];
-    f.render_widget(Paragraph::new(text), inner);
-}
 
 // ── CRUD Add Wizards (Server / Project / Docker Container / Uptime Monitor) ──
 
