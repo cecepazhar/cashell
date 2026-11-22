@@ -739,6 +739,8 @@ pub struct CockpitApp {
     pub project_view: ProjectView,
     pub selected_project: usize,
     pub selected_container: usize,
+    /// Scroll offset of the About tab feature catalog.
+    pub about_scroll: u16,
 
     // ── Tab 3: Uptime state ─────────────────────────────────────────────────
     pub selected_monitor: usize,
@@ -1051,6 +1053,7 @@ impl CockpitApp {
             project_view: ProjectView::Containers,
             selected_project: 0,
             selected_container: 0,
+            about_scroll: 0,
             project_server_target: 0,
             project_scroll: 0,
 
@@ -5906,7 +5909,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             CockpitTab::Turbo => {
                 app.turbo_selected_action = app.turbo_selected_action.saturating_sub(1);
             }
-            CockpitTab::About => {}
+            CockpitTab::About => app.about_scroll = app.about_scroll.saturating_sub(1),
         },
         KeyCode::Down | KeyCode::Char('j') => match app.current_tab {
             CockpitTab::Dashboard => {
@@ -5992,7 +5995,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             CockpitTab::Turbo => {
                 app.turbo_selected_action = (app.turbo_selected_action + 1).min(7);
             }
-            CockpitTab::About => {}
+            CockpitTab::About => app.about_scroll = app.about_scroll.saturating_add(1),
         },
 
         KeyCode::Left | KeyCode::Char('h') => match app.current_tab {
@@ -6899,7 +6902,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
             CockpitTab::Turbo => {
                 app.turbo_selected_action = app.turbo_selected_action.saturating_sub(1)
             }
-            CockpitTab::About => {}
+            CockpitTab::About => app.about_scroll = app.about_scroll.saturating_sub(3),
         },
         MouseEventKind::ScrollDown => match app.current_tab {
             CockpitTab::Dashboard => match app.dashboard_focused_panel {
@@ -6957,7 +6960,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
             CockpitTab::Turbo => {
                 app.turbo_selected_action = (app.turbo_selected_action + 1).min(3);
             }
-            CockpitTab::About => {}
+            CockpitTab::About => app.about_scroll = app.about_scroll.saturating_add(3),
         },
         MouseEventKind::Down(MouseButton::Left) => {
             if let Some(action) = app.find_hitbox(mouse.column, mouse.row) {
