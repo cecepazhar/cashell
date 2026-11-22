@@ -104,6 +104,9 @@ pub enum Commands {
     /// Manage Telegram bot integration & setup wizard
     Telegram(crate::commands::telegram::TelegramCommand),
 
+    /// Full backup & restore: servers, monitors, projects, settings, history, analytics
+    Backup(crate::commands::backup::BackupCommand),
+
     /// Factory reset: wipe all data (config, database, cache)
     Reset(ResetCommand),
 }

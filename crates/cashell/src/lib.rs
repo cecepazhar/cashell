@@ -4,6 +4,7 @@ pub mod ai;
 pub mod app_groups;
 pub mod audit_interview;
 pub mod audit_tui;
+pub mod backup;
 pub mod banner;
 pub mod brand;
 pub mod cli;

@@ -4,6 +4,7 @@ pub mod analytics;
 pub mod app;
 pub mod audit;
 pub mod auth;
+pub mod backup;
 pub mod chat;
 pub mod cockpit;
 pub mod config;

@@ -200,6 +200,7 @@ fn run_app() -> Result<i32> {
             let code = commands::telegram::run(&cmd, &mut cfg_mut)?;
             Ok(code)
         }
+        Some(Commands::Backup(cmd)) => commands::backup::run(&cmd),
         Some(Commands::Reset(cmd)) => {
             // R-02: 0 = all removed, 1 = partial failure, 2 = cancelled.
             let code = commands::reset::run(&cmd)?;
