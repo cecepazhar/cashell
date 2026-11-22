@@ -25,8 +25,10 @@ pub mod ai;
 pub mod applications;
 pub mod apps;
 pub mod privacy;
+pub mod pty;
 pub mod server;
 pub mod settings;
+pub mod terminal_tab;
 pub mod topology;
 pub mod traffic;
 pub mod uptime;
@@ -151,6 +153,7 @@ pub enum HitboxAction {
     UpgradeActivate,
     UpgradeBuy,
     TogglePrivacy,
+    FocusTerminal,
     LicenseActivate,
     LicenseVerify,
     LicenseDeactivate,
@@ -774,6 +777,11 @@ pub struct CockpitApp {
     pub term_output: Vec<String>,
     pub term_busy: bool,
     pub term_scroll: usize,
+    /// Real shell for the Terminal tab (spawned on first view).
+    pub term_pty: Option<pty::PtySession>,
+    /// Keys go to the shell while true (Ctrl+] releases them).
+    pub term_focus: bool,
+    pub term_error: Option<String>,
 
     // ── Tab 9: AI state ─────────────────────────────────────────────────────
     pub ai_model_idx: usize,
@@ -1096,6 +1104,9 @@ impl CockpitApp {
             ],
             term_busy: false,
             term_scroll: 0,
+            term_pty: None,
+            term_focus: true,
+            term_error: None,
 
             // ── Tab 9: AI state ─────────────────────────────────────────────────────
             ai_model_idx: 0,
@@ -5048,6 +5059,11 @@ fn handle_key_event<B: ratatui::backend::Backend>(
     app: &mut CockpitApp,
     terminal: &mut Terminal<B>,
 ) -> Result<bool> {
+    // A focused Terminal tab owns the keyboard (Ctrl+C, digits, Ctrl+E …).
+    if terminal_tab::handle_terminal_key(&key, app) {
+        return Ok(false);
+    }
+
     // Universal Emergency Exit on Ctrl+C (guarantees clean terminal restoration from any screen/modal)
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         return Ok(true);
@@ -5449,72 +5465,6 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             }
             KeyCode::Down => {
                 app.scroll_chat_down();
-                return Ok(false);
-            }
-            _ => {}
-        }
-    }
-
-    // 4b. If Terminal tab is focused and user types command
-    if app.current_tab == CockpitTab::Terminal {
-        match key.code {
-            KeyCode::Esc => {
-                if !app.term_input.is_empty() {
-                    app.term_input.clear();
-                    return Ok(false);
-                }
-                app.show_quit_confirm = true;
-                return Ok(false);
-            }
-            KeyCode::Enter if !app.term_input.trim().is_empty() => {
-                app.run_terminal_command();
-                return Ok(false);
-            }
-            KeyCode::Backspace => {
-                app.term_input.pop();
-                return Ok(false);
-            }
-            KeyCode::Char(c)
-                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
-            {
-                if app.term_input.is_empty() {
-                    if ('1'..='9').contains(&c) {
-                        let idx = (c as usize) - ('1' as usize);
-                        app.current_tab = CockpitTab::from_index(idx);
-                        return Ok(false);
-                    } else if c == '0' {
-                        app.current_tab = CockpitTab::Setting;
-                        return Ok(false);
-                    } else if c == 'r' {
-                        // Toggle local vs first remote node
-                        if app.term_remote.is_none() {
-                            if let Some(first_node) = app.cfg.daemon.nodes.keys().next() {
-                                app.term_remote = Some(first_node.clone());
-                                app.set_notification(format!(
-                                    "Terminal target: Remote [{first_node}]"
-                                ));
-                            } else {
-                                app.set_notification(
-                                    "Terminal target: Local (No remote nodes configured)",
-                                );
-                            }
-                        } else {
-                            app.term_remote = None;
-                            app.set_notification("Terminal target: Local");
-                        }
-                        return Ok(false);
-                    }
-                }
-                app.term_input.push(c);
-                return Ok(false);
-            }
-            KeyCode::Up => {
-                app.term_scroll = app.term_scroll.saturating_sub(1);
-                return Ok(false);
-            }
-            KeyCode::Down => {
-                app.term_scroll =
-                    (app.term_scroll + 1).min(app.term_output.len().saturating_sub(1));
                 return Ok(false);
             }
             _ => {}
@@ -7029,6 +6979,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                     }
                     HitboxAction::OpenUpgradeModal => settings::open_upgrade_modal(app),
                     HitboxAction::TogglePrivacy => app.toggle_privacy(),
+                    HitboxAction::FocusTerminal => app.term_focus = true,
                     HitboxAction::CloseUpgradeModal => settings::close_upgrade_modal(app),
                     HitboxAction::UpgradeBuy => settings::open_buy_url(app),
                     HitboxAction::UpgradeFocusKey => {}
@@ -7678,7 +7629,7 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         CockpitTab::Topology => topology::draw_topology_tab(f, app, chunks[2]),
         CockpitTab::Cron => draw_cron_tab(f, app, chunks[2]),
         CockpitTab::Log => draw_log_tab(f, app, chunks[2]),
-        CockpitTab::Terminal => draw_terminal_tab(f, app, chunks[2]),
+        CockpitTab::Terminal => terminal_tab::draw_terminal_tab(f, app, chunks[2]),
         CockpitTab::AI => draw_ai_tab(f, app, chunks[2]),
         CockpitTab::Setting => draw_setting_tab(f, app, chunks[2]),
         CockpitTab::Turbo => draw_turbo_tab(f, app, chunks[2]),
@@ -10377,103 +10328,6 @@ fn draw_log_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 }
 
 // ── Tab 8: Terminal (Embedded Terminal / Command Execution Runner Pane) ───────
-
-fn draw_terminal_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = cockpit_theme(&app.cfg.output.theme);
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(8),
-            Constraint::Length(3),
-        ])
-        .split(area);
-
-    let bar_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(palette.border));
-    let bar_inner = bar_block.inner(chunks[0]);
-    f.render_widget(bar_block, chunks[0]);
-
-    let target_label = match &app.term_remote {
-        Some(name) => format!("Remote: [{name}]"),
-        None => "Local".to_string(),
-    };
-
-    let bar_spans = vec![
-        Span::styled(
-            format!(" Target: [{target_label}] (Press 'r') "),
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" │ Quick Presets: "),
-        Span::styled(" [cas doctor] ", Style::default().fg(palette.accent)),
-        Span::raw(" "),
-        Span::styled(" [cas git-status] ", Style::default().fg(palette.chart[0])),
-        Span::raw(" "),
-        Span::styled(" [docker ps] ", Style::default().fg(palette.success)),
-        Span::raw(" "),
-        Span::styled(" [tailscale status] ", Style::default().fg(palette.warning)),
-    ];
-    f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
-
-    let out_block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Execution History & Console Output (Press '↑'/'↓' to scroll) ")
-        .border_style(Style::default().fg(palette.border));
-    let out_inner = out_block.inner(chunks[1]);
-    f.render_widget(out_block, chunks[1]);
-
-    let out_lines: Vec<Line> = app
-        .term_output
-        .iter()
-        .skip(app.term_scroll)
-        .map(|l| {
-            let col = if l.starts_with("$") {
-                palette.accent
-            } else if l.starts_with("!") || l.starts_with("✗") {
-                palette.danger
-            } else {
-                Color::White
-            };
-            Line::from(Span::styled(l.clone(), Style::default().fg(col)))
-        })
-        .collect();
-    f.render_widget(
-        Paragraph::new(out_lines).wrap(Wrap { trim: false }),
-        out_inner,
-    );
-
-    let in_block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Command Input ($ > Enter to run | Esc to clear) ")
-        .border_style(Style::default().fg(palette.success));
-    let in_inner = in_block.inner(chunks[2]);
-    f.render_widget(in_block, chunks[2]);
-
-    let prompt_line = Line::from(vec![
-        Span::styled(
-            "$ > ",
-            Style::default()
-                .fg(palette.accent)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            &app.term_input,
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "█",
-            Style::default()
-                .fg(palette.accent)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]);
-    f.render_widget(Paragraph::new(prompt_line), in_inner);
-}
 
 // ── Tab 9: AI (Workspace AI Chat Connected to OmniRoute / 9router) ────────────
 

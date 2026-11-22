@@ -100,7 +100,10 @@ const MODULES: &[Module] = &[
         name: "Terminal",
         key: "9",
         status: Status::Beta,
-        items: &["Run commands locally or on a fleet server with quick presets"],
+        items: &[
+            "Real shell (bash/zsh) in the panel: colours, Tab completion, vim, htop, Ctrl+C",
+            "Local or SSH to any fleet server (Ctrl+T); Ctrl+] gives keys back to CAShell",
+        ],
     },
     Module {
         name: "AI",

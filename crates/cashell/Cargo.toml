@@ -21,6 +21,9 @@ path = "src/main.rs"
 cashell-common = { path = "../common", version = "2.1.0-rc2" }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
+# Real shell in the Cockpit Terminal tab (PTY + VT100 screen).
+portable-pty = "0.9"
+vt100 = "0.15"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
