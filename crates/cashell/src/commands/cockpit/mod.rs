@@ -27,6 +27,7 @@ pub mod apps;
 pub mod privacy;
 pub mod server;
 pub mod settings;
+pub mod topology;
 pub mod traffic;
 pub mod uptime;
 use crossterm::event::{self, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
@@ -659,6 +660,10 @@ pub struct CockpitApp {
     // Topology state
     pub selected_topology_node: usize,
     pub topology_focus_tier: usize, // 0 servers,1 apps,2 databases
+    /// Servers folded in the Topology tree (by fleet name).
+    pub topology_collapsed: std::collections::HashSet<String>,
+    /// Fleet name of the highlighted Topology server (set while drawing).
+    pub topology_selected_name: String,
 
     pub current_tab: CockpitTab,
     pub db: Option<crate::db::Database>,
@@ -987,6 +992,8 @@ impl CockpitApp {
         let mut app = Self {
             selected_topology_node: 0,
             topology_focus_tier: 0,
+            topology_collapsed: std::collections::HashSet::new(),
+            topology_selected_name: String::new(),
             current_tab: CockpitTab::Dashboard,
             db,
             show_help_modal: false,
@@ -1909,15 +1916,17 @@ impl CockpitApp {
     }
 
     pub fn topology_nav_down(&mut self) {
-        self.selected_topology_node = (self.selected_topology_node + 1).min(20);
+        // Clamped to the server count while drawing.
+        self.selected_topology_node = self.selected_topology_node.saturating_add(1);
     }
 
     pub fn topology_nav_left(&mut self) {
-        self.topology_focus_tier = self.topology_focus_tier.saturating_sub(1);
+        self.topology_collapsed
+            .insert(self.topology_selected_name.clone());
     }
 
     pub fn topology_nav_right(&mut self) {
-        self.topology_focus_tier = (self.topology_focus_tier + 1).min(2);
+        self.topology_collapsed.remove(&self.topology_selected_name);
     }
 
     pub fn load_logs(&mut self) {
@@ -6000,6 +6009,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
 
         KeyCode::Left | KeyCode::Char('h') => match app.current_tab {
             CockpitTab::Setting => app.cycle_field_value(false),
+            CockpitTab::Topology => app.topology_nav_left(),
             CockpitTab::Project => {
                 app.project_view = match app.project_view {
                     ProjectView::Hierarchy => ProjectView::Containers,
@@ -6020,6 +6030,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         },
         KeyCode::Right | KeyCode::Char('l') => match app.current_tab {
             CockpitTab::Setting => app.cycle_field_value(true),
+            CockpitTab::Topology => app.topology_nav_right(),
             CockpitTab::Project => {
                 app.project_view = match app.project_view {
                     ProjectView::Hierarchy => ProjectView::Tree,
@@ -7664,7 +7675,7 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         CockpitTab::Uptime => draw_uptime_tab(f, app, chunks[2]),
         CockpitTab::Server => draw_server_tab(f, app, chunks[2]),
         CockpitTab::Analytics => draw_analytics_tab(f, app, chunks[2]),
-        CockpitTab::Topology => draw_topology_tab(f, app, chunks[2]),
+        CockpitTab::Topology => topology::draw_topology_tab(f, app, chunks[2]),
         CockpitTab::Cron => draw_cron_tab(f, app, chunks[2]),
         CockpitTab::Log => draw_log_tab(f, app, chunks[2]),
         CockpitTab::Terminal => draw_terminal_tab(f, app, chunks[2]),
@@ -10185,214 +10196,6 @@ fn draw_uptime_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
 fn draw_uptime_detail_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     uptime::draw_uptime_detail_modal(f, app, area);
-}
-fn draw_topology_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
-    let palette = cockpit_theme(&app.cfg.output.theme);
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(8)])
-        .split(area);
-
-    // Header bar
-    let header = Block::default()
-        .borders(Borders::ALL)
-        .title("[6] Isometric Topology – Servers → Apps → Databases → Infra")
-        .border_style(Style::default().fg(palette.border));
-    f.render_widget(header, chunks[0]);
-
-    let content = chunks[1];
-
-    if app.server_probe_results.is_empty() {
-        let placeholder = Paragraph::new(vec![Line::from(Span::styled(
-            "Press 'r' to probe infrastructure topology...",
-            Style::default().fg(palette.text_muted),
-        ))])
-        .alignment(ratatui::layout::Alignment::Center);
-        f.render_widget(placeholder, content);
-        return;
-    }
-
-    let split = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-        .split(content);
-
-    // ── Left Pane: Isometric Topology Map ──────────────────────────────
-    let left_block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Topology Map (Local & Remote Fleet) ")
-        .border_style(Style::default().fg(palette.accent));
-    let left_inner = left_block.inner(split[0]);
-    f.render_widget(left_block, split[0]);
-
-    let snap = &app.latest_snap;
-    let mut map_lines: Vec<Line> = Vec::new();
-
-    // Helper function for node lines
-    let node_status = |lat: Option<u128>| -> (&'static str, Color) {
-        match lat {
-            Some(ms) if ms < 300 => ("● ONLINE", Color::Green),
-            Some(_) => ("▲ SLOW", Color::Yellow),
-            None => ("✖ OFFLINE", Color::Red),
-        }
-    };
-
-    // Server Tier
-    map_lines.push(Line::from(Span::styled(
-        "SERVER TIER:",
-        Style::default()
-            .fg(palette.warning)
-            .add_modifier(Modifier::BOLD),
-    )));
-    for (i, (node, lat)) in app.server_probe_results.iter().enumerate() {
-        let (status, color) = node_status(*lat);
-        let is_selected = i == app.selected_topology_node && app.topology_focus_tier == 0;
-        let style = Style::default().fg(color).add_modifier(if is_selected {
-            Modifier::BOLD
-        } else {
-            Modifier::empty()
-        });
-        let prefix = if is_selected { "▶ " } else { "  " };
-        map_lines.push(Line::from(vec![
-            Span::styled(format!("{}⬢ {}", prefix, node), style),
-            Span::styled(format!(" [{}]", status), style),
-        ]));
-        map_lines.push(Line::from(Span::styled(
-            "  │   ",
-            Style::default().fg(Color::DarkGray),
-        )));
-    }
-
-    // App Tier
-    map_lines.push(Line::from(Span::styled(
-        "APPLICATIONS TIER:",
-        Style::default()
-            .fg(palette.accent)
-            .add_modifier(Modifier::BOLD),
-    )));
-    let app_count = snap.tracked_projects.len().max(5);
-    for i in 0..app_count.min(app.apps.len()) {
-        let is_selected = (app
-            .selected_topology_node
-            .saturating_sub(app.server_probe_results.len()))
-            == i
-            && app.topology_focus_tier == 1;
-        let prefix = if is_selected { "▶ " } else { "  " };
-        let name = app
-            .apps
-            .get(i)
-            .map(|a| a.name.clone())
-            .unwrap_or_else(|| "App-Instance".to_string());
-        map_lines.push(Line::from(vec![
-            Span::styled(
-                format!("{}◆ {}", prefix, name),
-                Style::default().fg(Color::White),
-            ),
-            Span::styled(" ● RUNNING", Style::default().fg(Color::Green)),
-        ]));
-    }
-
-    // Database & Infra Tier
-    map_lines.push(Line::from(Span::styled(
-        "DATABASES & INFRA TIER:",
-        Style::default()
-            .fg(palette.success)
-            .add_modifier(Modifier::BOLD),
-    )));
-    let container_count = snap.docker_containers.len().max(3);
-    for i in 0..container_count {
-        let is_selected = (app
-            .selected_topology_node
-            .saturating_sub(app.server_probe_results.len() + app_count.min(app.apps.len())))
-            == i
-            && app.topology_focus_tier == 2;
-        let prefix = if is_selected { "▶ " } else { "  " };
-        let container = snap
-            .docker_containers
-            .get(i)
-            .map(|c| c.name.clone())
-            .unwrap_or_else(|| "DB / Infra".to_string());
-        let state = snap
-            .docker_containers
-            .get(i)
-            .map(|c| c.state.clone())
-            .unwrap_or_default();
-        let (icon, col) = if state == "running" {
-            ("■", Color::Green)
-        } else {
-            ("■", Color::Red)
-        };
-        map_lines.push(Line::from(vec![Span::styled(
-            format!("{}{} {}", prefix, icon, container),
-            Style::default().fg(col),
-        )]));
-    }
-
-    f.render_widget(Paragraph::new(map_lines), left_inner);
-
-    // ── Right Pane: Node Inspector / Diagnostics ──────────────────────
-    let right_block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Node Inspector & Diagnostics ")
-        .border_style(Style::default().fg(palette.accent));
-    let right_inner = right_block.inner(split[1]);
-    f.render_widget(right_block, split[1]);
-
-    let sel = app.selected_topology_node;
-    let mut detail_lines: Vec<Line> = Vec::new();
-
-    if sel < app.server_probe_results.len() {
-        let (name, lat) = &app.server_probe_results[sel];
-        let (status, color) = node_status(*lat);
-        detail_lines.push(Line::from(vec![
-            Span::styled(
-                "Node: ".to_string(),
-                Style::default().fg(palette.text_muted),
-            ),
-            Span::styled(
-                name.clone(),
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]));
-        detail_lines.push(Line::from(vec![
-            Span::styled("Status: ", Style::default().fg(palette.text_muted)),
-            Span::styled(status.to_string(), Style::default().fg(color)),
-        ]));
-        detail_lines.push(Line::from(vec![
-            Span::styled("Latency: ", Style::default().fg(palette.text_muted)),
-            Span::styled(
-                lat.map(|ms| format!("{}ms", ms))
-                    .unwrap_or_else(|| "unreachable".to_string()),
-                Style::default().fg(palette.accent),
-            ),
-        ]));
-        detail_lines.push(Line::from(""));
-        detail_lines.push(Line::from(Span::styled(
-            "Connected Apps: CAPost, CAShell, 9router, CACalm",
-            Style::default().fg(Color::White),
-        )));
-        detail_lines.push(Line::from(Span::styled(
-            "Connected DB/Infra: SQLite, Redis, MySQL, Cloudflare",
-            Style::default().fg(Color::White),
-        )));
-    } else {
-        detail_lines.push(Line::from(Span::styled(
-            "Select a server node above to view app/database dependencies and diagnostics.",
-            Style::default().fg(palette.text_muted),
-        )));
-    }
-
-    detail_lines.push(Line::from(""));
-    detail_lines.push(Line::from(Span::styled(
-        "Actions: [r] Probe  [p] Ping  [↑/↓] Navigate  [←/→] Tier Focus",
-        Style::default()
-            .fg(palette.accent)
-            .add_modifier(Modifier::BOLD),
-    )));
-
-    f.render_widget(Paragraph::new(detail_lines), right_inner);
 }
 
 fn draw_server_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
