@@ -537,6 +537,89 @@ pub fn probe_analytics_summary() -> AnalyticsSummary {
 
 // ── Docker Containers Probe ─────────────────────────────────────────────────
 
+const CONTAINER_FMT: &str = "{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}|{{.Ports}}";
+const REMOTE_CONTAINER_TTL: Duration = Duration::from_secs(20);
+
+/// Parse one `Names|Image|State|Status|Ports` line; `prefix` (e.g. a node
+/// name) is prepended as `prefix::name` and the node is tagged in the status.
+fn parse_container_line(line: &str, node: Option<&str>) -> Option<DockerContainerInfo> {
+    let parts: Vec<&str> = line.split('|').collect();
+    if parts.len() < 4 {
+        return None;
+    }
+    let name = parts.first()?.trim();
+    let status = parts.get(3)?.trim();
+    Some(DockerContainerInfo {
+        name: match node {
+            Some(n) => format!("{n}::{name}"),
+            None => name.to_string(),
+        },
+        image: parts.get(1)?.trim().to_string(),
+        state: parts.get(2)?.trim().to_lowercase(),
+        status_detail: match node {
+            Some(n) => format!("{status} [{n}]"),
+            None => status.to_string(),
+        },
+        ports: parts.get(4).map(|p| p.trim().to_string()).unwrap_or_default(),
+    })
+}
+
+type RemoteContainerCache = Mutex<Option<(Instant, Vec<DockerContainerInfo>)>>;
+static REMOTE_CONTAINERS: RemoteContainerCache = Mutex::new(None);
+
+/// `docker ps -a` (or podman) over SSH on every active, registered fleet node.
+/// Cached for 20 s; never runs in tests (`host_guard`).
+pub fn probe_remote_containers() -> Vec<DockerContainerInfo> {
+    if !crate::host_guard::allowed() {
+        return Vec::new();
+    }
+    if let Ok(g) = REMOTE_CONTAINERS.lock() {
+        if let Some((at, list)) = g.as_ref() {
+            if at.elapsed() < REMOTE_CONTAINER_TTL {
+                return list.clone();
+            }
+        }
+    }
+    let nodes: Vec<(String, crate::config::NodeConfig)> = crate::config::Config::load(None)
+        .ok()
+        .map(|c| c.daemon.nodes)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(name, n)| n.active && name != "local")
+        .collect();
+    let remote_cmd = format!(
+        "docker ps -a --format '{CONTAINER_FMT}' 2>/dev/null || podman ps -a --format '{CONTAINER_FMT}'"
+    );
+    let handles: Vec<_> = nodes
+        .into_iter()
+        .map(|(name, node)| {
+            let cmd = remote_cmd.clone();
+            std::thread::spawn(move || {
+                let mut c = crate::fleet_ssh::ssh_command(&name, &node, Some(&cmd));
+                c.stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null());
+                let out = c.output().ok().filter(|o| o.status.success())?;
+                let text = String::from_utf8_lossy(&out.stdout).to_string();
+                Some(
+                    text.lines()
+                        .filter_map(|l| parse_container_line(l, Some(&name)))
+                        .collect::<Vec<_>>(),
+                )
+            })
+        })
+        .collect();
+    let mut list = Vec::new();
+    for h in handles {
+        if let Ok(Some(mut v)) = h.join() {
+            list.append(&mut v);
+        }
+    }
+    if let Ok(mut g) = REMOTE_CONTAINERS.lock() {
+        *g = Some((Instant::now(), list.clone()));
+    }
+    list
+}
+
 pub fn probe_docker_containers() -> Vec<DockerContainerInfo> {
     let mut list = Vec::new();
 
@@ -582,47 +665,8 @@ pub fn probe_docker_containers() -> Vec<DockerContainerInfo> {
         }
     }
 
-    // 2. Tencent Cloud container node (SSH docker ps)
-    let tencent_out = Command::new("ssh")
-        .args([
-            "-o",
-            "ConnectTimeout=3",
-            "-o",
-            "BatchMode=yes",
-            "root@100.96.8.82",
-            "docker ps -a --format '{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}|{{.Ports}}'",
-        ])
-        .output();
-
-    if let Ok(o) = tencent_out {
-        if o.status.success() {
-            let text = String::from_utf8_lossy(&o.stdout);
-            for line in text.lines() {
-                let parts: Vec<&str> = line.split('|').collect();
-                if parts.len() >= 4 {
-                    let ports = parts
-                        .get(4)
-                        .map(|p| p.trim().to_string())
-                        .unwrap_or_default();
-                    let state = parts[2].trim().to_lowercase();
-                    let mut short_name = parts[0].trim().to_string();
-                    if let Some(stripped) = short_name.strip_prefix("cagroup-") {
-                        short_name = stripped.to_string();
-                    }
-                    let name = format!("tc::{}", short_name);
-                    let image = parts[1].trim().to_string();
-                    let status_detail = format!("{} [Tencent]", parts[3].trim());
-                    list.push(DockerContainerInfo {
-                        name,
-                        image,
-                        state,
-                        status_detail,
-                        ports,
-                    });
-                }
-            }
-        }
-    }
+    // 2. Containers on the servers the user registered in `[daemon.nodes]`.
+    list.extend(probe_remote_containers());
 
     list
 }
@@ -2707,6 +2751,24 @@ pub fn status_bar_text(s: &SysSnapshot) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_parse_container_line_tags_node_and_rejects_short_lines() {
+        let l = "web|nginx:1|running|Up 2 hours|0.0.0.0:80->80/tcp";
+        let c = parse_container_line(l, Some("vps1")).expect("parsed");
+        assert_eq!(c.name, "vps1::web");
+        assert_eq!(c.state, "running");
+        assert_eq!(c.status_detail, "Up 2 hours [vps1]");
+        assert_eq!(c.ports, "0.0.0.0:80->80/tcp");
+        let local = parse_container_line(l, None).expect("parsed");
+        assert_eq!(local.name, "web");
+        assert!(parse_container_line("too|short", None).is_none());
+    }
+
+    #[test]
+    fn test_remote_containers_never_probe_in_tests() {
+        assert!(probe_remote_containers().is_empty());
+    }
+
     use super::*;
 
     #[test]
