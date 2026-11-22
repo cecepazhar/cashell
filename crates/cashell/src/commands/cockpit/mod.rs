@@ -1256,6 +1256,13 @@ impl CockpitApp {
         }
     }
 
+    /// True when the highlighted container is running.
+    pub fn selected_container_running(&self) -> bool {
+        let list = &self.latest_snap.docker_containers;
+        list.get(self.selected_container.min(list.len().saturating_sub(1)))
+            .is_some_and(|c| c.state == "running")
+    }
+
     pub fn start_selected_container(&mut self) {
         if self.latest_snap.docker_containers.is_empty() {
             self.set_notification("⚠ No containers to start");
@@ -1934,23 +1941,32 @@ impl CockpitApp {
                 }
             }
             LogSource::Docker => {
-                if let Ok(out) = std::process::Command::new("docker")
-                    .args(["ps", "--format", "{{.Names}}"])
-                    .output()
-                {
+                // Docker first, then Podman (rootless Fedora hosts ship only podman).
+                let engine_out = ["docker", "podman"].iter().find_map(|engine| {
+                    std::process::Command::new(engine)
+                        .args(["ps", "--format", "{{.Names}}"])
+                        .output()
+                        .ok()
+                        .filter(|o| o.status.success())
+                        .map(|o| (*engine, o))
+                });
+                if let Some((engine, out)) = engine_out {
                     let names_str = String::from_utf8_lossy(&out.stdout);
                     for name in names_str.lines().take(3) {
                         let name = name.trim();
                         if !name.is_empty() {
-                            if let Ok(logs_out) = std::process::Command::new("docker")
+                            if let Ok(logs_out) = std::process::Command::new(engine)
                                 .args(["logs", "--tail", "10", name])
                                 .output()
                             {
-                                let log_raw = String::from_utf8_lossy(&logs_out.stdout);
+                                // `logs` replays the container's stderr on stderr.
+                                let mut log_raw =
+                                    String::from_utf8_lossy(&logs_out.stdout).into_owned();
+                                log_raw.push_str(&String::from_utf8_lossy(&logs_out.stderr));
                                 for l in log_raw.lines() {
                                     lines.push((
                                         "INFO".to_string(),
-                                        format!("docker:{name}"),
+                                        format!("{engine}:{name}"),
                                         l.to_string(),
                                     ));
                                 }
@@ -1962,7 +1978,7 @@ impl CockpitApp {
                     lines.push((
                         "INFO".to_string(),
                         "docker".to_string(),
-                        "No active docker containers logging.".to_string(),
+                        "No running docker/podman containers to read logs from.".to_string(),
                     ));
                 }
             }
@@ -4834,12 +4850,12 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
         }
         "/go" => {
             if tokens.len() < 2 {
-                app.add_ai_response("Usage: /go <uptime | analytics | fleet | dashboard | project | server | audit | cron | log | terminal | ai | setting>");
+                app.add_ai_response("Usage: /go <dashboard | server | container | uptime | analytics | topology | cron | log | terminal | ai | setting>");
                 return true;
             }
             let target = tokens[1].to_lowercase();
             match target.as_str() {
-                "uptime" | "monitors" | "3" => {
+                "uptime" | "monitors" | "4" => {
                     app.current_tab = CockpitTab::Uptime;
                     app.set_notification("Switched to Uptime tab");
                     app.add_ai_response("✅ Switched to Uptime tab");
@@ -4849,7 +4865,7 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
                     app.set_notification("Switched to Analytics tab");
                     app.add_ai_response("✅ Switched to Analytics tab");
                 }
-                "fleet" | "server" | "servers" | "4" => {
+                "fleet" | "server" | "servers" | "2" => {
                     app.current_tab = CockpitTab::Server;
                     app.set_notification("Switched to Fleet Server tab");
                     app.add_ai_response("✅ Switched to Fleet tab");
@@ -4859,7 +4875,7 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
                     app.set_notification("Switched to Dashboard tab");
                     app.add_ai_response("✅ Switched to Dashboard tab");
                 }
-                "container" | "containers" | "project" | "projects" | "2" => {
+                "container" | "containers" | "project" | "projects" | "3" => {
                     app.current_tab = CockpitTab::Project;
                     app.set_notification("Switched to Container tab");
                     app.add_ai_response("✅ Switched to Container tab");
@@ -4895,7 +4911,7 @@ fn handle_ai_slash_command(app: &mut CockpitApp, prompt: &str) -> bool {
                     app.add_ai_response("✅ Switched to Setting tab");
                 }
                 _ => {
-                    app.add_ai_response(&format!("⚠ Unknown tab '{target}'. Options: uptime, analytics, fleet, dashboard, project, server, audit, cron, log, terminal, ai, setting"));
+                    app.add_ai_response(&format!("⚠ Unknown tab '{target}'. Options: dashboard, server, container, uptime, analytics, topology, cron, log, terminal, ai, setting"));
                 }
             }
             true
@@ -6017,7 +6033,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             _ => {}
         },
 
-        // Project Tab shortcuts: 'o'/'P': Add project, 'd': Add container, 's': Start, 'x': Stop, 'r': Restart
+        // Project Tab shortcuts: 'o'/'P': Add project, 'd': Add container, 's': Start/Stop, 'x': Delete, 'r': Restart
         KeyCode::Char('o') | KeyCode::Char('P')
             if app.current_tab == CockpitTab::Project
                 || app.current_tab == CockpitTab::Dashboard =>
@@ -6032,8 +6048,13 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             app.show_container_wizard = true;
             app.container_wizard_field = 0;
         }
+        // 's' toggles: stop a running container, start anything else (matches the help row).
         KeyCode::Char('s') if app.current_tab == CockpitTab::Project => {
-            app.start_selected_container();
+            if app.selected_container_running() {
+                app.stop_selected_container();
+            } else {
+                app.start_selected_container();
+            }
         }
         KeyCode::Char('x') | KeyCode::Delete if app.current_tab == CockpitTab::Project => {
             if app.project_view == ProjectView::Containers {
