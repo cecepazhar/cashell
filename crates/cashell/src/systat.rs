@@ -334,6 +334,15 @@ static NET_RATE_TRACKER: Mutex<Option<NetRateState>> = Mutex::new(None);
 static TELEMETRY_SYS: Mutex<Option<sysinfo::System>> = Mutex::new(None);
 /// User table + time of the previous process refresh (for I/O and GPU rates).
 static PROC_STATE: Mutex<Option<(sysinfo::Users, Instant)>> = Mutex::new(None);
+/// Last process-table result. The full process walk (sysinfo refresh of every
+/// task, `/proc/<pid>/status`, a readlink per fd, a netlink TCP dump) costs
+/// ~30% of a core on a busy desktop, so it runs at most every
+/// [`PROC_REFRESH_EVERY`] and in-between ticks reuse this cache.
+type ProcCache = (Instant, Vec<ProcInfo>, Vec<crate::app_groups::AppInfo>);
+static PROC_CACHE: Mutex<Option<ProcCache>> = Mutex::new(None);
+const PROC_REFRESH_EVERY: Duration = Duration::from_secs(3);
+/// hwmon sensor list, discovered once and refreshed in place.
+static COMPONENTS: Mutex<Option<sysinfo::Components>> = Mutex::new(None);
 
 /// Fast, side-effect-free telemetry for UI refresh loops.
 ///
@@ -353,16 +362,6 @@ pub fn snapshot_telemetry() -> SysSnapshot {
 
     sys.refresh_cpu_usage();
     sys.refresh_memory();
-    // Processes were never refreshed here, so `top_processes` was always
-    // empty. Refresh CPU/memory/disk-usage/user for the Applications table.
-    sys.refresh_processes_specifics(
-        sysinfo::ProcessesToUpdate::All,
-        sysinfo::ProcessRefreshKind::new()
-            .with_cpu()
-            .with_memory()
-            .with_disk_usage()
-            .with_user(sysinfo::UpdateKind::OnlyIfNotSet),
-    );
 
     let cpu_count = sys.cpus().len();
     let cpu_pct: f32 =
@@ -394,26 +393,57 @@ pub fn snapshot_telemetry() -> SysSnapshot {
         .iter()
         .fold((0u64, 0u64), |(u, t), m| (u + m.used_gb, t + m.total_gb));
 
-    let cpu_temp_c = Components::new_with_refreshed_list()
-        .iter()
-        .map(|c| c.temperature())
-        .filter(|t| t.is_finite())
-        .fold(0.0f32, f32::max);
+    let cpu_temp_c = {
+        let mut comps = COMPONENTS.lock().unwrap_or_else(|e| e.into_inner());
+        match comps.as_mut() {
+            Some(c) => c.refresh(),
+            None => *comps = Some(Components::new_with_refreshed_list()),
+        }
+        comps
+            .as_ref()
+            .map(|c| {
+                c.iter()
+                    .map(|c| c.temperature())
+                    .filter(|t| t.is_finite())
+                    .fold(0.0f32, f32::max)
+            })
+            .unwrap_or(0.0)
+    };
 
     let fan_speed = probe_fan();
 
     let (net_rx_rate_kbps, net_tx_rate_kbps, net_total_rx_gb, net_total_tx_gb, active_net_iface) =
         probe_networks();
 
-    let top_processes = probe_top_processes(sys);
-    let applications = {
-        let mut st = PROC_STATE.lock().unwrap_or_else(|e| e.into_inner());
-        let now = Instant::now();
-        let (users, last) =
-            st.get_or_insert_with(|| (sysinfo::Users::new_with_refreshed_list(), now));
-        let elapsed = now.duration_since(*last).as_secs_f64();
-        *last = now;
-        crate::app_groups::collect_applications(sys, users, elapsed)
+    let (top_processes, applications) = {
+        let mut cache = PROC_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        match cache.as_ref() {
+            Some((at, top, apps)) if at.elapsed() < PROC_REFRESH_EVERY => {
+                (top.clone(), apps.clone())
+            }
+            _ => {
+                sys.refresh_processes_specifics(
+                    sysinfo::ProcessesToUpdate::All,
+                    sysinfo::ProcessRefreshKind::new()
+                        .with_cpu()
+                        .with_memory()
+                        .with_disk_usage()
+                        .with_user(sysinfo::UpdateKind::OnlyIfNotSet),
+                );
+                let top = probe_top_processes(sys);
+                let apps = {
+                    let mut st = PROC_STATE.lock().unwrap_or_else(|e| e.into_inner());
+                    let now = Instant::now();
+                    let (users, last) = st
+                        .get_or_insert_with(|| (sysinfo::Users::new_with_refreshed_list(), now));
+                    let elapsed = now.duration_since(*last).as_secs_f64();
+                    *last = now;
+                    crate::app_groups::collect_applications(sys, users, elapsed)
+                };
+                *cache = Some((Instant::now(), top.clone(), apps.clone()));
+                (top, apps)
+            }
+        }
     };
 
     SysSnapshot {

@@ -4480,19 +4480,28 @@ fn event_loop<B: ratatui::backend::Backend>(
     slow_rx: &mpsc::Receiver<SysSnapshot>,
     sync_rx: &mpsc::Receiver<SyncEvent>,
 ) -> Result<()> {
+    // Idle redraw cadence. Input and fresh data still redraw immediately;
+    // drawing unconditionally at 10 FPS cost ~10% CPU here plus the
+    // terminal emulator's cost of parsing every frame.
+    const IDLE_FRAME: Duration = Duration::from_millis(250);
+    let mut dirty = true;
+    let mut last_draw = std::time::Instant::now();
     loop {
         // Ingest fast telemetry if available
         while let Ok(snap) = snap_rx.try_recv() {
             app.ingest_snapshot(snap);
+            dirty = true;
         }
 
         // Merge slower probe data (Docker/projects/uptime/fleet/GPU)
         while let Ok(slow) = slow_rx.try_recv() {
             app.ingest_slow_snapshot(slow);
+            dirty = true;
         }
 
         // Ingest background sync events (Phase 4)
         while let Ok(ev) = sync_rx.try_recv() {
+            dirty = true;
             match ev {
                 SyncEvent::Syncing(active) => {
                     app.is_syncing_gcc = active;
@@ -4527,12 +4536,17 @@ fn event_loop<B: ratatui::backend::Backend>(
             return Ok(());
         }
 
-        // Draw current frame
-        terminal.draw(|f| draw(f, app))?;
+        // Draw current frame when something changed or the idle frame is due
+        if dirty || last_draw.elapsed() >= IDLE_FRAME {
+            terminal.draw(|f| draw(f, app))?;
+            last_draw = std::time::Instant::now();
+            dirty = false;
+        }
 
         // 8-10 FPS poll timeout (100ms)
         let timeout = Duration::from_millis(100);
         if event::poll(timeout)? {
+            dirty = true;
             // catui::event::map drops key-release events (Windows) and
             // normalises the rest.
             match catui::event::map(event::read()?) {
