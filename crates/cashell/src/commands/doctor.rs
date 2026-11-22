@@ -1,4 +1,4 @@
-//! System diagnostic command — `cashell doctor` (REQ-P2-01).
+//! System diagnostic command — `cashell doctor`.
 //!
 //! Checks Tailscale mesh reachability, the local port matrix, storage health,
 //! and the developer toolchain. Never panics; absence is reported as Warn.
@@ -84,10 +84,12 @@ impl DoctorReport {
         }
     }
 
-    pub fn exit_code(&self) -> i32 {
+    /// 0 = healthy or warnings only, 2 = any failure.
+    /// With `strict`, warnings alone exit 1 (for CI/scripts).
+    pub fn exit_code(&self, strict: bool) -> i32 {
         if self.failures > 0 {
             2
-        } else if self.warnings > 0 {
+        } else if strict && self.warnings > 0 {
             1
         } else {
             0
@@ -341,7 +343,7 @@ pub fn run(cmd: &DoctorCommand, cfg: &Config) -> Result<i32> {
         print_table(&report);
     }
 
-    Ok(report.exit_code())
+    Ok(report.exit_code(cmd.strict))
 }
 
 #[cfg(test)]
@@ -351,11 +353,15 @@ mod tests {
     #[test]
     fn exit_code_mapping() {
         assert_eq!(
-            DoctorReport::from_checks(vec![CheckResult::ok("x")]).exit_code(),
+            DoctorReport::from_checks(vec![CheckResult::ok("x")]).exit_code(true),
             0
         );
         assert_eq!(
-            DoctorReport::from_checks(vec![CheckResult::warn("x", "w")]).exit_code(),
+            DoctorReport::from_checks(vec![CheckResult::warn("x", "w")]).exit_code(false),
+            0
+        );
+        assert_eq!(
+            DoctorReport::from_checks(vec![CheckResult::warn("x", "w")]).exit_code(true),
             1
         );
         assert_eq!(
@@ -363,7 +369,7 @@ mod tests {
                 CheckResult::warn("x", "w"),
                 CheckResult::fail("y", "f")
             ])
-            .exit_code(),
+            .exit_code(false),
             2
         );
     }

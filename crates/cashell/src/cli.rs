@@ -8,7 +8,7 @@ use crate::commands::{
 use clap::{Parser, Subcommand};
 #[derive(Parser, Debug)]
 #[command(name = "cashell", version)]
-#[command(about = "CA ecosystem CLI — universal shell for CATerm & tools", long_about = None)]
+#[command(about = "CAShell — zero-knowledge, local-first server cockpit & CLI", long_about = None)]
 pub struct Cashell {
     /// Path to config file (default: ~/.config/cashell/config.toml)
     #[arg(short = 'c', long, global = true)]
@@ -50,16 +50,16 @@ pub enum Commands {
     #[command(name = "git-status")]
     GitStatus(GitStatusCommand),
 
-    /// Manage applications configured via [[apps]] (D-02, D-03)
+    /// Manage applications configured via [[apps]]: up, down, logs, deploy, rollback
     App(AppCommand),
 
-    /// Deploy an application via Coolify
+    /// Deploy an application through an external Coolify instance (optional)
     Deploy(DeployCommand),
 
-    /// System health diagnostics (REQ-P2-01)
+    /// System health diagnostics (Tailscale, ports, storage, toolchain)
     Doctor(DoctorCommand),
 
-    /// AI assistant: chat, analyze, review (REQ-P2-02)
+    /// AI assistant: chat, analyze, review
     Ai(AiCommand),
 
     /// AI-powered codebase auditor
@@ -71,10 +71,10 @@ pub enum Commands {
     /// Review git diff with AI
     Review(ReviewCommand),
 
-    /// Upload assets to Cloudflare R2 (REQ-P4-01)
+    /// Upload assets to Cloudflare R2
     R2(R2Command),
 
-    /// Sync or query the markdown knowledge base (REQ-P4-02)
+    /// Sync or query the markdown knowledge base
     Vault(VaultCommand),
 
     /// Interactive AI Chat TUI (dual panel with mouse support)
@@ -83,7 +83,7 @@ pub enum Commands {
     /// Server management: stats, db, firewall, docker, ai
     Server(ServerCommand),
 
-    /// Personal Cloud Cockpit TUI (btop + Dokploy + Settings + Hana AI)
+    /// Cockpit TUI: dashboard, servers, containers, uptime, analytics
     Cockpit(CockpitCommand),
 
     /// 24/7 fleet & health monitoring daemon & HTTP API
@@ -95,13 +95,13 @@ pub enum Commands {
     /// Pro multi-device zero-knowledge sync: login, status, sync, push, pull, devices, logout
     Pro(ProCommand),
 
-    /// Probe and display live uptime status of all CA Ecosystem endpoints and fleet nodes
+    /// Probe and display live uptime status of your endpoints and fleet nodes
     Uptime(crate::commands::uptime::UptimeCommand),
 
-    /// View sovereign web analytics & traffic summary across CA ecosystem sites
+    /// View self-hosted web analytics & traffic summary for your sites
     Analytics(crate::commands::analytics::AnalyticsCommand),
 
-    /// Manage Telegram bot integration & setup wizard (T-01, T-02)
+    /// Manage Telegram bot integration & setup wizard
     Telegram(crate::commands::telegram::TelegramCommand),
 
     /// Factory reset: wipe all data (config, database, cache)
@@ -355,10 +355,7 @@ pub struct DeployCommand {
 }
 
 #[derive(Parser, Debug, Clone)]
-#[command(
-    name = "app",
-    about = "Application management & deployment engine (D-02, D-03)"
-)]
+#[command(name = "app", about = "Application management & deployment engine")]
 pub struct AppCommand {
     #[command(subcommand)]
     pub action: AppAction,
@@ -407,7 +404,7 @@ pub enum AppAction {
         #[arg(long)]
         log: Option<i64>,
     },
-    /// Rollback an application to previous version (D-07)
+    /// Rollback an application to a previous version
     Rollback {
         /// Name of the app
         name: String,
@@ -422,6 +419,10 @@ pub struct DoctorCommand {
     /// Output in JSON format
     #[arg(long)]
     pub json: bool,
+
+    /// Exit non-zero on warnings too (exit 1), for CI/scripts
+    #[arg(long)]
+    pub strict: bool,
 }
 
 #[derive(Subcommand, Debug, Clone)]
