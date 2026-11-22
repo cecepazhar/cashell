@@ -29,15 +29,26 @@ pub fn print(quiet: bool) {
         String::new(),
         String::new(),
         String::new(),
-        format!("{} {}", "CAShell".bright_green().bold(), version.bright_white().bold()),
-        "Zero-Knowledge, Local-First Sovereign CLI".bright_white().to_string(),
-        "cashell --help · cockpit: run `cashell`".dimmed().to_string(),
+        format!(
+            "{} {}",
+            "CAShell".bright_green().bold(),
+            version.bright_white().bold()
+        ),
+        "Zero-Knowledge, Local-First Sovereign CLI"
+            .bright_white()
+            .to_string(),
+        "cashell --help · cockpit: run `cashell`"
+            .dimmed()
+            .to_string(),
         cwd.dimmed().to_string(),
     ];
     let mut out = io::stdout().lock();
     let _ = writeln!(out);
     if no_color {
-        let _ = writeln!(out, "  >> CAShell {version} · Zero-Knowledge, Local-First Sovereign CLI");
+        let _ = writeln!(
+            out,
+            "  >> CAShell {version} · Zero-Knowledge, Local-First Sovereign CLI"
+        );
         let _ = writeln!(out);
         let _ = out.flush();
         return;

@@ -27,7 +27,9 @@ fn dist_to_segment(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
 }
 
 fn lerp(a: u8, b: u8, t: f32) -> u8 {
-    (a as f32 + (b as f32 - a as f32) * t).round().clamp(0.0, 255.0) as u8
+    (a as f32 + (b as f32 - a as f32) * t)
+        .round()
+        .clamp(0.0, 255.0) as u8
 }
 
 /// The logo as a `W`×`H` pixel grid (row-major).
@@ -138,9 +140,7 @@ pub fn ansi_lines() -> Vec<String> {
                 (Some(t), None) => s.push_str(&format!("{}▀\x1b[0m", fg(t, tc))),
                 (None, Some(b)) => s.push_str(&format!("{}▄\x1b[0m", fg(b, tc))),
                 (Some(t), Some(b)) if t == b => s.push_str(&format!("{}█\x1b[0m", fg(t, tc))),
-                (Some(t), Some(b)) => {
-                    s.push_str(&format!("{}{}▀\x1b[0m", fg(t, tc), bg(b, tc)))
-                }
+                (Some(t), Some(b)) => s.push_str(&format!("{}{}▀\x1b[0m", fg(t, tc), bg(b, tc))),
             }
         }
         lines.push(s);

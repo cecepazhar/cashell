@@ -188,9 +188,9 @@ pub fn verify_license(
     use crate::license_gcc::{self, LicenseError};
 
     let persist = |lic: &LicenseFile| {
-        save_license(lic).map(|_| ()).map_err(|_| {
-            LicenseError::InvalidResponse("failed to persist license".into())
-        })
+        save_license(lic)
+            .map(|_| ())
+            .map_err(|_| LicenseError::InvalidResponse("failed to persist license".into()))
     };
     let dev_id = license_gcc::device_id();
     let now = chrono::Utc::now();
@@ -353,7 +353,9 @@ mod tests {
         };
         let data = serde_json::to_string_pretty(&tampered).unwrap();
         std::fs::write(&p, data).expect("write tampered file");
-        let result = load_license().expect("load should not error").expect("file loads");
+        let result = load_license()
+            .expect("load should not error")
+            .expect("file loads");
         assert!(!is_license_valid(&result), "tampered file must not be Pro");
 
         // 7. Valid v2 without token → load succeeds
@@ -376,7 +378,10 @@ mod tests {
         let mut lic = sample_license();
         lic.tier = "99".to_string();
         lic.expires_at = None;
-        assert!(!is_license_valid(&lic), "unsigned lifetime file must not be Pro");
+        assert!(
+            !is_license_valid(&lic),
+            "unsigned lifetime file must not be Pro"
+        );
     }
 
     #[test]
@@ -387,11 +392,22 @@ mod tests {
         assert!(is_license_valid(&lic), "valid signed token must be Pro");
 
         let dev = crate::license_gcc::device_id();
-        lic.signed_token = Some(test_support::token(&["CASHELL"], &dev, chrono::Utc::now().timestamp() - 1));
+        lic.signed_token = Some(test_support::token(
+            &["CASHELL"],
+            &dev,
+            chrono::Utc::now().timestamp() - 1,
+        ));
         assert!(!is_license_valid(&lic), "token past exp must not be Pro");
 
-        lic.signed_token = Some(test_support::token(&["CATERM"], &dev, chrono::Utc::now().timestamp() + 3600));
-        assert!(!is_license_valid(&lic), "CATerm token must not unlock CASHell");
+        lic.signed_token = Some(test_support::token(
+            &["CATERM"],
+            &dev,
+            chrono::Utc::now().timestamp() + 3600,
+        ));
+        assert!(
+            !is_license_valid(&lic),
+            "CATerm token must not unlock CASHell"
+        );
     }
 
     #[test]
@@ -482,8 +498,14 @@ mod tests {
         assert!(res.is_ok(), "offline verify must not error, got {res:?}");
 
         let updated = load_license().unwrap().unwrap();
-        assert_eq!(updated.signed_token, lic.signed_token, "offline must keep the token");
-        assert!(is_license_valid(&updated), "within token exp the licence stays Pro");
+        assert_eq!(
+            updated.signed_token, lic.signed_token,
+            "offline must keep the token"
+        );
+        assert!(
+            is_license_valid(&updated),
+            "within token exp the licence stays Pro"
+        );
 
         let _ = remove_license();
     }

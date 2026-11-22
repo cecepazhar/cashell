@@ -560,7 +560,10 @@ fn parse_container_line(line: &str, node: Option<&str>) -> Option<DockerContaine
             Some(n) => format!("{status} [{n}]"),
             None => status.to_string(),
         },
-        ports: parts.get(4).map(|p| p.trim().to_string()).unwrap_or_default(),
+        ports: parts
+            .get(4)
+            .map(|p| p.trim().to_string())
+            .unwrap_or_default(),
     })
 }
 
@@ -1718,13 +1721,11 @@ pub fn send_telegram_alert(token: &str, chat_id: &str, message: &str) {
 pub fn probe_uptime_monitors() -> Vec<UptimeMonitor> {
     use rayon::prelude::*;
 
-    let default_targets: &[(&str, &str, &str)] = &[
-        (
-            "CAShell Local Daemon",
-            "http://127.0.0.1:8090/api/health",
-            "Localhost",
-        ),
-    ];
+    let default_targets: &[(&str, &str, &str)] = &[(
+        "CAShell Local Daemon",
+        "http://127.0.0.1:8090/api/health",
+        "Localhost",
+    )];
 
     let mut targets: Vec<(String, String, String)> = default_targets
         .iter()

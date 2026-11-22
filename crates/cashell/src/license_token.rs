@@ -141,7 +141,11 @@ pub mod test_support {
 
     /// A token signed with the test key, valid for this machine's CASHell device id.
     pub fn valid_token() -> SignedToken {
-        token(&[PRODUCT_SKU], &crate::license_gcc::device_id(), chrono::Utc::now().timestamp() + 14 * 86_400)
+        token(
+            &[PRODUCT_SKU],
+            &crate::license_gcc::device_id(),
+            chrono::Utc::now().timestamp() + 14 * 86_400,
+        )
     }
 
     pub fn token(products: &[&str], hwid: &str, exp: i64) -> SignedToken {
@@ -151,7 +155,11 @@ pub mod test_support {
         .to_string();
         let signature = base64::engine::general_purpose::STANDARD
             .encode(signing_key().sign(payload.as_bytes()).to_bytes());
-        SignedToken { payload, signature, key_version: TEST_KEY_VERSION }
+        SignedToken {
+            payload,
+            signature,
+            key_version: TEST_KEY_VERSION,
+        }
     }
 }
 
@@ -175,7 +183,11 @@ mod tests {
         .to_string();
         let signature = base64::engine::general_purpose::STANDARD
             .encode(signing_key().sign(payload.as_bytes()).to_bytes());
-        SignedToken { payload, signature, key_version: 1 }
+        SignedToken {
+            payload,
+            signature,
+            key_version: 1,
+        }
     }
 
     #[test]
@@ -192,39 +204,57 @@ mod tests {
 
     #[test]
     fn missing_token_is_not_pro() {
-        assert_eq!(verify(None, test_key, "dev", 0, 10), Err(TokenError::Missing));
+        assert_eq!(
+            verify(None, test_key, "dev", 0, 10),
+            Err(TokenError::Missing)
+        );
     }
 
     #[test]
     fn forged_unsigned_token_is_not_pro() {
         let mut t = token(&["CASHELL"], "dev", i64::MAX);
         t.signature = String::new();
-        assert_eq!(verify(Some(&t), test_key, "dev", 0, 10), Err(TokenError::BadSignature));
+        assert_eq!(
+            verify(Some(&t), test_key, "dev", 0, 10),
+            Err(TokenError::BadSignature)
+        );
     }
 
     #[test]
     fn one_flipped_byte_is_not_pro() {
         let mut t = token(&["CASHELL"], "dev", 1_000);
         t.payload = t.payload.replace("\"exp\":1000", "\"exp\":9000");
-        assert_eq!(verify(Some(&t), test_key, "dev", 0, 10), Err(TokenError::BadSignature));
+        assert_eq!(
+            verify(Some(&t), test_key, "dev", 0, 10),
+            Err(TokenError::BadSignature)
+        );
     }
 
     #[test]
     fn other_product_is_not_pro() {
         let t = token(&["CATERM"], "dev", 1_000);
-        assert_eq!(verify(Some(&t), test_key, "dev", 0, 10), Err(TokenError::OtherProduct));
+        assert_eq!(
+            verify(Some(&t), test_key, "dev", 0, 10),
+            Err(TokenError::OtherProduct)
+        );
     }
 
     #[test]
     fn other_device_is_not_pro() {
         let t = token(&["CASHELL"], "dev", 1_000);
-        assert_eq!(verify(Some(&t), test_key, "laptop-2", 0, 10), Err(TokenError::OtherDevice));
+        assert_eq!(
+            verify(Some(&t), test_key, "laptop-2", 0, 10),
+            Err(TokenError::OtherDevice)
+        );
     }
 
     #[test]
     fn expired_token_is_not_pro() {
         let t = token(&["CASHELL"], "dev", 1_000);
-        assert_eq!(verify(Some(&t), test_key, "dev", 0, 1_000), Err(TokenError::Expired));
+        assert_eq!(
+            verify(Some(&t), test_key, "dev", 0, 1_000),
+            Err(TokenError::Expired)
+        );
     }
 
     #[test]
@@ -240,6 +270,9 @@ mod tests {
     fn unknown_key_version_is_not_pro() {
         let mut t = token(&["CASHELL"], "dev", 1_000);
         t.key_version = 9;
-        assert_eq!(verify(Some(&t), public_key, "dev", 0, 10), Err(TokenError::UnknownKey));
+        assert_eq!(
+            verify(Some(&t), public_key, "dev", 0, 10),
+            Err(TokenError::UnknownKey)
+        );
     }
 }

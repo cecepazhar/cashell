@@ -1649,15 +1649,15 @@ pub fn render_sovereign_token_lines(
 
             let (l_ch, r_ch) = match expr.eye_type {
                 _ if blink => ('─', '─'), // Subtle blink
-                1 => ('─', '█'), // Wink Left
-                2 => ('█', '─'), // Wink Right
-                3 => ('█', '█'), // Normal open eyes
-                4 => ('^', '^'), // Squint happy eyes
-                5 => ('▲', '▲'), // Angry eyes
-                6 => ('O', 'O'), // Surprised open eyes
-                7 => ('─', '─'), // Sleep slits
-                8 => ('1', '0'), // Matrix binary eyes
-                9 => ('+', '+'), // Crosshair HUD eyes
+                1 => ('─', '█'),          // Wink Left
+                2 => ('█', '─'),          // Wink Right
+                3 => ('█', '█'),          // Normal open eyes
+                4 => ('^', '^'),          // Squint happy eyes
+                5 => ('▲', '▲'),          // Angry eyes
+                6 => ('O', 'O'),          // Surprised open eyes
+                7 => ('─', '─'),          // Sleep slits
+                8 => ('1', '0'),          // Matrix binary eyes
+                9 => ('+', '+'),          // Crosshair HUD eyes
                 _ => ('█', '█'),
             };
 
@@ -2106,4 +2106,3 @@ mod tests {
         assert_eq!(clean_lines.len(), 12);
     }
 }
-

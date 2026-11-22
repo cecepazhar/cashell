@@ -168,7 +168,14 @@ pub fn activate(
     device_name: &str,
     platform: &str,
 ) -> std::result::Result<Activation, LicenseError> {
-    activate_with_key(base_url, key, device_id, device_name, platform, license_token::public_key)
+    activate_with_key(
+        base_url,
+        key,
+        device_id,
+        device_name,
+        platform,
+        license_token::public_key,
+    )
 }
 
 /// [`activate`] with an injectable public key (tests).
@@ -187,7 +194,12 @@ pub fn activate_with_key(
         "platform": platform,
     })
     .to_string();
-    let text = request_sync(&client()?, reqwest::Method::POST, &endpoint(base_url, "activate"), &body)?;
+    let text = request_sync(
+        &client()?,
+        reqwest::Method::POST,
+        &endpoint(base_url, "activate"),
+        &body,
+    )?;
     let data = serde_json::from_str::<Envelope<ActivateData>>(&text)
         .map_err(|e| LicenseError::InvalidResponse(e.to_string()))?
         .data;
@@ -216,7 +228,12 @@ pub fn verify(
     device_id: &str,
 ) -> std::result::Result<VerifyResponse, LicenseError> {
     let body = serde_json::json!({ "license_key": key, "device_id": device_id }).to_string();
-    let text = request_sync(&client()?, reqwest::Method::POST, &endpoint(base_url, "verify"), &body)?;
+    let text = request_sync(
+        &client()?,
+        reqwest::Method::POST,
+        &endpoint(base_url, "verify"),
+        &body,
+    )?;
     let d = serde_json::from_str::<Envelope<VerifyData>>(&text)
         .map_err(|e| LicenseError::InvalidResponse(e.to_string()))?
         .data;
@@ -237,7 +254,12 @@ pub fn deactivate(
     device_id: &str,
 ) -> std::result::Result<(), LicenseError> {
     let body = serde_json::json!({ "license_key": key, "device_id": device_id }).to_string();
-    request_sync(&client()?, reqwest::Method::POST, &endpoint(base_url, "deactivate"), &body)?;
+    request_sync(
+        &client()?,
+        reqwest::Method::POST,
+        &endpoint(base_url, "deactivate"),
+        &body,
+    )?;
     Ok(())
 }
 
@@ -352,20 +374,19 @@ mod tests {
     }
 
     fn respond(status: u16, body: String) -> Router {
-        Router::new()
-            .route(
-                "/api/v1/licenses/activate",
-                post(move || {
-                    let body = body.clone();
-                    async move {
-                        axum::http::Response::builder()
-                            .status(status)
-                            .header("Content-Type", "application/json")
-                            .body(Body::from(body))
-                            .unwrap()
-                    }
-                }),
-            )
+        Router::new().route(
+            "/api/v1/licenses/activate",
+            post(move || {
+                let body = body.clone();
+                async move {
+                    axum::http::Response::builder()
+                        .status(status)
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(body))
+                        .unwrap()
+                }
+            }),
+        )
     }
 
     fn ok_body(token: Option<serde_json::Value>) -> String {
@@ -379,9 +400,11 @@ mod tests {
     async fn run_activate(app: Router) -> Result<Activation, LicenseError> {
         let base = start_mock_server(app).await;
         std::thread::scope(|s| {
-            s.spawn(move || activate_with_key(&base, "CASH99-ABCDEF-2", "dev-1", "t", "linux", test_key))
-                .join()
-                .unwrap_or_else(|_| Err(LicenseError::Network("spawned thread panicked".into())))
+            s.spawn(move || {
+                activate_with_key(&base, "CASH99-ABCDEF-2", "dev-1", "t", "linux", test_key)
+            })
+            .join()
+            .unwrap_or_else(|_| Err(LicenseError::Network("spawned thread panicked".into())))
         })
     }
 
@@ -396,31 +419,52 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn activate_without_signed_token_fails_closed() {
         let act = run_activate(respond(200, ok_body(None))).await;
-        assert!(matches!(act, Err(LicenseError::InvalidResponse(_))), "{act:?}");
+        assert!(
+            matches!(act, Err(LicenseError::InvalidResponse(_))),
+            "{act:?}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn activate_with_other_product_token_fails() {
         let act = run_activate(respond(200, ok_body(Some(signed(&["CATERM"], "dev-1"))))).await;
-        assert!(matches!(act, Err(LicenseError::InvalidResponse(_))), "{act:?}");
+        assert!(
+            matches!(act, Err(LicenseError::InvalidResponse(_))),
+            "{act:?}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn activate_with_token_for_other_device_fails() {
         let act = run_activate(respond(200, ok_body(Some(signed(&["CASHELL"], "dev-2"))))).await;
-        assert!(matches!(act, Err(LicenseError::InvalidResponse(_))), "{act:?}");
+        assert!(
+            matches!(act, Err(LicenseError::InvalidResponse(_))),
+            "{act:?}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn activate_maps_gcc_errors() {
         let not_found = r#"{"success":false,"error":{"message":"license tidak ditemukan"}}"#;
-        assert!(matches!(run_activate(respond(404, not_found.into())).await, Err(LicenseError::NotFound)));
+        assert!(matches!(
+            run_activate(respond(404, not_found.into())).await,
+            Err(LicenseError::NotFound)
+        ));
         let limit = r#"{"success":false,"error":{"message":"maximum device limit reached (max 1 devices)"}}"#;
-        assert!(matches!(run_activate(respond(400, limit.into())).await, Err(LicenseError::DeviceLimit)));
+        assert!(matches!(
+            run_activate(respond(400, limit.into())).await,
+            Err(LicenseError::DeviceLimit)
+        ));
         let expired = r#"{"success":false,"error":{"message":"license sudah kedaluwarsa"}}"#;
-        assert!(matches!(run_activate(respond(400, expired.into())).await, Err(LicenseError::Expired)));
+        assert!(matches!(
+            run_activate(respond(400, expired.into())).await,
+            Err(LicenseError::Expired)
+        ));
         let revoked = r#"{"success":false,"error":{"message":"license berstatus: revoked"}}"#;
-        assert!(matches!(run_activate(respond(400, revoked.into())).await, Err(LicenseError::Revoked)));
+        assert!(matches!(
+            run_activate(respond(400, revoked.into())).await,
+            Err(LicenseError::Revoked)
+        ));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
