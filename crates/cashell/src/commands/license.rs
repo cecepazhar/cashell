@@ -79,9 +79,8 @@ pub fn mod10_checksum(body: &str) -> u32 {
 ///
 /// `SH` = CAShell, `AA` = Founder All-Access (GCC issues `CAAA99-…` for the
 /// ALL_ACCESS SKU, whose signed token lists CASHELL). CATerm (`TM`) and CAMark
-/// (`MK`) keys get a clear "wrong product" error. This is only a typo filter:
-/// GCC activation and the signed token's `products` list remain the real gate.
-/// Uses the mod-10 checksum on `CA{prod}{tier}-{rand6}`.
+/// (`MK`) keys get a clear "wrong product" error. Shape check only (like
+/// CATerm): GCC activation and the signed token's `products` list are the gate.
 /// Returns `(product, tier)` on success.
 pub fn validate_license_format(key: &str) -> Result<(String, String)> {
     let clean = key.trim().to_ascii_uppercase();
@@ -110,29 +109,13 @@ pub fn validate_license_format(key: &str) -> Result<(String, String)> {
         ),
     }
 
-    let tier = prefix[4..6].to_string();
-    match tier.as_str() {
-        "99" | "24" | "12" | "01" => {}
-        other => bail!("Invalid tier '{other}'. Must be one of: 99, 24, 12, 01."),
-    }
+    let tier = prefix.get(4..6).unwrap_or_default().to_string();
 
-    // rand6 must be alphanumeric (A-Z 0-9)
-    if !rand6
-        .chars()
-        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
-    {
-        bail!("Middle segment must be 6 uppercase alphanumeric chars (A-Z 0-9)");
-    }
-
-    // Checksum: mod-10 of `CA{prod}{tier}-{rand6}` (same as GCC licenseKeyCheckDigit)
-    let body = format!("{prefix}-{rand6}");
-    let expected_ck = mod10_checksum(&body);
-    let given_ck = ck_str
-        .parse::<u32>()
-        .map_err(|_| anyhow::anyhow!("Checksum digit must be 0-9"))?;
-
-    if expected_ck != given_ck {
-        bail!("Checksum mismatch: key may be mistyped (expected {expected_ck}, got {given_ck})");
+    // Shape check only, same as CATerm: GCC decides whether the key is real.
+    // The mod-10 checksum is not enforced because GCC also holds keys issued
+    // by hand or by older generators whose last digit does not follow it.
+    if !clean.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        bail!("License key may only contain A-Z, 0-9 and '-'");
     }
 
     Ok((product, tier))
@@ -735,7 +718,7 @@ mod tests {
 
     #[test]
     fn test_validate_format_accepts_founder_all_access() {
-        let r = validate_license_format(&key_for("CAAA99", "5E9FGW"));
+        let r = validate_license_format(&key_for("CAAA99", "QWERTY"));
         assert!(
             matches!(
                 r.as_ref().map(|(p, t)| (p.as_str(), t.as_str())),
@@ -765,12 +748,11 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_format_bad_tier() {
-        let result = validate_license_format("CASH50-ABCDEF-2");
-        assert!(
-            result.is_err(),
-            "tier 50 is not allowed (only 99, 24, 12, 01)"
-        );
+    fn test_validate_format_accepts_key_with_nonstandard_check_digit() {
+        // Real Founder key shape whose last digit does not match mod-10 (GCC
+        // holds hand-issued keys like this); GCC, not the client, decides.
+        let r = validate_license_format("CAAA99-ABCDEF-0"); // mod-10 says 5
+        assert!(matches!(r.as_ref().map(|(p, _)| p.as_str()), Ok("AA")), "{r:?}");
     }
 
     #[test]
@@ -805,17 +787,8 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_format_bad_checksum() {
-        // Build a key with a known-correct checksum, then swap it for a
-        // different digit to force a mismatch.
-        let body = "CASH99-ABCDEF";
-        let correct_ck = mod10_checksum(body);
-        let wrong_ck = if correct_ck == 0 { 1 } else { 0 };
-        let bad_key = format!("{body}-{wrong_ck}");
-        assert!(
-            validate_license_format(&bad_key).is_err(),
-            "wrong checksum must be rejected"
-        );
+    fn test_validate_format_rejects_symbols() {
+        assert!(validate_license_format("CASH99-ABCDEF-$").is_err());
     }
 
     #[test]
