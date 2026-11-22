@@ -28,7 +28,7 @@ pub enum LicenseAction {
     /// Activate a license key (e.g. CASH99-FOUNDR-3).
     /// Key may be omitted on a TTY to prompt with echo off.
     Activate {
-        /// The license key (format: CASH[99|24|12|01]-[A-Z0-9]{6}-[0-9])
+        /// The license key: CASH[99|24|12|01]-XXXXXX-C (CAShell) or CAAA99-XXXXXX-C (Founder All-Access)
         key: Option<String>,
     },
     /// Display current local license status, tier, and expiration
@@ -75,15 +75,19 @@ pub fn mod10_checksum(body: &str) -> u32 {
     (10 - (total % 10)) % 10
 }
 
-/// Validate CA license format: `CASH[99|24|12|01]-[A-Z0-9]{6}-[0-9]`.
+/// Validate CA license format: `CA{SH|AA}[99|24|12|01]-[A-Z0-9]{6}-[0-9]`.
 ///
-/// Uses the mod-10 checksum on `CASH{tier}{rand6}` (first 13 chars).
+/// `SH` = CAShell, `AA` = Founder All-Access (GCC issues `CAAA99-…` for the
+/// ALL_ACCESS SKU, whose signed token lists CASHELL). CATerm (`TM`) and CAMark
+/// (`MK`) keys get a clear "wrong product" error. This is only a typo filter:
+/// GCC activation and the signed token's `products` list remain the real gate.
+/// Uses the mod-10 checksum on `CA{prod}{tier}-{rand6}`.
 /// Returns `(product, tier)` on success.
 pub fn validate_license_format(key: &str) -> Result<(String, String)> {
     let clean = key.trim().to_ascii_uppercase();
     let parts: Vec<&str> = clean.split('-').collect();
     if parts.len() != 3 {
-        bail!("Invalid license format. Expected: CASH[99|24|12|01]-[A-Z0-9]{{6}}-[0-9] (e.g. CASH99-FOUNDR-3)");
+        bail!("Invalid license format. Expected: CASH[99|24|12|01]-XXXXXX-C or CAAA99-XXXXXX-C (e.g. CASH99-FOUNDR-3)");
     }
     let [prefix, rand6, ck_str] = parts.as_slice() else {
         bail!("Invalid license structure");
@@ -92,8 +96,18 @@ pub fn validate_license_format(key: &str) -> Result<(String, String)> {
     if prefix.len() != 6 || rand6.len() != 6 || ck_str.len() != 1 {
         bail!("Invalid segment length in license key. Must be 15 characters total.");
     }
-    if !prefix.starts_with("CASH") {
-        bail!("Invalid prefix: license key must begin with 'CASH'");
+    let product = prefix.get(2..4).unwrap_or_default().to_string();
+    match (prefix.get(0..2), product.as_str()) {
+        (Some("CA"), "SH" | "AA") => {}
+        (Some("CA"), "TM") => bail!(
+            "This is a CATerm key. Use a CAShell key (CASH…) or a Founder All-Access key (CAAA…)"
+        ),
+        (Some("CA"), "MK") => bail!(
+            "This is a CAMark key. Use a CAShell key (CASH…) or a Founder All-Access key (CAAA…)"
+        ),
+        _ => bail!(
+            "Invalid prefix: key must begin with 'CASH' (CAShell) or 'CAAA' (Founder All-Access)"
+        ),
     }
 
     let tier = prefix[4..6].to_string();
@@ -110,7 +124,7 @@ pub fn validate_license_format(key: &str) -> Result<(String, String)> {
         bail!("Middle segment must be 6 uppercase alphanumeric chars (A-Z 0-9)");
     }
 
-    // Checksum: mod-10 of the first 13 chars (CASH{tier}{rand6})
+    // Checksum: mod-10 of `CA{prod}{tier}-{rand6}` (same as GCC licenseKeyCheckDigit)
     let body = format!("{prefix}-{rand6}");
     let expected_ck = mod10_checksum(&body);
     let given_ck = ck_str
@@ -121,7 +135,7 @@ pub fn validate_license_format(key: &str) -> Result<(String, String)> {
         bail!("Checksum mismatch: key may be mistyped (expected {expected_ck}, got {given_ck})");
     }
 
-    Ok(("SH".to_string(), tier))
+    Ok((product, tier))
 }
 
 /// Prompt for a license key with echo off when running on a TTY and no
@@ -462,7 +476,9 @@ fn cmd_status(json: bool, _cfg: &Config) -> Result<i32> {
             } else {
                 println!("○ CAShell Free Edition — No local license key installed.");
                 println!("  Run 'cashell license activate <KEY>' to unlock Pro features.");
-                println!("  Format: CASH[99|24|12|01]-RAND6-CK (e.g. CASH99-FOUNDR-3)");
+                println!(
+                    "  Format: CASH[99|24|12|01]-RAND6-CK, or Founder All-Access CAAA99-RAND6-CK"
+                );
             }
             Ok(0)
         }
@@ -699,10 +715,10 @@ fn cmd_import_key(path: &std::path::Path, cmd: &LicenseCommand, cfg: &Config) ->
 mod tests {
     use super::*;
 
-    /// CASH99-ABCDEF-2 is a valid key:
-    /// body = "CASH99-ABCDEF"
-    /// A=10, B=11, C=12, D=13, E=14, F=15, digits 9+9
-    /// total = 10+11+12+13+14+15+10+10+10(CA... wait)
+    // CASH99-ABCDEF-2 is a valid key:
+    // body = "CASH99-ABCDEF"
+    // A=10, B=11, C=12, D=13, E=14, F=15, digits 9+9
+    // total = 10+11+12+13+14+15+10+10+10(CA... wait)
     // Let's compute: C=12, A=10, S=28, H=17, 9=9, 9=9, A=10, B=11, C=12, D=13, E=14, F=15
     // Actually body is "CASH99-ABCDEF" → chars: C,A,S,H,9,9,A,B,C,D,E,F
     // values: 12,10,28,17,9,9,10,11,12,13,14,15 = 140
@@ -710,6 +726,37 @@ mod tests {
     // But the key says ck=2... let's use a key that passes.
     //
     // For the test we'll just check the format validation path, not the checksum.
+
+    fn key_for(prefix: &str, rand6: &str) -> String {
+        let body = format!("{prefix}-{rand6}");
+        let ck = mod10_checksum(&body);
+        format!("{body}-{ck}")
+    }
+
+    #[test]
+    fn test_validate_format_accepts_founder_all_access() {
+        let r = validate_license_format(&key_for("CAAA99", "5E9FGW"));
+        assert!(
+            matches!(
+                r.as_ref().map(|(p, t)| (p.as_str(), t.as_str())),
+                Ok(("AA", "99"))
+            ),
+            "{r:?}"
+        );
+        let r = validate_license_format(&key_for("CASH12", "ABCDEF"));
+        assert!(
+            matches!(r.as_ref().map(|(p, _)| p.as_str()), Ok("SH")),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn test_validate_format_names_other_ca_products() {
+        let e = validate_license_format(&key_for("CATM99", "ABCDEF"));
+        assert!(format!("{e:?}").contains("CATerm"));
+        let e = validate_license_format(&key_for("CAMK99", "ABCDEF"));
+        assert!(format!("{e:?}").contains("CAMark"));
+    }
 
     #[test]
     fn test_validate_format_bad_prefix() {

@@ -799,7 +799,10 @@ pub fn draw_upgrade_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             "Masukkan kunci lisensi untuk mengaktifkan Pro.",
             Style::default().fg(palette.text),
         )),
-        Line::from(Span::styled("Format: CASH[99|24|12|01]-XXXXXX-C", muted)),
+        Line::from(Span::styled(
+            "Format: CASH[99|24|12|01]-XXXXXX-C · Founder All-Access: CAAA99-XXXXXX-C",
+            muted,
+        )),
         Line::from(vec![
             Span::styled("▶ ", Style::default().fg(palette.accent)),
             Span::styled(
@@ -1482,7 +1485,8 @@ fn draw_license_subview(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let action_inner = action_block.inner(chunks[1]);
     f.render_widget(action_block, chunks[1]);
 
-    let input_label = "Input Kunci Lisensi (format: CASH[99|24|12|01]-XXXXXX-C):";
+    let input_label =
+        "Input Kunci Lisensi (CASH[99|24|12|01]-XXXXXX-C atau Founder CAAA99-XXXXXX-C):";
     let is_editing = app.license_input_editing;
     let focus = app.license_action_focus;
 
