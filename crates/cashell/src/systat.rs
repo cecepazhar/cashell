@@ -341,6 +341,15 @@ static PROC_STATE: Mutex<Option<(sysinfo::Users, Instant)>> = Mutex::new(None);
 type ProcCache = (Instant, Vec<ProcInfo>, Vec<crate::app_groups::AppInfo>);
 static PROC_CACHE: Mutex<Option<ProcCache>> = Mutex::new(None);
 const PROC_REFRESH_EVERY: Duration = Duration::from_secs(3);
+/// When false, [`snapshot_telemetry`] skips the process walk entirely and
+/// serves the last cached table. The cockpit clears it while no visible panel
+/// shows processes; other callers keep the default (enabled).
+static PROC_WALK_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Enable or pause the per-process walk in [`snapshot_telemetry`].
+pub fn set_proc_walk_enabled(enabled: bool) {
+    PROC_WALK_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
 /// hwmon sensor list, discovered once and refreshed in place.
 static COMPONENTS: Mutex<Option<sysinfo::Components>> = Mutex::new(None);
 
@@ -417,10 +426,12 @@ pub fn snapshot_telemetry() -> SysSnapshot {
 
     let (top_processes, applications) = {
         let mut cache = PROC_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        let walk_enabled = PROC_WALK_ENABLED.load(std::sync::atomic::Ordering::Relaxed);
         match cache.as_ref() {
-            Some((at, top, apps)) if at.elapsed() < PROC_REFRESH_EVERY => {
+            Some((at, top, apps)) if !walk_enabled || at.elapsed() < PROC_REFRESH_EVERY => {
                 (top.clone(), apps.clone())
             }
+            None if !walk_enabled => (Vec::new(), Vec::new()),
             _ => {
                 sys.refresh_processes_specifics(
                     sysinfo::ProcessesToUpdate::All,
@@ -434,8 +445,8 @@ pub fn snapshot_telemetry() -> SysSnapshot {
                 let apps = {
                     let mut st = PROC_STATE.lock().unwrap_or_else(|e| e.into_inner());
                     let now = Instant::now();
-                    let (users, last) = st
-                        .get_or_insert_with(|| (sysinfo::Users::new_with_refreshed_list(), now));
+                    let (users, last) =
+                        st.get_or_insert_with(|| (sysinfo::Users::new_with_refreshed_list(), now));
                     let elapsed = now.duration_since(*last).as_secs_f64();
                     *last = now;
                     crate::app_groups::collect_applications(sys, users, elapsed)

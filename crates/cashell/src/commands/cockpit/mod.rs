@@ -4475,6 +4475,7 @@ pub fn run(_cmd: &CockpitCommand, cfg: &Config) -> Result<()> {
     });
 
     let res = event_loop(terminal, &mut app, &snap_rx, &slow_rx, &sync_rx);
+    crate::systat::set_proc_walk_enabled(true);
 
     running.store(false, Ordering::Relaxed);
     drop(snap_rx);
@@ -4562,8 +4563,13 @@ fn event_loop<B: ratatui::backend::Backend>(
         }
 
         if app.quit_requested {
+            crate::systat::set_proc_walk_enabled(true);
             return Ok(());
         }
+
+        // The Applications/process panels live on the Dashboard only; pause
+        // the costly process walk while another tab is showing.
+        crate::systat::set_proc_walk_enabled(app.current_tab == CockpitTab::Dashboard);
 
         // Draw current frame when something changed or the idle frame is due
         if dirty || last_draw.elapsed() >= IDLE_FRAME {

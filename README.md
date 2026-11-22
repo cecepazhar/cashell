@@ -1,9 +1,9 @@
-# CAShell (`cas`) v2.1.0-rc2
+# CAShell (`cas`) v2.1.0-rc3
 
 > **Sovereign DevOps Cockpit & Cloud Shell**  
 > All-in-One CLI, TUI, dan 24/7 daemon mandiri untuk server engineering: btop-grade hardware telemetry, Caddy reverse proxy dengan SSL otomatis, UFW firewall + SSH auto-ban, zero-downtime container deploy, Uptime monitoring, privacy-first web analytics, dan AI BYOK.
 
-[![Version](https://img.shields.io/badge/version-2.1.0--rc2-blue.svg)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-2.1.0--rc3-blue.svg)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux-purple.svg)]()
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)]()

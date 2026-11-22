@@ -1,6 +1,6 @@
 [package]
 name = "cashell"
-version = "2.1.0-rc2"
+version = "2.1.0-rc3"
 edition = "2021"
 description = "CA ecosystem CLI — universal shell for Cecep Azhar tools"
 authors = ["Cecep Saeful Azhar Hidayat, ST"]
@@ -22,7 +22,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 winresource = "0.1"
 
 [dependencies]
-cashell-common = { path = "../common", version = "2.1.0-rc2" }
+cashell-common = { path = "../common", version = "2.1.0-rc3" }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 # Real shell in the Cockpit Terminal tab (PTY + VT100 screen).

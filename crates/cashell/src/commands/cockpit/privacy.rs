@@ -289,7 +289,7 @@ mod tests {
     fn test_leaves_times_versions_files_and_app_ids_alone() {
         for s in [
             "16:35:05",
-            "v2.1.0-rc2",
+            "v2.1.0-rc3",
             "config.toml",
             "com.anthropic.Claude",
             "45.2%",
