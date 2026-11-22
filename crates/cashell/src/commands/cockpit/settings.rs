@@ -72,6 +72,9 @@ pub const SETTINGS_FIELDS: &[&str] = &[
     "Mascot Render Scale",
     "Mascot In AI Chat",
     "Audit Context Limit",
+    // ── Privacy (Pro) ──
+    "Privacy Mode (Pro, Ctrl+E)",
+    "Privacy Level",
 ];
 
 pub const PROVIDER_OPTIONS: &[&str] = &["", "openai", "anthropic", "local"];
@@ -574,6 +577,8 @@ pub fn cycle_field_value(app: &mut CockpitApp, forward: bool) {
             app.cfg.ai.audit_context_limit_tokens = (next * 1024) / 4;
             app.set_notification(format!("Audit Context Limit set to: {next} KB"));
         }
+        32 => app.toggle_privacy(),
+        33 => app.cycle_privacy_level(),
         _ => {}
     }
 }
@@ -1286,7 +1291,17 @@ fn draw_config_subview(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         app.cfg.ai.audit_max_context_kb, app.cfg.ai.audit_context_limit_tokens
     );
 
-    let values: [&str; 32] = [
+    let privacy_str = match (app.is_pro(), app.cfg.output.privacy_mode) {
+        (false, _) => "Pro only — activate a license",
+        (true, true) => "ON (sensitive data hidden)",
+        (true, false) => "OFF (everything visible)",
+    };
+    let privacy_level_str = if app.cfg.output.privacy_level.eq_ignore_ascii_case("Strict") {
+        "Strict (+ server/container/app/monitor/site/pet names)"
+    } else {
+        "Standard (IP, domain, host, user)"
+    };
+    let values: [&str; 34] = [
         provider.as_str(),
         model,
         masked_key,
@@ -1319,6 +1334,8 @@ fn draw_config_subview(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         mascot_scale_str,
         mascot_chat_str,
         audit_limit_str.as_str(),
+        privacy_str,
+        privacy_level_str,
     ];
 
     let items: Vec<ListItem> = SETTINGS_FIELDS

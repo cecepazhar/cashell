@@ -752,7 +752,10 @@ mod tests {
         // Real Founder key shape whose last digit does not match mod-10 (GCC
         // holds hand-issued keys like this); GCC, not the client, decides.
         let r = validate_license_format("CAAA99-ABCDEF-0"); // mod-10 says 5
-        assert!(matches!(r.as_ref().map(|(p, _)| p.as_str()), Ok("AA")), "{r:?}");
+        assert!(
+            matches!(r.as_ref().map(|(p, _)| p.as_str()), Ok("AA")),
+            "{r:?}"
+        );
     }
 
     #[test]

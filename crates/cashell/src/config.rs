@@ -270,6 +270,17 @@ pub struct OutputConfig {
     pub theme: String,
     #[serde(default = "default_matrix_rain")]
     pub matrix_rain: bool,
+    /// Pro: mask IPs, domains, host/user names on every tab (screen sharing).
+    #[serde(default)]
+    pub privacy_mode: bool,
+    /// "Standard" (IP, domain, host, user) or "Strict" (+ server, container,
+    /// app, monitor, site and pet names).
+    #[serde(default = "default_privacy_level")]
+    pub privacy_level: String,
+}
+
+pub fn default_privacy_level() -> String {
+    "Standard".to_string()
 }
 
 impl Default for OutputConfig {
@@ -277,6 +288,8 @@ impl Default for OutputConfig {
         Self {
             theme: default_theme(),
             matrix_rain: default_matrix_rain(),
+            privacy_mode: false,
+            privacy_level: default_privacy_level(),
         }
     }
 }

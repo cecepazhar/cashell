@@ -24,6 +24,7 @@ pub mod about;
 pub mod ai;
 pub mod applications;
 pub mod apps;
+pub mod privacy;
 pub mod server;
 pub mod settings;
 pub mod traffic;
@@ -148,6 +149,7 @@ pub enum HitboxAction {
     UpgradeFocusKey,
     UpgradeActivate,
     UpgradeBuy,
+    TogglePrivacy,
     LicenseActivate,
     LicenseVerify,
     LicenseDeactivate,
@@ -3033,6 +3035,8 @@ impl CockpitApp {
                     self.cfg.ai.audit_max_context_kb, self.cfg.ai.audit_context_limit_tokens
                 ));
             }
+            32 => self.toggle_privacy(),
+            33 => self.cycle_privacy_level(),
             _ => {}
         }
     }
@@ -3411,6 +3415,52 @@ impl CockpitApp {
     /// and config fields are editable local files and never grant Pro on their own.
     pub fn is_pro(&self) -> bool {
         crate::entitlements::current().is_pro
+    }
+
+    /// Privacy mask is on and allowed (Pro) and the lock screen is not shown.
+    pub fn privacy_active(&self) -> bool {
+        self.cfg.output.privacy_mode && !self.is_locked && self.is_pro()
+    }
+
+    /// Eye toggle (header badge, Ctrl+E, Setting). Pro only.
+    pub fn toggle_privacy(&mut self) {
+        if !self.is_pro() {
+            self.set_notification(
+                "🔒 Privacy mode is a Pro feature — activate a license to use it",
+            );
+            settings::open_upgrade_modal(self);
+            return;
+        }
+        self.cfg.output.privacy_mode = !self.cfg.output.privacy_mode;
+        self.save_config_silent();
+        let state = if self.cfg.output.privacy_mode {
+            format!(
+                "ON ({}) — sensitive data hidden",
+                self.cfg.output.privacy_level
+            )
+        } else {
+            "OFF — all data visible".to_string()
+        };
+        self.set_notification(format!("🙈 Privacy mode: {state}"));
+    }
+
+    /// Standard ⇄ Strict.
+    pub fn cycle_privacy_level(&mut self) {
+        let next = if self.cfg.output.privacy_level.eq_ignore_ascii_case("Strict") {
+            "Standard"
+        } else {
+            "Strict"
+        };
+        self.cfg.output.privacy_level = next.to_string();
+        self.save_config_silent();
+        self.set_notification(format!(
+            "Privacy level: {next} ({})",
+            if next == "Strict" {
+                "IP, domain, host, user + server/container/app/monitor/site/pet names"
+            } else {
+                "IP, domain, host, user"
+            }
+        ));
     }
 
     /// Manually trigger a GCC cloud sync (also toggled by 'y' / [☁ Sync GCC] button).
@@ -4989,6 +5039,15 @@ fn handle_key_event<B: ratatui::backend::Backend>(
     // Universal Emergency Exit on Ctrl+C (guarantees clean terminal restoration from any screen/modal)
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         return Ok(true);
+    }
+    // Privacy eye toggle works on every tab (but not on the lock screen,
+    // where Ctrl+E shows/hides the typed password).
+    if !app.is_locked
+        && key.code == KeyCode::Char('e')
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+    {
+        app.toggle_privacy();
+        return Ok(false);
     }
 
     // 0. Master Password Lock Screen Input Handling
@@ -6955,6 +7014,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
                         settings::trigger_license_activate(app);
                     }
                     HitboxAction::OpenUpgradeModal => settings::open_upgrade_modal(app),
+                    HitboxAction::TogglePrivacy => app.toggle_privacy(),
                     HitboxAction::CloseUpgradeModal => settings::close_upgrade_modal(app),
                     HitboxAction::UpgradeBuy => settings::open_buy_url(app),
                     HitboxAction::UpgradeFocusKey => {}
@@ -7558,6 +7618,12 @@ fn draw(f: &mut Frame, app: &mut CockpitApp) {
     app.hitboxes.clear();
     let area = f.area();
     draw_lock_or_app(f, app, area);
+    if app.privacy_active() {
+        let known = privacy::known_strings(app, &app.cfg.output.privacy_level);
+        // Row 1 of the header holds the privacy badge; mask below the header
+        // and in the header's left part (title, host).
+        privacy::apply(f.buffer_mut(), area, &known);
+    }
 }
 
 // ── Master Password Lock Screen & Draw Handler ───────────────────────────────
@@ -7957,6 +8023,40 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         )
     };
     let time_badge = Span::styled(format!(" {time_str} "), Style::default().fg(palette.accent));
+    // Privacy eye toggle (Pro). Free users see a dim eye that opens Get Pro.
+    let privacy_badge = match (app.is_pro(), app.cfg.output.privacy_mode) {
+        (true, true) => Span::styled(
+            " 🙈 Hidden ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        (true, false) => Span::styled(" 👁 Visible ", Style::default().fg(palette.accent)),
+        (false, _) => Span::styled(" 👁 ", Style::default().fg(palette.text_muted)),
+    };
+    {
+        let w = |s: &Span| catui::text::width(&s.content) as u16;
+        let right = [
+            &privacy_badge,
+            &edition_badge,
+            &pet_badge,
+            &host_badge,
+            &router_badge,
+            &tailscale_badge,
+            &time_badge,
+        ];
+        let total: u16 = right.iter().map(|s| w(s)).sum::<u16>() + right.len() as u16 - 1;
+        let inner_w = area.width.saturating_sub(2);
+        let title_w = catui::text::width(&title) as u16 + 2;
+        if title_w + total <= inner_w {
+            let x = area.x + 1 + inner_w - total;
+            app.register_hitbox(
+                Rect::new(x, area.y + 1, w(&privacy_badge), 1),
+                HitboxAction::TogglePrivacy,
+            );
+        }
+    }
 
     // Clickable "Get Pro" badge: HeaderBar right-aligns its items (1-col "│"
     // separators), so the edition badge starts at `total` columns from the
@@ -7965,6 +8065,7 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         edition_badge.content.contains("Get Pro") || edition_badge.content.contains("Kedaluwarsa");
     if upgradeable {
         let w = |s: &Span| catui::text::width(&s.content) as u16;
+        // Edition badge sits right after the privacy badge.
         let right = [
             &edition_badge,
             &pet_badge,
@@ -7974,10 +8075,11 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             &time_badge,
         ];
         let total: u16 = right.iter().map(|s| w(s)).sum::<u16>() + 5;
+        let total = total + w(&privacy_badge) + 1;
         let inner_w = area.width.saturating_sub(2);
         let title_w = catui::text::width(&title) as u16 + 2;
         if title_w + total <= inner_w {
-            let x = area.x + 1 + inner_w - total;
+            let x = area.x + 1 + inner_w - total + w(&privacy_badge) + 1;
             app.register_hitbox(
                 Rect::new(x, area.y + 1, w(&edition_badge), 1),
                 HitboxAction::OpenUpgradeModal,
@@ -7987,6 +8089,7 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     f.render_widget(
         catui::widgets::HeaderBar::new(&palette, title)
+            .item(privacy_badge)
             .item(edition_badge)
             .item(pet_badge)
             .item(host_badge)
@@ -13788,7 +13891,7 @@ mod tests {
 
     #[test]
     fn test_settings_fields_coverage() {
-        assert_eq!(SETTINGS_FIELDS.len(), 32);
+        assert_eq!(SETTINGS_FIELDS.len(), 34);
         assert_eq!(SETTINGS_FIELDS[0], "AI Provider");
         assert_eq!(SETTINGS_FIELDS[3], "Output Theme");
         assert_eq!(SETTINGS_FIELDS[11], "Master Password Protection");
