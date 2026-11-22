@@ -58,7 +58,12 @@ pub fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         } else {
             None
         },
-        xp_level: 3,
+        xp_level: app
+            .db
+            .as_ref()
+            .and_then(|d| d.get_active_pet().ok().flatten())
+            .map(|p| crate::pet::level_from_xp(p.xp))
+            .unwrap_or(1),
         tick: app.pet_tick,
         speed: app.cfg.mascot.speed.clone(),
         sensitivity: app.cfg.mascot.sensitivity.clone(),

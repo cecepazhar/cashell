@@ -38,6 +38,21 @@ pub enum PetStage {
     Mating,
 }
 
+/// XP needed to reach each level (index 0 = Lv.1). Level 7 is the maximum;
+/// XP keeps counting after that but the level stays at 7.
+pub const LEVEL_XP: [i64; 7] = [0, 60, 180, 480, 960, 1600, 2500];
+pub const MAX_LEVEL: usize = 7;
+
+/// Level 1..=7 for an XP total.
+pub fn level_from_xp(xp: i64) -> usize {
+    LEVEL_XP.iter().filter(|&&need| xp >= need).count().max(1)
+}
+
+/// XP still needed for the next level (None at max level).
+pub fn xp_to_next_level(xp: i64) -> Option<i64> {
+    LEVEL_XP.get(level_from_xp(xp)).map(|need| need - xp)
+}
+
 impl PetStage {
     pub fn from_xp(xp: i64) -> Self {
         if xp >= 960 {
@@ -1314,11 +1329,107 @@ pub fn blink_active(tick: usize, expr: &MascotExpression) -> bool {
 
 // ── 3D Extruded Isometric Sovereign Token Renderer ───────────────────────────
 
+/// Level ornaments drawn around the coin (never on the face), so every level
+/// up is visible: Lv.2 sparkles, Lv.3 halo, Lv.4 crown, Lv.5 one orbiting
+/// node, Lv.6 two nodes + crown gem, Lv.7 bright double halo.
+fn draw_level_ornaments(
+    chars: &mut [Vec<char>],
+    fgs: &mut [Vec<Color>],
+    mods: &mut [Vec<Modifier>],
+    (cx, cy, rx, ry): (f64, f64, f64, f64),
+    level: usize,
+    tick: usize,
+) {
+    const GOLD: Color = Color::Rgb(255, 200, 40);
+    const GOLD_DIM: Color = Color::Rgb(150, 110, 20);
+    const GEM: Color = Color::Rgb(255, 70, 120);
+    let mut put = |x: i32, y: i32, ch: char, fg: Color, md: Modifier| {
+        let (Ok(xu), Ok(yu)) = (usize::try_from(x), usize::try_from(y)) else {
+            return;
+        };
+        // Never paint over the coin itself.
+        if let Some(cell) = chars.get(yu).and_then(|r| r.get(xu)) {
+            if matches!(cell, '█' | '▓' | '▒') {
+                return;
+            }
+        }
+        if let Some(c) = chars.get_mut(yu).and_then(|r| r.get_mut(xu)) {
+            *c = ch;
+        }
+        if let Some(c) = fgs.get_mut(yu).and_then(|r| r.get_mut(xu)) {
+            *c = fg;
+        }
+        if let Some(c) = mods.get_mut(yu).and_then(|r| r.get_mut(xu)) {
+            *c = md;
+        }
+    };
+    let (hrx, hry) = (rx + 3.0, ry + 1.0);
+    let on_halo = |a: f64| {
+        (
+            (cx + a.cos() * hrx).round() as i32,
+            (cy + a.sin() * hry).round() as i32,
+        )
+    };
+    if level >= 3 {
+        let (ch, fg, md) = if level >= 7 {
+            ('•', GOLD, Modifier::BOLD)
+        } else {
+            ('·', GOLD_DIM, Modifier::empty())
+        };
+        let steps = 48;
+        for i in 0..steps {
+            let (x, y) = on_halo(i as f64 / steps as f64 * std::f64::consts::TAU);
+            put(x, y, ch, fg, md);
+        }
+    }
+    if level >= 2 {
+        let y = cy.round() as i32;
+        let blink = if tick % 10 < 5 { '✦' } else { '✧' };
+        put(
+            (cx - rx - 2.0).round() as i32,
+            y,
+            blink,
+            GOLD,
+            Modifier::BOLD,
+        );
+        put(
+            (cx + rx + 2.0).round() as i32,
+            y,
+            blink,
+            GOLD,
+            Modifier::BOLD,
+        );
+    }
+    if level >= 4 {
+        let top = ((cy - ry).ceil() as i32 - 1).max(0);
+        let x0 = cx.round() as i32;
+        for (dx, ch) in [(-3, '▲'), (-1, '▲'), (1, '▲'), (3, '▲')] {
+            put(x0 + dx, top, ch, GOLD, Modifier::BOLD);
+        }
+        let gem = if level >= 6 {
+            ('◆', GEM)
+        } else {
+            ('▲', GOLD)
+        };
+        put(x0, top, gem.0, gem.1, Modifier::BOLD);
+    }
+    if level >= 5 {
+        let a = tick as f64 * 0.15;
+        let (x, y) = on_halo(a);
+        put(x, y, '●', Color::Rgb(0, 255, 240), Modifier::BOLD);
+        if level >= 6 {
+            let (x, y) = on_halo(a + std::f64::consts::PI);
+            put(x, y, '●', GEM, Modifier::BOLD);
+        }
+    }
+}
+
 /// Renders the complete Cyberpunk Sovereign Mascot:
 /// - Falling Matrix digital code streams in the background (if `matrix_rain` is enabled)
 /// - 3D Extruded cylinder token floating with smooth sine-wave bobbing
 /// - Neon phosphor green aesthetic with block character depth
 /// - Custom facial features corresponding to the selected expression from the 100-expression matrix
+/// - Level ornaments from `xp_level` (see [`draw_level_ornaments`])
 pub fn render_sovereign_token_lines(
     width: usize,
     height: usize,
@@ -1415,15 +1526,21 @@ pub fn render_sovereign_token_lines(
         "Compact" => (0.8f64, COIN_ASPECT),
         _ => (1.0f64, COIN_ASPECT), // "Auto-Fit" / "Standard"
     };
-    let ry_fit = ((h as f64) - 1.0 - thickness as f64) / 2.0;
+    // Lv.4+ wears a crown: keep one row free above the coin for it.
+    let crown_room: f64 = if telem.xp_level >= 4 && h >= 8 {
+        1.0
+    } else {
+        0.0
+    };
+    let ry_fit = ((h as f64) - 1.0 - thickness as f64 - crown_room) / 2.0;
     let ry = (ry_fit * ry_scale * scale_mult).max(1.5);
     let rx = ((ry * aspect).min((w as f64) / 2.0 - 1.5) * spin_mult).max(2.5);
 
     let cx = (w as f64) / 2.0;
     // Vertically center the disc + extrusion, then apply bobbing within bounds.
     let extent = 2.0 * ry + 1.0 + thickness as f64;
-    let top = (((h as f64) - extent) / 2.0).max(0.0);
-    let cy_min = ry;
+    let top = (((h as f64) - extent + crown_room) / 2.0).max(crown_room);
+    let cy_min = ry + crown_room;
     let cy_max = ((h as f64) - 1.0 - thickness as f64 - ry).max(cy_min);
     let cy = (top + ry + bob as f64).clamp(cy_min, cy_max);
 
@@ -1555,6 +1672,15 @@ pub fn render_sovereign_token_lines(
             }
         }
     }
+
+    draw_level_ornaments(
+        &mut char_grid,
+        &mut fg_grid,
+        &mut mod_grid,
+        (cx, cy, rx, ry),
+        telem.xp_level,
+        telem.tick,
+    );
 
     // 4. Render Facial Features inside Top Face Disc
     let fcx = cx.round() as i32;
@@ -1881,13 +2007,7 @@ impl PetStatus {
                 _ => 52.0,
             },
             transient_action: Some(state),
-            xp_level: match self.stage {
-                PetStage::Egg => 0,
-                PetStage::Hatch => 1,
-                PetStage::Juvenile => 2,
-                PetStage::Adult => 3,
-                PetStage::Mating => 4,
-            },
+            xp_level: level_from_xp(self.xp),
             tick,
             ..Default::default()
         };
@@ -1915,13 +2035,7 @@ impl PetStatus {
     }
 
     pub fn format_badge(&self) -> String {
-        let level = match self.stage {
-            PetStage::Egg => 0,
-            PetStage::Hatch => 1,
-            PetStage::Juvenile => 2,
-            PetStage::Adult => 3,
-            PetStage::Mating => 4,
-        };
+        let level = level_from_xp(self.xp);
         let mood_badge = match self.mood {
             PetMood::Idle => "☺ NOMINAL",
             PetMood::Overheated => "🔥 HOT",
@@ -1942,6 +2056,48 @@ impl PetStatus {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_level_from_xp_runs_one_to_seven_and_caps() {
+        assert_eq!(level_from_xp(0), 1);
+        assert_eq!(level_from_xp(59), 1);
+        assert_eq!(level_from_xp(60), 2);
+        assert_eq!(level_from_xp(960), 5);
+        assert_eq!(level_from_xp(2500), 7);
+        assert_eq!(level_from_xp(99_999), MAX_LEVEL);
+        assert_eq!(xp_to_next_level(0), Some(60));
+        assert_eq!(xp_to_next_level(3000), None);
+    }
+
+    #[test]
+    fn test_each_level_changes_the_avatar() {
+        let text = |lvl: usize| {
+            let telem = MascotTelemetry {
+                xp_level: lvl,
+                tick: 3,
+                ..Default::default()
+            };
+            let (lines, _) = render_sovereign_token_lines(48, 18, &telem, false);
+            lines
+                .iter()
+                .map(|l| {
+                    l.spans
+                        .iter()
+                        .map(|s| s.content.to_string())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let frames: Vec<String> = (1..=MAX_LEVEL).map(text).collect();
+        for pair in frames.windows(2) {
+            if let [a, b] = pair {
+                assert_ne!(a, b, "a level up must change the avatar");
+            }
+        }
+        assert!(frames.get(3).is_some_and(|f| f.contains('▲')), "Lv.4 crown");
+        assert!(frames.first().is_some_and(|f| !f.contains('▲')));
+    }
+
     use super::*;
 
     #[test]

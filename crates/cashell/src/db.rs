@@ -1232,10 +1232,9 @@ impl Database {
 
         if let Some((_species, current_stage, current_xp)) = pet_opt {
             let new_xp = current_xp + xp_to_add;
-            // Stage progression: egg(0), hatch(60), juvenile(180), adult(480), mating(960), egg_again(1200)
-            let new_stage = if new_xp >= 1200 {
-                "egg".to_string() // resets to egg (laid an egg!)
-            } else if new_xp >= 960 {
+            // Stage progression: egg(0), hatch(60), juvenile(180), adult(480), mating(960).
+            // XP is never reset: levels run 1..=7 (`pet::LEVEL_XP`) and stay at 7.
+            let new_stage = if new_xp >= 960 {
                 "mating".to_string()
             } else if new_xp >= 480 {
                 "adult".to_string()
@@ -1247,7 +1246,7 @@ impl Database {
                 current_stage
             };
 
-            let final_xp = if new_xp >= 1200 { 0 } else { new_xp };
+            let final_xp = new_xp;
 
             self.conn.execute(
                 "UPDATE pets SET xp = ?1, stage = ?2, last_active_at = CURRENT_TIMESTAMP WHERE id = ?3",
