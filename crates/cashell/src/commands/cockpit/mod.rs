@@ -21,6 +21,7 @@ use catui::layout::centered_rect;
 use clap::Parser;
 
 pub mod about;
+pub mod agent;
 pub mod ai;
 pub mod applications;
 pub mod apps;
@@ -739,6 +740,8 @@ pub struct CockpitApp {
     pub chat_input: String,
     pub chat_state: ListState,
     pub is_chat_processing: bool,
+    /// AI write tools waiting for y / n.
+    pub agent_pending: Vec<agent::PendingTool>,
 
     // ── Tab 1: Dashboard state ──────────────────────────────────────────────
     pub dashboard_alert_scroll: usize,
@@ -976,9 +979,10 @@ impl CockpitApp {
         }
         if chat_lines.is_empty() {
             chat_lines = vec![
-                "=== Hana AI Chat (OmniRoute / 9router · localhost:20128 / :3007) ===".to_string(),
-                "Tab / Shift+1..9/0: Switch Focus | ?: Help Cheat Sheet | Esc: Back".to_string(),
-                "Type your prompt in the terminal input below and press Enter.".to_string(),
+                "=== AI Operator ===".to_string(),
+                "Ask about your servers, containers, uptime, analytics, logs or settings."
+                    .to_string(),
+                "Reads run automatically; any change waits for your y / n.".to_string(),
             ];
         }
 
@@ -1060,6 +1064,7 @@ impl CockpitApp {
             chat_input: String::new(),
             chat_state,
             is_chat_processing: false,
+            agent_pending: Vec::new(),
 
             // ── Tab 1: Dashboard state ──────────────────────────────────────────────
             dashboard_alert_scroll: 0,
@@ -3080,8 +3085,7 @@ impl CockpitApp {
             }
         }
         self.chat_lines.clear();
-        self.chat_lines
-            .push("=== Hana AI Chat (localhost:20128) ===".to_string());
+        self.chat_lines.push("=== AI Operator ===".to_string());
         self.chat_lines.push("Chat history cleared.".to_string());
         self.chat_state.select(Some(1));
         self.set_notification("✓ Chat history cleared from SQLite DB");
@@ -5375,59 +5379,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
 
                 terminal.draw(|f| draw(f, app))?;
 
-                let cfg_clone = app.cfg.clone();
-                let ports_str = app
-                    .cfg
-                    .doctor
-                    .ports
-                    .iter()
-                    .map(u16::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let running_services = app
-                    .apps
-                    .iter()
-                    .filter(|a| {
-                        a.status == ServiceStatus::Healthy || a.status == ServiceStatus::Listening
-                    })
-                    .map(|a| a.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let tailscale_status = if app.is_tailscale_ok {
-                    "connected"
-                } else {
-                    "disconnected"
-                };
-
-                let active_model = app.current_ai_model();
-                let system_prompt = format!(
-                    "{role}\nActive Model: {model}\nGreetings to {user_name}.\nSystem Context: Hostname: {host}, OS: Linux, Monitored Ports: [{ports}], Active Services: [{services}], Tailscale: {tailscale}.",
-                    role = app.cfg.persona.assistant_role,
-                    model = active_model,
-                    user_name = app.cfg.persona.user_name,
-                    host = app.hostname,
-                    ports = ports_str,
-                    services = if running_services.is_empty() {
-                        "none detected".to_string()
-                    } else {
-                        running_services
-                    },
-                    tailscale = tailscale_status,
-                );
-
-                let answer =
-                    match crate::ai::query_buffered(&cfg_clone, Some(&system_prompt), &prompt) {
-                        Ok(ans) => ans,
-                        Err(e) => format!("Error: {e}"),
-                    };
-
-                if let Some(ref d) = app.db {
-                    let _ = d.save_chat("AI", &answer);
-                }
-
-                for line in answer.lines() {
-                    app.add_chat_line(&format!("AI: {line}"));
-                }
+                agent::ask(app, &prompt);
                 app.is_chat_processing = false;
                 terminal.draw(|f| draw(f, app))?;
                 return Ok(false);
@@ -5439,6 +5391,20 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             KeyCode::Char(c)
                 if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
             {
+                // Pending AI write tool: y runs it, n cancels it.
+                if app.chat_input.is_empty() && !app.agent_pending.is_empty() {
+                    match c {
+                        'y' | 'Y' => {
+                            agent::resolve_pending(app, true);
+                            return Ok(false);
+                        }
+                        'n' | 'N' => {
+                            agent::resolve_pending(app, false);
+                            return Ok(false);
+                        }
+                        _ => {}
+                    }
+                }
                 // If input is empty, direct tab switching with 1-9 or 0
                 if app.chat_input.is_empty() {
                     if ('1'..='9').contains(&c) {

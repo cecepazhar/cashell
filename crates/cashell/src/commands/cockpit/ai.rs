@@ -128,18 +128,35 @@ pub fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    bar_spans.push(Span::raw("  │  Gateway: "));
+    let provider = &app.cfg.ai.default_provider;
+    let endpoint = app
+        .cfg
+        .ai
+        .providers
+        .get(provider)
+        .map(|p| p.base_url.clone())
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| "not set — Settings [-] or `cashell ai setup`".to_string());
+    bar_spans.push(Span::raw("  │  Provider: "));
     bar_spans.push(Span::styled(
-        "OmniRoute / 9router (localhost:20128 / :3007)",
+        format!(
+            "{} ({endpoint})",
+            if provider.is_empty() {
+                "none"
+            } else {
+                provider
+            }
+        ),
         Style::default().fg(palette.accent),
     ));
     f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_inner);
 
     // Split middle area horizontally if wide enough and mascot in chat is enabled
-    let (chat_area, mascot_area) = if app.cfg.mascot.chat_avatar_enabled && chunks[1].width >= 82 {
+    // Avatar column has the Dashboard token panel's size (52 × 14).
+    let (chat_area, mascot_area) = if app.cfg.mascot.chat_avatar_enabled && chunks[1].width >= 100 {
         let cols = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(68), Constraint::Percentage(32)])
+            .constraints([Constraint::Min(40), Constraint::Length(52)])
             .split(chunks[1]);
         (cols[0], Some(cols[1]))
     } else {
@@ -148,29 +165,20 @@ pub fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let hist_block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(
-            " Workspace AI Chat — Persona: {} ({}) ",
-            app.cfg.persona.user_name, app.cfg.persona.assistant_role
-        ))
+        .title(" AI Operator — reads run automatically, changes ask you first (y / n) ")
         .border_style(Style::default().fg(palette.border));
     let hist_inner = hist_block.inner(chat_area);
     f.render_widget(hist_block, chat_area);
 
-    let chat_avatar_on = app.cfg.mascot.chat_avatar_enabled;
     let items: Vec<ListItem> = app
         .chat_lines
         .iter()
         .map(|l| {
             let (display_text, style) = if l.starts_with("User:") {
-                let text = if chat_avatar_on {
-                    format!(
-                        "👤 {}: {}",
-                        app.cfg.persona.user_name,
-                        l.strip_prefix("User:").unwrap_or(l).trim_start()
-                    )
-                } else {
-                    l.clone()
-                };
+                let text = format!(
+                    "You  › {}",
+                    l.strip_prefix("User:").unwrap_or(l).trim_start()
+                );
                 (
                     text,
                     Style::default()
@@ -178,18 +186,17 @@ pub fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                         .add_modifier(Modifier::BOLD),
                 )
             } else if l.starts_with("AI:") {
-                let text = if chat_avatar_on {
-                    format!(
-                        "🪙 [#{:02} {}] {}: {}",
-                        expr.id,
-                        expr.label,
-                        app.cfg.persona.assistant_role,
-                        l.strip_prefix("AI:").unwrap_or(l).trim_start()
-                    )
-                } else {
-                    l.clone()
-                };
+                let text = format!("AI   › {}", l.strip_prefix("AI:").unwrap_or(l).trim_start());
                 (text, Style::default().fg(Color::White))
+            } else if let Some(t) = l.strip_prefix("Tool:") {
+                let c = if t.contains('⏸') {
+                    Color::Yellow
+                } else if t.contains('✔') {
+                    Color::Green
+                } else {
+                    palette.accent
+                };
+                (format!("tool {t}"), Style::default().fg(c))
             } else if l.starts_with("Error:") {
                 (
                     l.clone(),
@@ -209,8 +216,62 @@ pub fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         .highlight_symbol("▶ ");
     f.render_stateful_widget(chat_list, hist_inner, &mut app.chat_state);
 
-    // Companion Chat Reactor Panel on Right Side
-    if let Some(m_area) = mascot_area {
+    // Companion avatar (same size as on the Dashboard) + pending actions.
+    if let Some(col) = mascot_area {
+        let parts = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(14), Constraint::Min(3)])
+            .split(col);
+        let m_area = parts[0];
+        let mut side: Vec<Line> = Vec::new();
+        if app.agent_pending.is_empty() {
+            side.push(Line::from(Span::styled(
+                "No actions waiting.",
+                Style::default().fg(palette.text_muted),
+            )));
+        } else {
+            for (i, p) in app.agent_pending.iter().enumerate() {
+                side.push(Line::from(vec![
+                    Span::styled(
+                        if i == 0 { "▶ " } else { "  " },
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Span::styled(p.summary.clone(), Style::default().fg(palette.text)),
+                ]));
+            }
+            side.push(Line::from(""));
+            side.push(Line::from(Span::styled(
+                "y run · n cancel (input empty)",
+                Style::default().fg(Color::Yellow),
+            )));
+        }
+        side.push(Line::from(""));
+        for tip in [
+            "Try: \"why is my CPU hot?\"",
+            "\"add monitor for https://example.com\"",
+            "\"alert me on Telegram above 85°C\"",
+            "\"show logs of db-postgres\"",
+        ] {
+            side.push(Line::from(Span::styled(
+                tip,
+                Style::default().fg(palette.text_muted),
+            )));
+        }
+        f.render_widget(
+            Paragraph::new(side)
+                .wrap(ratatui::widgets::Wrap { trim: false })
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(format!(" Pending actions ({}) ", app.agent_pending.len()))
+                        .border_style(Style::default().fg(if app.agent_pending.is_empty() {
+                            palette.border
+                        } else {
+                            Color::Yellow
+                        })),
+                ),
+            parts[1],
+        );
         let m_block = Block::default()
             .borders(Borders::ALL)
             .title(format!(
@@ -234,9 +295,9 @@ pub fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
         let mut all_widget_lines = m_lines;
         let reaction_msg = if app.is_chat_processing {
-            "⚡ Sovereign Thinking... generating token synthesis"
+            "⚡ Thinking…"
         } else {
-            "✔ Reacting live to prompts & system health"
+            "✔ Reacting to your system's health"
         };
         all_widget_lines.push(Line::from(Span::styled(
             reaction_msg,
@@ -257,9 +318,11 @@ pub fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let in_block = Block::default()
         .borders(Borders::ALL)
         .title(if app.is_chat_processing {
-            format!(" 🪙 AI is thinking... [#{:02} {}] ", expr.id, expr.label)
+            " AI is working… ".to_string()
+        } else if !app.agent_pending.is_empty() {
+            " Ask the AI · y run / n cancel the pending action · Enter send ".to_string()
         } else {
-            " Prompt Input ($ > Enter to send | 'm': Model | 'c': Clear) ".to_string()
+            " Ask the AI (Enter send · m model · c clear · / commands) ".to_string()
         })
         .border_style(if app.is_chat_processing {
             Style::default().fg(palette.warning)

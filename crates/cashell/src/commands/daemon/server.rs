@@ -52,6 +52,71 @@ pub fn periodic_license_verify(cfg: &Config) {
     }
 }
 
+/// Highest component temperature in °C (0 when no sensor reports one).
+fn cpu_temp_c() -> u32 {
+    sysinfo::Components::new_with_refreshed_list()
+        .iter()
+        .map(|c| c.temperature())
+        .filter(|t| t.is_finite())
+        .fold(0.0f32, f32::max)
+        .round() as u32
+}
+
+/// Alert once when the CPU gets hot, again at most every 30 minutes while it
+/// stays hot, and once more when it is 5 °C below the threshold.
+async fn thermal_watch(cfg: Config, interval_secs: u64) {
+    use crate::notify::{send_alert, NotificationEvent};
+    let threshold = cfg.daemon.cpu_temp_alert_c;
+    let host = sysinfo::System::host_name().unwrap_or_else(|| "server".to_string());
+    let mut last_alert: Option<std::time::Instant> = None;
+    loop {
+        let temp = tokio::task::spawn_blocking(cpu_temp_c).await.unwrap_or(0);
+        match thermal_step(temp, threshold, last_alert.map(|t| t.elapsed().as_secs())) {
+            ThermalStep::Alert => {
+                last_alert = Some(std::time::Instant::now());
+                let ev = NotificationEvent::CpuHot {
+                    host: host.clone(),
+                    temp_c: temp,
+                    threshold_c: threshold,
+                };
+                let _ = send_alert(&cfg, &ev).await;
+            }
+            ThermalStep::Cooled => {
+                last_alert = None;
+                let ev = NotificationEvent::CpuCooled {
+                    host: host.clone(),
+                    temp_c: temp,
+                };
+                let _ = send_alert(&cfg, &ev).await;
+            }
+            ThermalStep::Nothing => {}
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(interval_secs.max(10))).await;
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ThermalStep {
+    Alert,
+    Cooled,
+    Nothing,
+}
+
+/// Pure decision for [`thermal_watch`]: `since_alert` = seconds since the
+/// last hot alert (None = not currently alerting).
+pub(crate) fn thermal_step(temp: u32, threshold: u32, since_alert: Option<u64>) -> ThermalStep {
+    const REPEAT_SECS: u64 = 30 * 60;
+    if threshold == 0 || temp == 0 {
+        return ThermalStep::Nothing;
+    }
+    match since_alert {
+        None if temp >= threshold => ThermalStep::Alert,
+        Some(s) if temp >= threshold && s >= REPEAT_SECS => ThermalStep::Alert,
+        Some(_) if temp + 5 <= threshold => ThermalStep::Cooled,
+        _ => ThermalStep::Nothing,
+    }
+}
+
 pub fn run_daemon(cfg: &Config, port_opt: Option<u16>, interval_opt: Option<u64>) -> Result<()> {
     crate::server::hardening::verify_daemon_execution_user()?;
     periodic_license_verify(cfg);
@@ -118,6 +183,12 @@ pub fn run_daemon(cfg: &Config, port_opt: Option<u16>, interval_opt: Option<u64>
                     eprintln!("HTTP API server error: {e}");
                 }
             });
+        }
+
+        // CPU temperature alert → Telegram (daemon.cpu_temp_alert_c, 0 = off).
+        if cfg.daemon.cpu_temp_alert_c > 0 {
+            let cfg_t = cfg.clone();
+            tokio::spawn(async move { thermal_watch(cfg_t, interval).await });
         }
 
         // T-01: Spawn Telegram long polling worker if bot token is configured

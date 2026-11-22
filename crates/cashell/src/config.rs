@@ -90,6 +90,10 @@ pub struct DaemonConfig {
     pub telegram_chat_id: String,
     #[serde(default = "default_nodes")]
     pub nodes: std::collections::HashMap<String, NodeConfig>,
+    /// Send a Telegram alert when the CPU reaches this temperature (°C).
+    /// 0 = off. Checked by the daemon every `interval_secs`.
+    #[serde(default)]
+    pub cpu_temp_alert_c: u32,
     #[serde(default = "default_remediation")]
     pub remediation: std::collections::HashMap<String, String>,
     /// H-10: peer addresses trusted to supply `X-Forwarded-For` /
@@ -119,6 +123,7 @@ impl Default for DaemonConfig {
             telegram_bot_token: String::new(),
             telegram_chat_id: String::new(),
             nodes: default_nodes(),
+            cpu_temp_alert_c: 0,
             remediation: default_remediation(),
             node_secrets: std::collections::HashMap::new(),
             trusted_proxies: default_trusted_proxies(),

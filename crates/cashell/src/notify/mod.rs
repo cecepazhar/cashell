@@ -39,6 +39,16 @@ pub enum NotificationEvent {
         success: bool,
         message: String,
     },
+    /// CPU temperature reached the alert threshold (`daemon.cpu_temp_alert_c`).
+    CpuHot {
+        host: String,
+        temp_c: u32,
+        threshold_c: u32,
+    },
+    /// CPU temperature is back below the threshold.
+    CpuCooled { host: String, temp_c: u32 },
+    /// Free-form message (e.g. sent by the AI operator after confirmation).
+    Custom { text: String },
 }
 
 impl NotificationEvent {
@@ -71,6 +81,15 @@ impl NotificationEvent {
                     format!("❌ *[DEPLOY FAILED]* `{app}`: {message}")
                 }
             }
+            Self::CpuHot {
+                host,
+                temp_c,
+                threshold_c,
+            } => format!("🔥 *[CPU HOT]* `{host}` is at {temp_c}°C (alert at {threshold_c}°C)."),
+            Self::CpuCooled { host, temp_c } => {
+                format!("❄️ *[CPU OK]* `{host}` cooled down to {temp_c}°C.")
+            }
+            Self::Custom { text } => text.clone(),
         }
     }
 
@@ -101,6 +120,15 @@ impl NotificationEvent {
                     format!("[DEPLOY FAILED] {app}: {message}")
                 }
             }
+            Self::CpuHot {
+                host,
+                temp_c,
+                threshold_c,
+            } => format!("[CPU HOT] {host} is at {temp_c}°C (alert at {threshold_c}°C)."),
+            Self::CpuCooled { host, temp_c } => {
+                format!("[CPU OK] {host} cooled down to {temp_c}°C.")
+            }
+            Self::Custom { text } => text.clone(),
         }
     }
 }
@@ -183,12 +211,41 @@ impl NotificationDispatcher {
 }
 
 /// Convenience helper to dispatch a notification event to all configured channels (F-04).
-pub async fn send_alert(cfg: &crate::config::Config, event: &NotificationEvent) -> Result<()> {
-    let token = if !cfg.uptime.telegram_bot_token.is_empty() {
-        &cfg.uptime.telegram_bot_token
+/// Telegram bot token: uptime/daemon config, else the encrypted secret store.
+pub fn telegram_token(cfg: &crate::config::Config) -> String {
+    if !cfg.uptime.telegram_bot_token.is_empty() {
+        return cfg.uptime.telegram_bot_token.clone();
+    }
+    if !cfg.daemon.telegram_bot_token.is_empty() {
+        return cfg.daemon.telegram_bot_token.clone();
+    }
+    crate::secrets::SecretStore::load_default()
+        .ok()
+        .and_then(|s| s.telegram_bot_token)
+        .unwrap_or_default()
+}
+
+/// Send `event` to Telegram and report whether it was delivered.
+/// Errors when no bot token / chat id is configured.
+pub async fn send_telegram_checked(
+    cfg: &crate::config::Config,
+    event: &NotificationEvent,
+) -> Result<()> {
+    let token = telegram_token(cfg);
+    let chat_id = if !cfg.uptime.telegram_chat_id.is_empty() {
+        cfg.uptime.telegram_chat_id.clone()
     } else {
-        &cfg.daemon.telegram_bot_token
+        cfg.daemon.telegram_chat_id.clone()
     };
+    if token.trim().is_empty() || chat_id.trim().is_empty() {
+        anyhow::bail!("Telegram is not set up (bot token and chat ID in Settings)");
+    }
+    TelegramNotifier::new(token, chat_id).send(event).await
+}
+
+pub async fn send_alert(cfg: &crate::config::Config, event: &NotificationEvent) -> Result<()> {
+    let token_owned = telegram_token(cfg);
+    let token = &token_owned;
     let chat_id = if !cfg.uptime.telegram_chat_id.is_empty() {
         &cfg.uptime.telegram_chat_id
     } else {

@@ -983,3 +983,15 @@ fn test_a10_cockpit_tui_and_cli_analytics_consistency() {
     assert_eq!(snap.web_analytics.pageviews, 12);
     assert_eq!(snap.web_analytics.unique_visitors, 5);
 }
+
+#[test]
+fn test_thermal_step_alerts_repeats_and_recovers() {
+    use super::server::{thermal_step, ThermalStep};
+    assert_eq!(thermal_step(90, 85, None), ThermalStep::Alert);
+    assert_eq!(thermal_step(80, 85, None), ThermalStep::Nothing);
+    assert_eq!(thermal_step(90, 85, Some(60)), ThermalStep::Nothing);
+    assert_eq!(thermal_step(90, 85, Some(1800)), ThermalStep::Alert);
+    assert_eq!(thermal_step(82, 85, Some(60)), ThermalStep::Nothing);
+    assert_eq!(thermal_step(80, 85, Some(60)), ThermalStep::Cooled);
+    assert_eq!(thermal_step(99, 0, None), ThermalStep::Nothing);
+}
