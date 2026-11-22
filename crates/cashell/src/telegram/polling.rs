@@ -162,7 +162,7 @@ impl TelegramPoller {
                                     .client
                                     .send_message(
                                         chat_id,
-                                        "⏱ Kedaluwarsa: Batas waktu 60 detik telah lewat atau aksi telah diproses.",
+                                        "⏱ Expired: the 60-second window has passed or the action was already handled.",
                                     )
                                     .await;
                                 let db = self.db.lock().unwrap();
@@ -180,7 +180,7 @@ impl TelegramPoller {
                                     .client
                                     .send_message(
                                         chat_id,
-                                        "⏱ Kedaluwarsa: Batas waktu 60 detik telah lewat. Aksi tidak dijalankan.",
+                                        "⏱ Expired: the 60-second window has passed. The action was not run.",
                                     )
                                     .await;
                                 let db = self.db.lock().unwrap();
@@ -198,7 +198,7 @@ impl TelegramPoller {
                                     .client
                                     .send_message(
                                         chat_id,
-                                        "⛔ Akses ditolak: Hanya pengirim asli yang dapat mengonfirmasi aksi ini.",
+                                        "⛔ Access denied: only the original sender can confirm this action.",
                                     )
                                     .await;
                                 let db = self.db.lock().unwrap();
@@ -225,7 +225,7 @@ impl TelegramPoller {
                         let _ = self.confirm_store.take(action_id);
                         let _ = self
                             .client
-                            .send_message(chat_id, "❌ Aksi dibatalkan oleh pengguna.")
+                            .send_message(chat_id, "❌ Action cancelled by the user.")
                             .await;
                         let db = self.db.lock().unwrap();
                         let _ = db.log_audit(
@@ -278,7 +278,7 @@ impl TelegramPoller {
                 // T-06: Rate limiting per user
                 if let Err(wait_secs) = self.rate_limiter.check(user_id) {
                     let rate_msg = format!(
-                        "⚠️ Terlalu banyak permintaan (rate limit). Silakan tunggu {wait_secs} detik."
+                        "⚠️ Too many requests (rate limit). Please wait {wait_secs} seconds."
                     );
                     let _ = self.client.send_message(chat_id, &rate_msg).await;
                     let db = self.db.lock().unwrap();
@@ -344,7 +344,7 @@ impl TelegramPoller {
                         .create_pending(user_id, chat_id, action, &description);
 
                 let prompt_text = format!(
-                    "⚠️ *Konfirmasi Diperlukan*\n\nApakah Anda yakin ingin menjalankan aksi berikut?\n• *{description}*\n\n⏳ *Kedaluwarsa dalam 60 detik.*"
+                    "⚠️ *Confirmation required*\n\nDo you want to run this action?\n• *{description}*\n\n⏳ *Expires in 60 seconds.*"
                 );
 
                 if let Err(e) = self

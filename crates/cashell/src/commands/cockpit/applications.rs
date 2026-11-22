@@ -257,7 +257,7 @@ impl CockpitApp {
                 // Background / System buckets mix unrelated daemons: act per process.
                 self.toggle_app_expand();
                 self.set_notification(
-                    "Grup ini berisi banyak daemon — pilih prosesnya (Space untuk buka/tutup)",
+                    "This group has several daemons — pick a process (Space to expand/collapse)",
                 );
             }
         }
@@ -268,7 +268,7 @@ impl CockpitApp {
         match self.selected_app_target() {
             Some(t) => self.prompt_app_signal(t, false),
             None => {
-                self.set_notification("Pilih aplikasi atau proses dulu (Space untuk buka grup)")
+                self.set_notification("Select an app or process first (Space to expand a group)")
             }
         }
     }

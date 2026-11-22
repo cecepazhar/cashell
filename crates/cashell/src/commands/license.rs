@@ -412,7 +412,7 @@ fn cmd_status(json: bool, _cfg: &Config) -> Result<i32> {
                 println!("{}", serde_json::to_string_pretty(&out)?);
             } else {
                 let badge = if valid { "● ACTIVE" } else { "✖ EXPIRED" };
-                println!("  Lisensi:     {}", license_gcc::mask_key(&lic.key));
+                println!("  License:     {}", license_gcc::mask_key(&lic.key));
                 println!("  Tier:        {}", tier_display(&lic.tier));
                 println!("  Status:      {badge}");
                 match &lic.expires_at {
@@ -420,7 +420,7 @@ fn cmd_status(json: bool, _cfg: &Config) -> Result<i32> {
                         let dt = parse_display_ts(ts);
                         println!("  Masa aktif:  Sampai {dt}");
                         if let Some(days) = compute_days_left(&lic) {
-                            println!("  Sisa hari:   {days}");
+                            println!("  Days left:   {days}");
                         }
                     }
                     None => println!("  Masa aktif:  Selamanya"),
@@ -428,7 +428,7 @@ fn cmd_status(json: bool, _cfg: &Config) -> Result<i32> {
                 println!("  Perangkat:   {}/{}", lic.devices_used, lic.devices_max);
                 if !lic.last_verified_at.is_empty() {
                     let lv = parse_display_ts(&lic.last_verified_at);
-                    println!("  Verifikasi terakhir: {lv}");
+                    println!("  Last verified: {lv}");
                 }
                 if let Some(grace) = compute_offline_grace_until(&lic) {
                     println!("  Grace offline:  {grace}");

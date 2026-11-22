@@ -96,7 +96,7 @@ fn load_active_session(cfg: &Config) -> Result<SessionManager> {
     let lic = match crate::license_local::load_license()? {
         Some(l) if crate::license_local::is_license_valid(&l) => l,
         _ => {
-            bail!("Fitur Pro memerlukan lisensi aktif. Gunakan `cashell license activate <KEY>` untuk mengaktifkan lisensi Pro.");
+            bail!("Pro features need an active license. Run `cashell license activate <KEY>` to activate Pro.");
         }
     };
 
@@ -166,17 +166,17 @@ fn run_login(args: &ProLoginArgs, _cfg: &Config) -> Result<i32> {
             "{}",
             serde_json::json!({
                 "status": "deprecated",
-                "message": "Gunakan `cashell license activate` untuk mengaktifkan lisensi Pro.",
+                "message": "Run `cashell license activate` to activate Pro.",
                 "hint": "cashell license activate <KEY>"
             })
         );
     } else {
         println!(
-            "{} Perintah `cashell pro login` telah disatukan dengan aktivasi lisensi.",
+            "{} `cashell pro login` has been merged into license activation.",
             "ℹ".cyan().bold()
         );
         println!(
-            "  Silakan gunakan: {}",
+            "  Use instead: {}",
             "cashell license activate <KEY>".green().bold()
         );
     }
@@ -637,7 +637,7 @@ mod tests {
             assert!(res.is_err());
             let err_msg = res.unwrap_err().to_string();
             assert!(
-                err_msg.contains("Fitur Pro memerlukan lisensi aktif"),
+                err_msg.contains("Pro features need an active license"),
                 "err: {err_msg}"
             );
         });

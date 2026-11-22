@@ -69,8 +69,8 @@ impl ConfirmStore {
             .insert(action_id.clone(), pending);
 
         let keyboard = InlineKeyboardMarkup::new(vec![vec![
-            InlineKeyboardButton::callback("✅ Ya, Lanjutkan", format!("confirm:{action_id}")),
-            InlineKeyboardButton::callback("❌ Batal", format!("cancel:{action_id}")),
+            InlineKeyboardButton::callback("✅ Yes, continue", format!("confirm:{action_id}")),
+            InlineKeyboardButton::callback("❌ Cancel", format!("cancel:{action_id}")),
         ]]);
 
         (action_id, keyboard)

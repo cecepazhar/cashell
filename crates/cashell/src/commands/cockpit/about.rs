@@ -15,13 +15,10 @@ const DIRECTION: [(&str, &str); 5] = [
     ("cPanel", "Server: firewall, database, domain & SSL"),
     (
         "Portainer / Dokploy",
-        "Container & Deploy di atas Docker/Podman",
+        "Containers & deploys on Docker/Podman",
     ),
-    ("Uptime Kuma", "Uptime: monitor, insiden, status page"),
-    (
-        "Umami / Google Analytics",
-        "Analytics self-hosted milik Anda",
-    ),
+    ("Uptime Kuma", "Uptime: monitors, incidents, status page"),
+    ("Umami / Google Analytics", "Self-hosted analytics you own"),
     ("btop / cron / logs", "Dashboard, CRON, Log & AI BYOK"),
 ];
 
@@ -73,12 +70,12 @@ pub fn draw_about_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             text,
         )),
         Line::from(Span::styled(
-            "Kelola server, container, uptime, analytics dan deploy dari satu terminal. \
-             Data tetap di mesin Anda.",
+            "Manage servers, containers, uptime, analytics and deploys from one terminal. \
+             Your data stays on your machine.",
             muted,
         )),
         Line::from(""),
-        Line::from(Span::styled("DIBUAT OLEH", bold(palette.accent))),
+        Line::from(Span::styled("MADE BY", bold(palette.accent))),
         Line::from(vec![
             Span::styled("  Cecep Azhar", bold(palette.text)),
             Span::styled(" · Fathforce", text),
@@ -93,7 +90,7 @@ pub fn draw_about_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ]),
         Line::from(""),
         Line::from(Span::styled(
-            "ARAH PENGEMBANGAN — satu alat, banyak peran",
+            "WHERE IT IS GOING — one tool, many roles",
             bold(palette.accent),
         )),
     ];
@@ -106,8 +103,8 @@ pub fn draw_about_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     }
     l.push(Line::from(""));
     l.push(Line::from(Span::styled(
-        "Sebagian peran sudah bisa dipakai, sebagian masih dibangun. \
-         Nama produk lain milik pemiliknya masing-masing.",
+        "Some roles are ready today, others are still being built. \
+         Other product names belong to their owners.",
         muted,
     )));
     f.render_widget(
@@ -126,7 +123,7 @@ pub fn draw_about_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     r.extend([
         Line::from(""),
         Line::from(vec![
-            Span::styled("  Beli Pro      ", muted),
+            Span::styled("  Buy Pro       ", muted),
             Span::styled(BUY_URL, link),
         ]),
         Line::from(vec![
@@ -134,11 +131,11 @@ pub fn draw_about_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             Span::styled(FOUNDER_URL, link),
         ]),
         Line::from(Span::styled(
-            "  Klik [ FREE · Get Pro ▸ ] di header untuk memasukkan kunci.",
+            "  Click [ FREE · Get Pro ▸ ] in the header to enter a key.",
             muted,
         )),
         Line::from(""),
-        Line::from(Span::styled("SUPPORT & DONASI", bold(palette.accent))),
+        Line::from(Span::styled("SUPPORT & DONATIONS", bold(palette.accent))),
         Line::from(vec![
             Span::styled("  ♥ Sponsor  ", Style::default().fg(Color::LightRed)),
             Span::styled(SPONSOR_URL, link),
@@ -148,7 +145,7 @@ pub fn draw_about_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             Span::styled("hi@cecepazhar.com", link),
         ]),
         Line::from(Span::styled(
-            "  Setiap dukungan membantu CAShell tetap independen dan gratis untuk fitur lokal.",
+            "  Every bit of support keeps CAShell independent and its local features free.",
             muted,
         )),
     ]);

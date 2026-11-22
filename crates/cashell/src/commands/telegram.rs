@@ -362,7 +362,7 @@ fn run_allow(user_id: i64, username: Option<&str>, role_opt: Option<&str>) -> Re
     let count = db.count_telegram_users()?;
     if !is_pro && count >= 1 && !db.is_telegram_user_allowed(user_id)? {
         eprintln!(
-            "{} Free tier terbatas pada 1 pengguna. Upgrade ke Pro untuk multi-pengguna.",
+            "{} The Free tier allows 1 user. Upgrade to Pro for multiple users.",
             "🔒".yellow()
         );
         return Ok(1);

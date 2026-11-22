@@ -529,10 +529,7 @@ fn test_a01_country_detection_trusted_proxy_and_fallback() {
     let summary = db.get_analytics_summary(Some("testsite")).unwrap();
     assert!(!summary.country_breakdown.is_empty());
     let item = &summary.country_breakdown[0];
-    assert_eq!(
-        item.label, "Tidak diketahui",
-        "Must be 'Tidak diketahui', not 'ID'"
-    );
+    assert_eq!(item.label, "Unknown", "Must be 'Unknown', not 'ID'");
     assert_eq!(item.count, 1);
 }
 

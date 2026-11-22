@@ -550,15 +550,15 @@ impl AuditStep {
 pub const AUDIT_PROMPT_PRESETS: &[(&str, &str)] = &[
     (
         "Security & Auth",
-        "cek security auth, jwt token, injection dan session leak",
+        "check auth security, JWT tokens, injection and session leaks",
     ),
     (
         "Query & DB Perf",
-        "cek query database, n+1 query, index dan performa bottleneck",
+        "check database queries, N+1 queries, indexes and performance bottlenecks",
     ),
     (
         "Error & Memory",
-        "cek error handling, unwrap panic, resource leak dan memory safety",
+        "check error handling, unwrap panics, resource leaks and memory safety",
     ),
     (
         "Full OWASP Scan",
@@ -979,7 +979,7 @@ impl CockpitApp {
         let init_name = default_proj
             .map(|p| p.name.clone())
             .unwrap_or_else(|| "current".to_string());
-        let init_prompt = "cek security auth dan performa query database".to_string();
+        let init_prompt = "check auth security and database query performance".to_string();
         let init_tuned = tune_audit_prompt(&init_prompt, &init_name, &init_folder);
 
         let mut app = Self {
@@ -3683,7 +3683,7 @@ impl CockpitApp {
         self.cfg.daemon.nodes.insert(name.clone(), node_cfg);
 
         if !self.save_config_silent() {
-            self.set_notification("✗ Gagal menyimpan konfigurasi ~/.config/cashell/config.toml");
+            self.set_notification("✗ Failed to save ~/.config/cashell/config.toml");
             if let Some(ref d) = self.db {
                 let _ = d.log_event(
                     "ERROR",
@@ -4417,7 +4417,7 @@ pub fn run(_cmd: &CockpitCommand, cfg: &Config) -> Result<()> {
     drop(session);
 
     if app.factory_reset_requested {
-        println!("\n  Factory Reset dipicu dari Cockpit Danger Zone...");
+        println!("\n  Factory Reset started from the Cockpit Danger Zone...");
         let cmd = crate::commands::reset::ResetCommand {
             yes: true,
             backup: None,
@@ -6797,7 +6797,7 @@ fn handle_ts_import_key(key: event::KeyEvent, app: &mut CockpitApp) {
                 return;
             }
             if !app.save_config_silent() {
-                app.set_notification("✗ Gagal menyimpan konfigurasi");
+                app.set_notification("✗ Failed to save config");
                 return;
             }
             app.probe_servers();
@@ -7902,7 +7902,7 @@ pub fn get_header_license_badge(palette: &catui::Theme, app: &CockpitApp) -> Spa
             let is_pro = crate::entitlements::current().is_pro;
             if !is_pro || lic.revoked || lic.expired {
                 Span::styled(
-                    " [ PRO · Kedaluwarsa ] ",
+                    " [ PRO · Expired ] ",
                     Style::default()
                         .fg(Color::LightRed)
                         .bg(Color::Rgb(60, 0, 0))
@@ -7920,7 +7920,7 @@ pub fn get_header_license_badge(palette: &catui::Theme, app: &CockpitApp) -> Spa
                 let days = crate::commands::license::compute_days_left(&lic).unwrap_or(0);
                 if days <= 0 {
                     Span::styled(
-                        " [ PRO · Kedaluwarsa ] ",
+                        " [ PRO · Expired ] ",
                         Style::default()
                             .fg(Color::LightRed)
                             .bg(Color::Rgb(60, 0, 0))
@@ -7928,7 +7928,7 @@ pub fn get_header_license_badge(palette: &catui::Theme, app: &CockpitApp) -> Spa
                     )
                 } else if days <= 14 {
                     Span::styled(
-                        format!(" [ PRO · {days} hari ] "),
+                        format!(" [ PRO · {days} days ] "),
                         Style::default()
                             .fg(Color::Black)
                             .bg(Color::Yellow)
@@ -7936,7 +7936,7 @@ pub fn get_header_license_badge(palette: &catui::Theme, app: &CockpitApp) -> Spa
                     )
                 } else {
                     Span::styled(
-                        format!(" [ PRO · {days} hari ] "),
+                        format!(" [ PRO · {days} days ] "),
                         Style::default()
                             .fg(Color::Black)
                             .bg(palette.success)
@@ -8062,7 +8062,7 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     // separators), so the edition badge starts at `total` columns from the
     // right edge of the inner area — but only if everything still fits.
     let upgradeable =
-        edition_badge.content.contains("Get Pro") || edition_badge.content.contains("Kedaluwarsa");
+        edition_badge.content.contains("Get Pro") || edition_badge.content.contains("Expired");
     if upgradeable {
         let w = |s: &Span| catui::text::width(&s.content) as u16;
         // Edition badge sits right after the privacy badge.

@@ -643,7 +643,7 @@ async fn test_multi_user_roles_and_pro_gating() {
     match viewer_deploy {
         RouterOutput::Text(t) => {
             assert!(t.contains("viewer"));
-            assert!(t.contains("tidak diizinkan"));
+            assert!(t.contains("not allowed"));
         }
         _ => panic!("viewer deploy must be rejected"),
     }
@@ -654,7 +654,7 @@ async fn test_multi_user_roles_and_pro_gating() {
         .await;
     match res {
         RouterOutput::Text(t) => {
-            assert!(t.contains("Fitur CAShell Pro") || t.contains("Free tier"));
+            assert!(t.contains("CAShell Pro feature") || t.contains("Free tier"));
         }
         _ => panic!("free tier second user must show upgrade message"),
     }
@@ -756,12 +756,12 @@ async fn test_ai03_tool_calling_read_auto_execute_write_requires_confirmation() 
     // Verify confirmation modal keyboard was generated
     assert_eq!(keyboard.inline_keyboard.len(), 1);
     assert_eq!(keyboard.inline_keyboard[0].len(), 2);
-    assert_eq!(keyboard.inline_keyboard[0][0].text, "✅ Ya, Lanjutkan");
+    assert_eq!(keyboard.inline_keyboard[0][0].text, "✅ Yes, continue");
     assert_eq!(
         keyboard.inline_keyboard[0][0].callback_data.as_deref(),
         Some(format!("confirm:{action_id}").as_str())
     );
-    assert_eq!(keyboard.inline_keyboard[0][1].text, "❌ Batal");
+    assert_eq!(keyboard.inline_keyboard[0][1].text, "❌ Cancel");
 
     // Verify action is pending and has NOT executed yet
     assert!(confirm_store.get(&action_id).is_some());

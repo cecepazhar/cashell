@@ -2367,7 +2367,7 @@ impl Database {
         // Country breakdown
         let mut country_breakdown: Vec<crate::systat::AnalyticsBreakdown> = Vec::new();
         let mut stmt = self.conn.prepare(
-            "SELECT COALESCE(NULLIF(country, ''), 'Tidak diketahui') as co, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) GROUP BY co ORDER BY c DESC LIMIT 5",
+            "SELECT COALESCE(NULLIF(country, ''), 'Unknown') as co, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) GROUP BY co ORDER BY c DESC LIMIT 5",
         )?;
         let mut rows = stmt.query(params![ref_val])?;
         while let Some(row) = rows.next()? {
@@ -3266,7 +3266,7 @@ mod tests {
             low_count: 2,
             info_count: 3,
             report_path: "/tmp/cashell-test/Product/catable/audit/Audit_2026-10-24.md".to_string(),
-            user_prompt: "cek security auth dan performa query database".to_string(),
+            user_prompt: "check auth security and database query performance".to_string(),
             tuned_prompt: "# AUDIT DIRECTIVE: Targeted Inspection".to_string(),
             report_markdown: "# Audit Report for catable\n\nNo critical findings.".to_string(),
             created_at: String::new(),
@@ -3281,7 +3281,7 @@ mod tests {
         assert_eq!(reports[0].project_name, "catable");
         assert_eq!(
             reports[0].user_prompt,
-            "cek security auth dan performa query database"
+            "check auth security and database query performance"
         );
         assert_eq!(reports[0].medium_count, 1);
 

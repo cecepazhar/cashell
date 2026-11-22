@@ -113,7 +113,7 @@ impl TelegramRouter {
             "/restart" => {
                 if !role.can_write() {
                     return RouterOutput::Text(
-                        "⛔ Akses ditolak: Peran 'viewer' tidak diizinkan melakukan aksi modifikasi/tulis."
+                        "⛔ Access denied: the 'viewer' role is not allowed to run write actions."
                             .to_string(),
                     );
                 }
@@ -131,7 +131,7 @@ impl TelegramRouter {
             "/deploy" => {
                 if !role.can_write() {
                     return RouterOutput::Text(
-                        "⛔ Akses ditolak: Peran 'viewer' tidak diizinkan melakukan aksi modifikasi/tulis."
+                        "⛔ Access denied: the 'viewer' role is not allowed to run write actions."
                             .to_string(),
                     );
                 }
@@ -150,7 +150,7 @@ impl TelegramRouter {
             "/users" => {
                 if !role.can_manage_users() {
                     return RouterOutput::Text(
-                        "⛔ Akses ditolak: Hanya pengguna dengan peran 'admin' yang dapat mengelola pengguna."
+                        "⛔ Access denied: only users with the 'admin' role can manage users."
                             .to_string(),
                     );
                 }
@@ -159,7 +159,7 @@ impl TelegramRouter {
             "/ai" => {
                 let prompt = parts[1..].join(" ");
                 if prompt.trim().is_empty() {
-                    return RouterOutput::Text("Usage: /ai <pertanyaan atau perintah>".to_string());
+                    return RouterOutput::Text("Usage: /ai <question or command>".to_string());
                 }
                 self.handle_ai_query(&prompt, user, role, &ctx).await
             }
@@ -233,10 +233,10 @@ impl TelegramRouter {
                 let err_str = e.to_string();
                 if err_str.contains("no AI provider configured") {
                     return RouterOutput::Text(
-                        "🤖 [Hana AI] AI belum dikonfigurasi. Jalankan `cashell ai setup` di server untuk mengaktifkan AI BYOK.".to_string()
+                        "🤖 [AI] AI is not configured. Run `cashell ai setup` on the server to enable AI BYOK.".to_string()
                     );
                 }
-                return RouterOutput::Text(format!("🤖 [Hana AI] Gagal memproses: {err_str}"));
+                return RouterOutput::Text(format!("🤖 [AI] Failed to process: {err_str}"));
             }
             Err(join_err) => {
                 return RouterOutput::Text(format!("🤖 [Hana AI] Runtime error: {join_err}"));
@@ -258,9 +258,7 @@ impl TelegramRouter {
             }
             crate::ai::AiResponse::ToolCalls(calls) => {
                 if calls.is_empty() {
-                    return RouterOutput::Text(
-                        "🤖 [Hana AI] Tidak ada tindakan yang dihasilkan.".to_string(),
-                    );
+                    return RouterOutput::Text("🤖 [AI] No action was produced.".to_string());
                 }
 
                 // AI-03: Process tool calls.
@@ -292,11 +290,11 @@ impl TelegramRouter {
                                 // Mutating write action: check role and REQUIRE CONFIRMATION
                                 if !role.can_write() {
                                     return RouterOutput::Text(
-                                        "⛔ [Hana AI] Peran 'viewer' tidak diizinkan mengeksekusi aksi modifikasi.".to_string()
+                                        "⛔ [AI] The 'viewer' role is not allowed to run write actions.".to_string()
                                     );
                                 }
                                 let desc = format!(
-                                    "AI mengusulkan: `{}` dengan parameter `{}`",
+                                    "AI suggests: `{}` with parameters `{}`",
                                     call.name, call.arguments
                                 );
                                 if let Ok(db) = self.db.lock() {
@@ -315,7 +313,7 @@ impl TelegramRouter {
                         }
                     }
                     Err(err) => RouterOutput::Text(format!(
-                        "🤖 [Hana AI] Gagal memetakan tool `{}`: {err}",
+                        "🤖 [AI] Could not map tool `{}`: {err}",
                         call.name
                     )),
                 }
@@ -330,7 +328,7 @@ impl TelegramRouter {
                 Ok(u) => u,
                 Err(e) => return RouterOutput::Text(format!("✖ Failed querying users: {e}")),
             };
-            let mut out = String::from("👥 *Daftar Pengguna Telegram:*\n");
+            let mut out = String::from("👥 *Telegram users:*\n");
             for (uid, uname, role, added_at) in users {
                 out.push_str(&format!(
                     "• ID `{uid}` (@{}) | Peran: *{role}* | Terdaftar: {added_at}\n",
@@ -367,7 +365,7 @@ impl TelegramRouter {
 
                 if !is_pro && user_count >= 1 {
                     return RouterOutput::Text(
-                        "🔒 *Fitur CAShell Pro*\nFree tier dibatasi maksimal 1 pengguna admin.\nUpgrade ke Pro untuk menambah multi-pengguna dan pembagian peran (admin/operator/viewer)."
+                        "🔒 *CAShell Pro feature*\nThe Free tier allows 1 admin user.\nUpgrade to Pro for multiple users and roles (admin/operator/viewer)."
                             .to_string(),
                     );
                 }
@@ -375,10 +373,10 @@ impl TelegramRouter {
                 let db = self.db.lock().unwrap();
                 match db.add_telegram_user_with_role(target_id, None, role.as_str()) {
                     Ok(_) => RouterOutput::Text(format!(
-                        "✔ Pengguna `{target_id}` berhasil ditambahkan dengan peran *{}*.",
+                        "✔ User `{target_id}` added with role *{}*.",
                         role.as_str()
                     )),
-                    Err(e) => RouterOutput::Text(format!("✖ Gagal menambahkan pengguna: {e}")),
+                    Err(e) => RouterOutput::Text(format!("✖ Failed to add user: {e}")),
                 }
             }
             "remove" => {
@@ -397,12 +395,12 @@ impl TelegramRouter {
                 let db = self.db.lock().unwrap();
                 match db.remove_telegram_user(target_id) {
                     Ok(true) => RouterOutput::Text(format!(
-                        "✔ Pengguna `{target_id}` telah dihapus dari allowlist."
+                        "✔ User `{target_id}` removed from the allowlist."
                     )),
-                    Ok(false) => RouterOutput::Text(format!(
-                        "ℹ Pengguna `{target_id}` tidak ditemukan dalam allowlist."
-                    )),
-                    Err(e) => RouterOutput::Text(format!("✖ Gagal menghapus pengguna: {e}")),
+                    Ok(false) => {
+                        RouterOutput::Text(format!("ℹ User `{target_id}` is not in the allowlist."))
+                    }
+                    Err(e) => RouterOutput::Text(format!("✖ Failed to remove user: {e}")),
                 }
             }
             "role" => {
@@ -424,13 +422,13 @@ impl TelegramRouter {
                 let db = self.db.lock().unwrap();
                 match db.set_telegram_user_role(target_id, new_role.as_str()) {
                     Ok(true) => RouterOutput::Text(format!(
-                        "✔ Peran pengguna `{target_id}` diubah menjadi *{}*.",
+                        "✔ User `{target_id}` role changed to *{}*.",
                         new_role.as_str()
                     )),
-                    Ok(false) => RouterOutput::Text(format!(
-                        "ℹ Pengguna `{target_id}` tidak ditemukan dalam allowlist."
-                    )),
-                    Err(e) => RouterOutput::Text(format!("✖ Gagal mengubah peran: {e}")),
+                    Ok(false) => {
+                        RouterOutput::Text(format!("ℹ User `{target_id}` is not in the allowlist."))
+                    }
+                    Err(e) => RouterOutput::Text(format!("✖ Failed to change role: {e}")),
                 }
             }
             _ => RouterOutput::Text(
@@ -475,7 +473,7 @@ impl TelegramRouter {
             ],
             vec![
                 InlineKeyboardButton::callback("📜 Logs Web", "cmd:/logs web 50"),
-                InlineKeyboardButton::callback("👥 Pengguna", "cmd:/users list"),
+                InlineKeyboardButton::callback("👥 Users", "cmd:/users list"),
             ],
         ])
     }

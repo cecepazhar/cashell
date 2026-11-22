@@ -587,17 +587,17 @@ pub fn cycle_field_value(app: &mut CockpitApp, forward: bool) {
 
 pub fn trigger_license_activate(app: &mut CockpitApp) {
     if app.license_spinner_msg.is_some() {
-        app.set_notification("Operasi lisensi sedang berjalan...");
+        app.set_notification("A license operation is already running...");
         return;
     }
     let key = app.license_key_input.trim().to_string();
     if key.is_empty() {
-        app.set_notification("Ketik atau masukkan kunci lisensi terlebih dahulu");
+        app.set_notification("Type or paste a license key first");
         return;
     }
 
     if let Err(e) = license::validate_license_format(&key) {
-        app.set_notification(format!("Format kunci salah: {e}"));
+        app.set_notification(format!("Invalid key format: {e}"));
         return;
     }
 
@@ -609,14 +609,14 @@ pub fn trigger_license_activate(app: &mut CockpitApp) {
 
     let (tx, rx) = mpsc::channel();
     app.license_rx = Some(rx);
-    app.license_spinner_msg = Some("Mengaktifkan lisensi ke GCC...".to_string());
-    app.set_notification("Menghubungi server GCC untuk aktivasi...");
+    app.license_spinner_msg = Some("Activating license with GCC...".to_string());
+    app.set_notification("Contacting GCC to activate...");
 
     thread::spawn(move || {
         let res = license::activate_license_key(&key, &base_url)
             .map(|lic| {
                 format!(
-                    "Lisensi {} ({}) berhasil diaktifkan!",
+                    "License {} ({}) activated!",
                     license_gcc::mask_key(&lic.key),
                     tier_display(&lic.tier)
                 )
@@ -628,13 +628,13 @@ pub fn trigger_license_activate(app: &mut CockpitApp) {
 
 pub fn trigger_license_verify(app: &mut CockpitApp) {
     if app.license_spinner_msg.is_some() {
-        app.set_notification("Operasi lisensi sedang berjalan...");
+        app.set_notification("A license operation is already running...");
         return;
     }
     let lic = match license_local::load_license() {
         Ok(Some(l)) => l,
         _ => {
-            app.set_notification("Tidak ada lisensi lokal terpasang untuk diverifikasi");
+            app.set_notification("No local license installed to verify");
             return;
         }
     };
@@ -647,13 +647,13 @@ pub fn trigger_license_verify(app: &mut CockpitApp) {
 
     let (tx, rx) = mpsc::channel();
     app.license_rx = Some(rx);
-    app.license_spinner_msg = Some("Memverifikasi lisensi ke GCC...".to_string());
-    app.set_notification("Memverifikasi status lisensi ke GCC...");
+    app.license_spinner_msg = Some("Verifying license with GCC...".to_string());
+    app.set_notification("Verifying license status with GCC...");
 
     thread::spawn(move || {
         let res = license_local::verify_license(&lic, &base_url)
-            .map(|()| "Verifikasi lisensi berhasil (status diperbarui)!".to_string())
-            .map_err(|e| format!("Verifikasi gagal: {e}"));
+            .map(|()| "License verified (status updated)!".to_string())
+            .map_err(|e| format!("Verification failed: {e}"));
         crate::entitlements::invalidate_cache();
         let _ = tx.send(res);
     });
@@ -661,13 +661,13 @@ pub fn trigger_license_verify(app: &mut CockpitApp) {
 
 pub fn trigger_license_deactivate(app: &mut CockpitApp) {
     if app.license_spinner_msg.is_some() {
-        app.set_notification("Operasi lisensi sedang berjalan...");
+        app.set_notification("A license operation is already running...");
         return;
     }
     let lic = match license_local::load_license() {
         Ok(Some(l)) => l,
         _ => {
-            app.set_notification("Tidak ada lisensi terpasang");
+            app.set_notification("No license installed");
             return;
         }
     };
@@ -680,17 +680,13 @@ pub fn trigger_license_deactivate(app: &mut CockpitApp) {
 
     let (tx, rx) = mpsc::channel();
     app.license_rx = Some(rx);
-    app.license_spinner_msg = Some("Menonaktifkan perangkat di GCC...".to_string());
-    app.set_notification("Menonaktifkan perangkat...");
+    app.license_spinner_msg = Some("Deactivating this device on GCC...".to_string());
+    app.set_notification("Deactivating device...");
 
     thread::spawn(move || {
         let key_masked = license_gcc::mask_key(&lic.key);
         let res = license::deactivate_license_device(&base_url, false)
-            .map(|_| {
-                format!(
-                    "Perangkat berhasil dinonaktifkan dari {key_masked}. Beralih ke Free Edition."
-                )
-            })
+            .map(|_| format!("Device deactivated from {key_masked}. Switched to Free Edition."))
             .or_else(|e| {
                 // Graceful fallback for offline / 401: remove local file anyway
                 if let Ok(path) = license_local::license_path() {
@@ -701,7 +697,7 @@ pub fn trigger_license_deactivate(app: &mut CockpitApp) {
                 let _ = crate::pro::FastBootCache::clear();
                 crate::entitlements::invalidate_cache();
                 Ok(format!(
-                    "Perangkat dinonaktifkan lokal ({e}). Beralih ke Free Edition."
+                    "Device deactivated locally ({e}). Switched to Free Edition."
                 ))
             });
         let _ = tx.send(res);
@@ -721,16 +717,16 @@ pub const SPONSOR_URL: &str = "https://github.com/sponsors/cecepazhar";
 /// (Telegram multi-user is gated in `telegram::run_allow`; sync needs a GCC
 /// Pro session). Shared by the Get Pro modal and the About tab.
 pub const FREE_BENEFITS: [&str; 4] = [
-    "Semua fitur lokal gratis selamanya, tanpa akun & tanpa batas buatan",
+    "Every local feature, free forever: no account, no artificial limits",
     "Cockpit, Server, Container, Uptime, Analytics, Deploy, Backup",
-    "AI BYOK (pakai API key sendiri) + bot Telegram 1 pemilik",
-    "Data tetap di mesin Anda: tanpa telemetry, tanpa cloud wajib",
+    "AI BYOK (bring your own API key) + Telegram bot for 1 owner",
+    "Your data stays on your machine: no telemetry, no required cloud",
 ];
 pub const PRO_BENEFITS: [&str; 4] = [
-    "Sync zero-knowledge antar perangkat (config, vault) lewat GCC",
-    "Bot Telegram multi-pengguna dengan peran viewer/operator/admin",
-    "Kelola & pindah perangkat lisensi di akun GCC",
-    "Mendukung pengembangan CAShell independen",
+    "Zero-knowledge sync across devices (config, vault) via GCC",
+    "Multi-user Telegram bot with viewer/operator/admin roles",
+    "Manage and move licensed devices in your GCC account",
+    "Privacy mode for screen sharing (hide IPs, domains, names)",
 ];
 
 pub fn open_upgrade_modal(app: &mut CockpitApp) {
@@ -749,7 +745,7 @@ pub fn open_buy_url(app: &mut CockpitApp) {
         std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some();
     let remote = std::env::var_os("SSH_CONNECTION").is_some();
     if !crate::host_guard::allowed() || remote || !graphical {
-        app.set_notification(format!("Buka di browser: {BUY_URL}"));
+        app.set_notification(format!("Open in your browser: {BUY_URL}"));
         return;
     }
     let spawned = std::process::Command::new("xdg-open")
@@ -759,8 +755,8 @@ pub fn open_buy_url(app: &mut CockpitApp) {
         .stderr(std::process::Stdio::null())
         .spawn();
     match spawned {
-        Ok(_) => app.set_notification(format!("Membuka {BUY_URL} di browser...")),
-        Err(_) => app.set_notification(format!("Buka di browser: {BUY_URL}")),
+        Ok(_) => app.set_notification(format!("Opening {BUY_URL} in your browser...")),
+        Err(_) => app.set_notification(format!("Open in your browser: {BUY_URL}")),
     }
 }
 
@@ -786,7 +782,7 @@ pub fn draw_upgrade_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     f.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" ★ Get Pro — Aktifkan lisensi ")
+        .title(" ★ Get Pro — Activate a license ")
         .border_style(
             Style::default()
                 .fg(palette.accent)
@@ -813,15 +809,15 @@ pub fn draw_upgrade_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         )
     };
-    let activate = " [✓ Aktifkan] ";
+    let activate = " [✓ Activate] ";
     let buy = " [↗ Beli Pro] ";
-    let close = " [✖ Tutup] ";
+    let close = " [✖ Close] ";
     let gap = "    ";
     let spinner = app.license_spinner_msg.clone().unwrap_or_default();
 
     let lines = vec![
         Line::from(Span::styled(
-            "Masukkan kunci lisensi untuk mengaktifkan Pro.",
+            "Enter your license key to activate Pro.",
             Style::default().fg(palette.text),
         )),
         Line::from(Span::styled(
@@ -848,7 +844,7 @@ pub fn draw_upgrade_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Belum punya lisensi? ", muted),
+            Span::styled("No license yet? ", muted),
             Span::styled(
                 BUY_URL,
                 Style::default()
@@ -857,7 +853,7 @@ pub fn draw_upgrade_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             ),
         ]),
         Line::from(vec![
-            Span::styled("Semua produk CA (Founder): ", muted),
+            Span::styled("All CA products (Founder): ", muted),
             Span::styled(
                 FOUNDER_URL,
                 Style::default()
@@ -866,7 +862,7 @@ pub fn draw_upgrade_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             ),
         ]),
         Line::from(Span::styled(
-            "Enter: aktifkan · Ctrl+B: buka halaman beli · Esc: tutup",
+            "Enter: activate · Ctrl+B: open buy page · Esc: close",
             muted,
         )),
         Line::from(Span::styled(spinner, Style::default().fg(Color::Yellow))),
@@ -910,7 +906,7 @@ pub fn benefit_lines(palette: &catui::Theme) -> Vec<Line<'static>> {
             Span::styled(t, Style::default().fg(palette.text)),
         ])
     };
-    let mut v = vec![Line::from(""), head("FREE — selamanya", palette.success)];
+    let mut v = vec![Line::from(""), head("FREE — forever", palette.success)];
     v.extend(
         FREE_BENEFITS
             .iter()
@@ -918,7 +914,7 @@ pub fn benefit_lines(palette: &catui::Theme) -> Vec<Line<'static>> {
     );
     v.push(Line::from(""));
     v.push(head(
-        "PRO — tambahan untuk tim & multi-perangkat",
+        "PRO — for teams, multiple devices and creators",
         Color::Yellow,
     ));
     v.extend(PRO_BENEFITS.iter().map(|t| item("  ★ ", Color::Yellow, t)));
@@ -952,7 +948,7 @@ pub fn open_factory_reset_modal(app: &mut CockpitApp) {
     app.factory_reset_btn_focus = 0; // [Batal] focused by default!
     app.factory_reset_warning = if let Ok(Some(lic)) = crate::license_local::load_license() {
         Some(format!(
-            "Lisensi aktif {} ({}) akan dinonaktifkan di GCC.",
+            "Active license {} ({}) will be deactivated on GCC.",
             license_gcc::mask_key(&lic.key),
             lic.product
         ))
@@ -960,7 +956,7 @@ pub fn open_factory_reset_modal(app: &mut CockpitApp) {
         None
     };
     app.show_factory_reset_modal = true;
-    app.set_notification("⚠ Factory Reset: ketik 'RESET' untuk menghapus semua data");
+    app.set_notification("⚠ Factory Reset: type 'RESET' to wipe all data");
 }
 
 pub fn close_factory_reset_modal(app: &mut CockpitApp) {
@@ -974,7 +970,7 @@ pub fn confirm_factory_reset(app: &mut CockpitApp) {
         app.factory_reset_requested = true;
         app.quit_requested = true;
     } else {
-        app.set_notification("Ketik kata 'RESET' persis untuk mengonfirmasi!");
+        app.set_notification("Type the word 'RESET' exactly to confirm!");
     }
 }
 
@@ -1077,7 +1073,7 @@ pub fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         },
     );
     let tab_license = Span::styled(
-        " [2] Lisensi ",
+        " [2] License ",
         if view == SettingsSubView::License {
             Style::default()
                 .fg(Color::Black)
@@ -1124,7 +1120,7 @@ pub fn draw_settings_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let status = app
         .settings_status_msg
         .as_deref()
-        .unwrap_or("1: Konfig | 2: Lisensi | 3: Danger | s: Save | r: Reload");
+        .unwrap_or("1: Config | 2: License | 3: Danger | s: Save | r: Reload");
 
     f.render_widget(
         Paragraph::new(Line::from(vec![
@@ -1425,7 +1421,7 @@ fn draw_license_subview(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     // ── Status Card ─────────────────────────────────────────────────────────
     let status_block = Block::default()
         .borders(Borders::ALL)
-        .title(" ★ Status Lisensi CAShell (Offline-First) ")
+        .title(" ★ CAShell License Status (Offline-First) ")
         .border_style(Style::default().fg(palette.border));
     let status_inner = status_block.inner(chunks[0]);
     f.render_widget(status_block, chunks[0]);
@@ -1469,7 +1465,7 @@ fn draw_license_subview(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 };
 
                 let d_str = match compute_days_left(lic) {
-                    Some(d) => format!("{d} hari lagi"),
+                    Some(d) => format!("{d} days left"),
                     None => "Permanent (Lifetime)".to_string(),
                 };
 
@@ -1477,7 +1473,7 @@ fn draw_license_subview(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                 let lv_str = if !lic.last_verified_at.is_empty() {
                     parse_display_ts(&lic.last_verified_at)
                 } else {
-                    "Belum pernah".to_string()
+                    "Never".to_string()
                 };
                 let g_str = compute_offline_grace_until(lic).unwrap_or_else(|| "-".to_string());
 
@@ -1486,7 +1482,7 @@ fn draw_license_subview(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             None => (
                 "Free Edition".to_string(),
                 Span::styled(" ○ FREE ", Style::default().fg(palette.text_muted)),
-                "Tidak terbatas (Fitur Dasar)".to_string(),
+                "Unlimited (core features)".to_string(),
                 "-".to_string(),
                 "0/1".to_string(),
                 "-".to_string(),
@@ -1497,12 +1493,12 @@ fn draw_license_subview(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let masked_key = lic_opt
         .as_ref()
         .map(|l| license_gcc::mask_key(&l.key))
-        .unwrap_or_else(|| "[Belum Terpasang]".to_string());
+        .unwrap_or_else(|| "[Not installed]".to_string());
 
     let lines = vec![
         Line::from(vec![
             Span::styled(
-                "  Kunci Lisensi       : ",
+                "  License Key         : ",
                 Style::default().fg(palette.accent),
             ),
             Span::styled(masked_key, Style::default().add_modifier(Modifier::BOLD)),
@@ -1518,35 +1514,35 @@ fn draw_license_subview(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ]),
         Line::from(vec![
             Span::styled(
-                "  Masa Aktif          : ",
+                "  Valid Until         : ",
                 Style::default().fg(palette.accent),
             ),
             Span::styled(active_period, Style::default().fg(palette.text)),
         ]),
         Line::from(vec![
             Span::styled(
-                "  Sisa Hari           : ",
+                "  Days Left           : ",
                 Style::default().fg(palette.accent),
             ),
             Span::styled(days_left_str, Style::default().fg(palette.text)),
         ]),
         Line::from(vec![
             Span::styled(
-                "  Perangkat Terdaftar : ",
+                "  Registered Devices  : ",
                 Style::default().fg(palette.accent),
             ),
             Span::styled(dev_str, Style::default().fg(palette.text)),
         ]),
         Line::from(vec![
             Span::styled(
-                "  Verifikasi Terakhir : ",
+                "  Last Verified       : ",
                 Style::default().fg(palette.accent),
             ),
             Span::styled(last_ver_str, Style::default().fg(palette.text)),
         ]),
         Line::from(vec![
             Span::styled(
-                "  Batas Grace Offline : ",
+                "  Offline Grace Until : ",
                 Style::default().fg(palette.accent),
             ),
             Span::styled(grace_str, Style::default().fg(palette.text_muted)),
@@ -1558,13 +1554,12 @@ fn draw_license_subview(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     // ── Input & Action Buttons ──────────────────────────────────────────────
     let action_block = Block::default()
         .borders(Borders::ALL)
-        .title(" Tindakan & Aktivasi Kunci ")
+        .title(" Actions & Key Activation ")
         .border_style(Style::default().fg(palette.border));
     let action_inner = action_block.inner(chunks[1]);
     f.render_widget(action_block, chunks[1]);
 
-    let input_label =
-        "Input Kunci Lisensi (CASH[99|24|12|01]-XXXXXX-C atau Founder CAAA99-XXXXXX-C):";
+    let input_label = "License Key (CASH[99|24|12|01]-XXXXXX-C or Founder CAAA99-XXXXXX-C):";
     let is_editing = app.license_input_editing;
     let focus = app.license_action_focus;
 
@@ -1572,7 +1567,7 @@ fn draw_license_subview(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         if is_editing {
             "█".to_string()
         } else {
-            "[Ketik atau tempel kunci lisensi di sini...]".to_string()
+            "[Type or paste your license key here...]".to_string()
         }
     } else if is_editing {
         format!("{}█", app.license_key_input)
@@ -1651,11 +1646,11 @@ fn draw_license_subview(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled(" [✓ Aktifkan] ", btn_activate_style),
+            Span::styled(" [✓ Activate] ", btn_activate_style),
             Span::raw("    "),
-            Span::styled(" [↺ Verifikasi sekarang] ", btn_verify_style),
+            Span::styled(" [↺ Verify now] ", btn_verify_style),
             Span::raw("    "),
-            Span::styled(" [✖ Nonaktifkan perangkat ini] ", btn_deact_style),
+            Span::styled(" [✖ Deactivate this device] ", btn_deact_style),
         ]),
         Line::from(""),
         spinner_line,
@@ -1701,38 +1696,41 @@ fn draw_danger_zone_subview(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let palette = cockpit_theme(&app.cfg.output.theme);
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" ⚠ Danger Zone — Tindakan Berisiko Tinggi ")
+        .title(" ⚠ Danger Zone — High-Risk Actions ")
         .border_style(Style::default().fg(palette.danger));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     let desc = vec![
         Line::from(Span::styled(
-            "PERINGATAN KERAS:",
+            "WARNING:",
             Style::default()
                 .fg(palette.danger)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
-        Line::from("  Factory Reset akan menghapus seluruh data lokal CAShell secara PERMANEN:"),
-        Line::from("  • File konfigurasi (~/.config/cashell/config.toml)"),
-        Line::from("  • Basis data SQLite (~/.local/share/cashell/cashell.db) & WAL journal"),
-        Line::from("  • Kunci lisensi lokal & FastBootCache (revert ke Free Edition)"),
-        Line::from("  • Riwayat audit, log audit, chat history, dan daemon PID file"),
-        Line::from("  • Vault catatan & berkas knowledge base"),
+        Line::from("  Factory Reset PERMANENTLY deletes all local CAShell data:"),
+        Line::from("  • Config file (~/.config/cashell/config.toml)"),
+        Line::from("  • SQLite database (~/.config/cashell/cashell.db) & WAL journal"),
+        Line::from("  • Local license key & FastBootCache (back to Free Edition)"),
+        Line::from("  • Audit history, audit log, chat history and daemon PID file"),
+        Line::from("  • Notes vault & knowledge-base files"),
         Line::from(""),
-        Line::from("  Setelah reset berhasil, CAShell akan menutup antarmuka TUI Cockpit,"),
-        Line::from("  menghapus berkas, menulis config default bersih, dan mencetak ringkasan ke terminal."),
+        Line::from("  After a successful reset CAShell closes the Cockpit TUI,"),
+        Line::from("  deletes the files, writes a clean default config and prints a summary."),
         Line::from(""),
         Line::from(vec![
             Span::styled(
-                " [⚠ BUKA FACTORY RESET] ",
+                " [⚠ OPEN FACTORY RESET] ",
                 Style::default()
                     .fg(Color::White)
                     .bg(palette.danger)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" (Tekan Enter atau klik tombol di atas)", Style::default().fg(palette.text_muted)),
+            Span::styled(
+                " (Press Enter or click the button above)",
+                Style::default().fg(palette.text_muted),
+            ),
         ]),
     ];
 
@@ -1783,13 +1781,13 @@ pub fn draw_factory_reset_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect)
     // 1. Warning line
     let warn_p = Paragraph::new(Line::from(vec![
         Span::styled(
-            "⚠ PERHATIAN: ",
+            "⚠ CAUTION: ",
             Style::default()
                 .fg(palette.danger)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            "Item berikut yang ada di sistem akan DIHAPUS PERMANEN:",
+            "The following items on this system will be PERMANENTLY DELETED:",
             Style::default().fg(palette.text),
         ),
     ]));
@@ -1798,7 +1796,7 @@ pub fn draw_factory_reset_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect)
     // 2. Items list
     let item_lines: Vec<ListItem> = if app.factory_reset_items.is_empty() {
         vec![ListItem::new(
-            "  (Tidak ada file data CAShell yang ditemukan di sistem)",
+            "  (No CAShell data files found on this system)",
         )]
     } else {
         app.factory_reset_items
@@ -1842,7 +1840,7 @@ pub fn draw_factory_reset_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect)
     let is_reset_match = app.factory_reset_input.trim() == "RESET";
     let input_block = Block::default()
         .borders(Borders::ALL)
-        .title(" Ketik kata 'RESET' persis untuk konfirmasi ")
+        .title(" Type the word 'RESET' exactly to confirm ")
         .border_style(Style::default().fg(if is_reset_match {
             palette.success
         } else {
@@ -1889,13 +1887,13 @@ pub fn draw_factory_reset_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect)
     };
 
     let delete_label = if is_reset_match {
-        " [ ✖ HAPUS SEMUA ] "
+        " [ ✖ DELETE EVERYTHING ] "
     } else {
-        " [ Hapus Semua (Ketik RESET) ] "
+        " [ Delete Everything (type RESET) ] "
     };
 
     let btn_line = Line::from(vec![
-        Span::styled(" [ Batal ] (Esc) ", btn_cancel_style),
+        Span::styled(" [ Cancel ] (Esc) ", btn_cancel_style),
         Span::raw("        "),
         Span::styled(delete_label, btn_delete_style),
     ]);
@@ -2024,7 +2022,7 @@ pub fn handle_settings_key(key: KeyEvent, app: &mut CockpitApp) -> bool {
         }
         KeyCode::Char('2') => {
             app.settings_subview = SettingsSubView::License;
-            app.set_notification("Settings: Lisensi");
+            app.set_notification("Settings: License");
             false
         }
         KeyCode::Char('3') => {
@@ -2185,7 +2183,7 @@ mod tests {
             license_local::save_license(&lic_20d).unwrap();
             crate::entitlements::invalidate_cache();
             let b = super::super::get_header_license_badge(&palette, &app);
-            assert!(b.content.contains("PRO · 20 hari") || b.content.contains("PRO · 19 hari"));
+            assert!(b.content.contains("PRO · 20 days") || b.content.contains("PRO · 19 days"));
             assert_eq!(b.style.bg, Some(palette.success));
 
             // 4. Pro subscription with 10 days left (<= 14 days) -> yellow badge
@@ -2196,7 +2194,7 @@ mod tests {
             license_local::save_license(&lic_10d).unwrap();
             crate::entitlements::invalidate_cache();
             let b = super::super::get_header_license_badge(&palette, &app);
-            assert!(b.content.contains("PRO · 10 hari") || b.content.contains("PRO · 9 hari"));
+            assert!(b.content.contains("PRO · 10 days") || b.content.contains("PRO · 9 days"));
             assert_eq!(b.style.bg, Some(Color::Yellow));
 
             // 5. Expired license -> [ PRO · Kedaluwarsa ] (red)
@@ -2208,7 +2206,7 @@ mod tests {
             license_local::save_license(&lic_exp).unwrap();
             crate::entitlements::invalidate_cache();
             let b = super::super::get_header_license_badge(&palette, &app);
-            assert_eq!(b.content, " [ PRO · Kedaluwarsa ] ");
+            assert_eq!(b.content, " [ PRO · Expired ] ");
             assert_eq!(b.style.fg, Some(Color::LightRed));
         });
     }
@@ -2273,7 +2271,7 @@ mod tests {
                 .as_ref()
                 .map(|(msg, _)| msg.as_str())
                 .unwrap();
-            assert!(notif.contains("Ketik atau masukkan kunci"));
+            assert!(notif.contains("Type or paste a license key"));
 
             // Trigger activate with invalid format
             app.license_key_input = "INVALID-FORMAT".to_string();
@@ -2283,7 +2281,7 @@ mod tests {
                 .as_ref()
                 .map(|(msg, _)| msg.as_str())
                 .unwrap();
-            assert!(notif.contains("Format kunci salah"));
+            assert!(notif.contains("Invalid key format"));
 
             // Trigger verify with no local license
             let _ = license_local::remove_license();
@@ -2293,7 +2291,7 @@ mod tests {
                 .as_ref()
                 .map(|(msg, _)| msg.as_str())
                 .unwrap();
-            assert!(notif.contains("Tidak ada lisensi"));
+            assert!(notif.contains("No local license") || notif.contains("No license"));
 
             // Trigger deactivate with no local license
             trigger_license_deactivate(&mut app);
@@ -2302,7 +2300,7 @@ mod tests {
                 .as_ref()
                 .map(|(msg, _)| msg.as_str())
                 .unwrap();
-            assert!(notif.contains("Tidak ada lisensi"));
+            assert!(notif.contains("No local license") || notif.contains("No license"));
         });
     }
 }
