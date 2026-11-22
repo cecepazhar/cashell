@@ -246,6 +246,7 @@ pub fn draw_ai_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             Paragraph::new(all_widget_lines).alignment(Alignment::Center),
             m_inner,
         );
+        super::draw_brand_badge(f, m_inner);
     }
 
     let in_block = Block::default()

@@ -7891,7 +7891,7 @@ where
 
 fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let palette = cockpit_theme(&app.cfg.output.theme);
-    let title = format!("❯❯ CAShell v{}", env!("CARGO_PKG_VERSION"));
+    let title = format!("❯❯_ CAShell v{}", env!("CARGO_PKG_VERSION"));
     let time_str = header_clock(chrono::Local::now(), area.width);
 
     // Dynamic L-11 Header badge: FREE / PRO · Lifetime / PRO · N hari (yellow <= 14d, red if expired)
@@ -7980,26 +7980,48 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
             .item(time_badge),
         area,
     );
+    paint_brand_glyphs(f, Rect::new(area.x, area.y + 1, area.width.min(16), 1));
 }
 
-/// Overlay the CAShell `>>_` brandmark on the centre of the avatar screen.
-fn draw_brand_mark(f: &mut Frame, screen: Rect) {
-    const LW: u16 = 16;
-    const LH: u16 = 6; // text rows (12 pixel rows)
-    if screen.width < LW + 2 || screen.height < LH + 2 {
+const BRAND_GREEN: Color = Color::Rgb(0x4A, 0xDE, 0x80);
+
+/// Recolour the `❯❯_` brandmark already drawn in `row`: chevrons green,
+/// cursor underscore white (HeaderBar renders its title in one style).
+fn paint_brand_glyphs(f: &mut Frame, row: Rect) {
+    let buf = f.buffer_mut();
+    for x in row.x..row.x.saturating_add(row.width) {
+        let Some(cell) = buf.cell_mut((x, row.y)) else {
+            continue;
+        };
+        match cell.symbol() {
+            "❯" => {
+                cell.set_fg(BRAND_GREEN);
+            }
+            "_" => {
+                cell.set_fg(Color::White);
+                return;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Small `❯❯_` badge in the avatar's top-left corner. Shared by the Dashboard
+/// token panel and the AI Companion Reactor so both avatars look the same and
+/// the face is never covered.
+pub(crate) fn draw_brand_badge(f: &mut Frame, screen: Rect) {
+    if screen.width < 12 || screen.height < 3 {
         return;
     }
-    let ox = screen.x + (screen.width - LW) / 2;
-    let oy = screen.y + (screen.height - LH) / 2;
-    let rgb = |c: (u8, u8, u8)| Color::Rgb(c.0, c.1, c.2);
     let buf = f.buffer_mut();
-    for (x, y, ch, fgc, bgc) in crate::brand::cells(LW as usize, (LH * 2) as usize) {
-        if let Some(cell) = buf.cell_mut((ox + x, oy + y)) {
+    for (i, (ch, color)) in [('❯', BRAND_GREEN), ('❯', BRAND_GREEN), ('_', Color::White)]
+        .into_iter()
+        .enumerate()
+    {
+        if let Some(cell) = buf.cell_mut((screen.x + i as u16, screen.y)) {
             cell.set_char(ch);
-            cell.set_fg(rgb(fgc));
-            if let Some(b) = bgc {
-                cell.set_bg(rgb(b));
-            }
+            cell.set_fg(color);
+            cell.modifier.insert(Modifier::BOLD);
         }
     }
 }
@@ -10758,7 +10780,7 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         Paragraph::new(token_lines).alignment(ratatui::layout::Alignment::Center),
         screen,
     );
-    draw_brand_mark(f, screen);
+    draw_brand_badge(f, screen);
 
     // 2. Navigation Bar (Compact layout for smaller column)
     let nav_spans = vec![
@@ -11933,10 +11955,20 @@ fn draw_compact_fallback(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
 
     let snap = &app.latest_snap;
     let lines = vec![
-        Line::from(Span::styled(
-            format!("❯❯ CAShell v{} (Compact Mode)", env!("CARGO_PKG_VERSION")),
-            Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
-        )),
+        Line::from(vec![
+            Span::styled(
+                "❯❯",
+                Style::default().fg(BRAND_GREEN).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "_",
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(" CAShell v{} (Compact Mode)", env!("CARGO_PKG_VERSION")),
+                Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
+            ),
+        ]),
         Line::from(format!(
             "Terminal size: {}x{} (< 80x24 required for full view)",
             area.width, area.height
