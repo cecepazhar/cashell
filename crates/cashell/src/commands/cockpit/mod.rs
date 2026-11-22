@@ -381,9 +381,9 @@ pub const UPTIME_MONITOR_GROUPS: &[&str] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CockpitTab {
     Dashboard = 0,
-    Project = 1,
-    Uptime = 2,
-    Server = 3,
+    Server = 1,
+    Project = 2,
+    Uptime = 3,
     Analytics = 4,
     Topology = 5,
     Cron = 6,
@@ -400,9 +400,9 @@ impl CockpitTab {
     pub fn from_index(idx: usize) -> Self {
         match idx {
             0 => Self::Dashboard,
-            1 => Self::Project,
-            2 => Self::Uptime,
-            3 => Self::Server,
+            1 => Self::Server,
+            2 => Self::Project,
+            3 => Self::Uptime,
             4 => Self::Analytics,
             5 => Self::Topology,
             6 => Self::Cron,
@@ -421,9 +421,9 @@ impl CockpitTab {
     pub fn titles() -> [&'static str; 12] {
         [
             "[1] Dashboard",
-            "[2] Container",
-            "[3] Uptime",
-            "[4] Server",
+            "[2] Server",
+            "[3] Container",
+            "[4] Uptime",
             "[5] Analytics",
             "[6] Topology",
             "[7] CRON",
@@ -5666,9 +5666,9 @@ fn handle_key_event<B: ratatui::backend::Backend>(
 
         // Direct number key tab switching: '1'..'9' -> Tab 0..8, '0' -> AI, '-' -> Setting
         KeyCode::Char('1') => app.current_tab = CockpitTab::Dashboard,
-        KeyCode::Char('2') => app.current_tab = CockpitTab::Project,
-        KeyCode::Char('3') => app.current_tab = CockpitTab::Uptime,
-        KeyCode::Char('4') => app.current_tab = CockpitTab::Server,
+        KeyCode::Char('2') => app.current_tab = CockpitTab::Server,
+        KeyCode::Char('3') => app.current_tab = CockpitTab::Project,
+        KeyCode::Char('4') => app.current_tab = CockpitTab::Uptime,
         KeyCode::Char('5') => app.current_tab = CockpitTab::Analytics,
         KeyCode::Char('6') => app.current_tab = CockpitTab::Topology,
         KeyCode::Char('7') => app.current_tab = CockpitTab::Cron,
@@ -13516,7 +13516,11 @@ mod tests {
 
     #[test]
     fn test_container_tab_label_and_default_view() {
-        assert_eq!(CockpitTab::titles()[1], "[2] Container");
+        assert_eq!(CockpitTab::titles()[2], "[3] Container");
+        assert_eq!(CockpitTab::titles()[1], "[2] Server");
+        assert_eq!(CockpitTab::titles()[3], "[4] Uptime");
+        assert_eq!(CockpitTab::from_index(1), CockpitTab::Server);
+        assert_eq!(CockpitTab::from_index(2), CockpitTab::Project);
         let app = CockpitApp::new(&Config::default());
         assert_eq!(app.project_view, ProjectView::Containers);
     }
