@@ -4125,7 +4125,12 @@ impl CockpitApp {
                 .uptime
                 .custom_monitors
                 .iter()
-                .any(|m| m.target == url);
+                .any(|m| m.target == url)
+                || self
+                    .latest_snap
+                    .uptime_monitors
+                    .iter()
+                    .any(|m| m.target == url);
             if target_exists {
                 self.set_notification(format!("✗ Monitor URL '{}' already exists", url));
                 return;

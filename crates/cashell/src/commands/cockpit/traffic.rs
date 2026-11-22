@@ -879,7 +879,15 @@ pub fn draw_analytics_script_modal(f: &mut Frame, app: &mut CockpitApp, area: Re
 
     f.render_widget(Clear, modal_area);
 
-    let active_site = app.analytics_site_filter.as_deref().unwrap_or("caterm");
+    // The site highlighted in the table; the aggregate row (index 0) has no
+    // single tracker id, so fall back to the first registered site.
+    let sites = app.analytic_sites();
+    let active_site = sites
+        .get(app.analytics_selected_site)
+        .filter(|_| app.analytics_selected_site != 0)
+        .or_else(|| sites.get(1))
+        .map(|s| s.id.clone())
+        .unwrap_or_else(|| "your-site-id".to_string());
     let block = Block::default()
         .borders(Borders::ALL)
         .title(format!(
