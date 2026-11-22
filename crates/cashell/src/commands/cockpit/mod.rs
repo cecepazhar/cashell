@@ -20,6 +20,7 @@ use anyhow::Result;
 use catui::layout::centered_rect;
 use clap::Parser;
 
+pub mod about;
 pub mod ai;
 pub mod applications;
 pub mod apps;
@@ -392,10 +393,11 @@ pub enum CockpitTab {
     AI = 9,
     Setting = 10,
     Turbo = 11,
+    About = 12,
 }
 
 impl CockpitTab {
-    pub const COUNT: usize = 12;
+    pub const COUNT: usize = 13;
 
     pub fn from_index(idx: usize) -> Self {
         match idx {
@@ -410,7 +412,8 @@ impl CockpitTab {
             8 => Self::Terminal,
             9 => Self::AI,
             10 => Self::Setting,
-            _ => Self::Turbo,
+            11 => Self::Turbo,
+            _ => Self::About,
         }
     }
 
@@ -418,7 +421,7 @@ impl CockpitTab {
         self as usize
     }
 
-    pub fn titles() -> [&'static str; 12] {
+    pub fn titles() -> [&'static str; 13] {
         [
             "[1] Dashboard",
             "[2] Server",
@@ -432,6 +435,7 @@ impl CockpitTab {
             "[0] AI",
             "[-] Setting",
             "[=] Turbo",
+            "[i] About",
         ]
     }
 }
@@ -5698,6 +5702,12 @@ fn handle_key_event<B: ratatui::backend::Backend>(
         KeyCode::Char('0') => app.current_tab = CockpitTab::AI,
         KeyCode::Char('-') => app.current_tab = CockpitTab::Setting,
         KeyCode::Char('=') => app.current_tab = CockpitTab::Turbo,
+        // 'i' opens About, except where Server/Analytics already bind it.
+        KeyCode::Char('i')
+            if !matches!(app.current_tab, CockpitTab::Server | CockpitTab::Analytics) =>
+        {
+            app.current_tab = CockpitTab::About
+        }
 
         // ── Applications table (Dashboard panel 5) ───────────────────────────
         KeyCode::Enter
@@ -5837,6 +5847,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             CockpitTab::Turbo => {
                 app.turbo_selected_action = app.turbo_selected_action.saturating_sub(1);
             }
+            CockpitTab::About => {}
         },
         KeyCode::Down | KeyCode::Char('j') => match app.current_tab {
             CockpitTab::Dashboard => {
@@ -5922,6 +5933,7 @@ fn handle_key_event<B: ratatui::backend::Backend>(
             CockpitTab::Turbo => {
                 app.turbo_selected_action = (app.turbo_selected_action + 1).min(7);
             }
+            CockpitTab::About => {}
         },
 
         KeyCode::Left | KeyCode::Char('h') => match app.current_tab {
@@ -6828,6 +6840,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
             CockpitTab::Turbo => {
                 app.turbo_selected_action = app.turbo_selected_action.saturating_sub(1)
             }
+            CockpitTab::About => {}
         },
         MouseEventKind::ScrollDown => match app.current_tab {
             CockpitTab::Dashboard => match app.dashboard_focused_panel {
@@ -6885,6 +6898,7 @@ fn handle_mouse_event<B: ratatui::backend::Backend>(
             CockpitTab::Turbo => {
                 app.turbo_selected_action = (app.turbo_selected_action + 1).min(3);
             }
+            CockpitTab::About => {}
         },
         MouseEventKind::Down(MouseButton::Left) => {
             if let Some(action) = app.find_hitbox(mouse.column, mouse.row) {
@@ -7588,6 +7602,7 @@ fn draw_lock_or_app(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         CockpitTab::AI => draw_ai_tab(f, app, chunks[2]),
         CockpitTab::Setting => draw_setting_tab(f, app, chunks[2]),
         CockpitTab::Turbo => draw_turbo_tab(f, app, chunks[2]),
+        CockpitTab::About => about::draw_about_tab(f, app, chunks[2]),
     }
 
     draw_footer(f, app, chunks[3]);
@@ -7983,7 +7998,7 @@ fn draw_header(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     paint_brand_glyphs(f, Rect::new(area.x, area.y + 1, area.width.min(16), 1));
 }
 
-const BRAND_GREEN: Color = Color::Rgb(0x4A, 0xDE, 0x80);
+pub(crate) const BRAND_GREEN: Color = Color::Rgb(0x4A, 0xDE, 0x80);
 
 /// Recolour the `❯❯_` brandmark already drawn in `row`: chevrons green,
 /// cursor underscore white (HeaderBar renders its title in one style).
@@ -8336,7 +8351,12 @@ fn draw_dashboard_tab(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     if !show_full_top {
         let pet_badge = if let Some(ref d) = app.db {
             if let Ok(Some(pet)) = d.get_active_pet() {
-                format!("■ {} Lv.{} ({})", pet.name, (pet.xp / 100) + 1, pet.species)
+                format!(
+                    "■ {} Lv.{} ({})",
+                    pet.name,
+                    crate::pet::level_from_xp(pet.xp),
+                    pet.species
+                )
             } else {
                 "■ Ciko (Ayam)".to_string()
             }
@@ -10583,14 +10603,7 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     };
 
     let species = crate::pet::PetSpecies::parse(&species_str);
-    let stage = crate::pet::PetStage::from_xp(xp);
-    let level = match stage {
-        crate::pet::PetStage::Egg => 0,
-        crate::pet::PetStage::Hatch => 1,
-        crate::pet::PetStage::Juvenile => 2,
-        crate::pet::PetStage::Adult => 3,
-        crate::pet::PetStage::Mating => 4,
-    };
+    let level = crate::pet::level_from_xp(xp);
 
     let mood_short = match app.pet_mood {
         crate::pet::PetMood::Idle => "● Normal",
@@ -10665,7 +10678,7 @@ fn draw_pet_play_area(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         } else {
             None
         },
-        xp_level: level as usize,
+        xp_level: level,
         tick: app.pet_tick,
         speed: app.cfg.mascot.speed.clone(),
         sensitivity: app.cfg.mascot.sensitivity.clone(),
@@ -13340,8 +13353,8 @@ mod tests {
             let tab = CockpitTab::from_index(idx);
             assert_eq!(tab.to_index(), idx);
         }
-        assert_eq!(CockpitTab::titles().len(), 12);
-        assert_eq!(CockpitTab::COUNT, 12);
+        assert_eq!(CockpitTab::titles().len(), 13);
+        assert_eq!(CockpitTab::COUNT, 13);
     }
 
     #[test]

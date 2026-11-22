@@ -706,7 +706,27 @@ pub fn trigger_license_deactivate(app: &mut CockpitApp) {
 // ── Upgrade modal (header "Get Pro") ────────────────────────────────────────
 
 /// Where Pro is sold. Shown verbatim so it can be copied or auto-linked by the terminal.
-pub const BUY_URL: &str = "https://caterm.fathforce.com";
+pub const BUY_URL: &str = "https://cashell.fathforce.com";
+/// Founder All-Access (CATerm + CAMark + CAShell in one key, `CAAA99-…`).
+pub const FOUNDER_URL: &str = "https://fathforce.com/en/founder";
+/// Support / donations.
+pub const SPONSOR_URL: &str = "https://github.com/sponsors/cecepazhar";
+
+/// What stays free and what Pro adds. Only lists what the code enforces today
+/// (Telegram multi-user is gated in `telegram::run_allow`; sync needs a GCC
+/// Pro session). Shared by the Get Pro modal and the About tab.
+pub const FREE_BENEFITS: [&str; 4] = [
+    "Semua fitur lokal gratis selamanya, tanpa akun & tanpa batas buatan",
+    "Cockpit, Server, Container, Uptime, Analytics, Deploy, Backup",
+    "AI BYOK (pakai API key sendiri) + bot Telegram 1 pemilik",
+    "Data tetap di mesin Anda: tanpa telemetry, tanpa cloud wajib",
+];
+pub const PRO_BENEFITS: [&str; 4] = [
+    "Sync zero-knowledge antar perangkat (config, vault) lewat GCC",
+    "Bot Telegram multi-pengguna dengan peran viewer/operator/admin",
+    "Kelola & pindah perangkat lisensi di akun GCC",
+    "Mendukung pengembangan CAShell independen",
+];
 
 pub fn open_upgrade_modal(app: &mut CockpitApp) {
     app.show_upgrade_modal = true;
@@ -757,7 +777,7 @@ pub fn handle_upgrade_key(key: KeyEvent, app: &mut CockpitApp) {
 
 pub fn draw_upgrade_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
     let palette = cockpit_theme(&app.cfg.output.theme);
-    let popup = centered_rect(64, 45, area);
+    let popup = centered_rect(70, 80, area);
     f.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -831,12 +851,23 @@ pub fn draw_upgrade_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
                     .add_modifier(Modifier::UNDERLINED),
             ),
         ]),
+        Line::from(vec![
+            Span::styled("Semua produk CA (Founder): ", muted),
+            Span::styled(
+                FOUNDER_URL,
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::UNDERLINED),
+            ),
+        ]),
         Line::from(Span::styled(
             "Enter: aktifkan · Ctrl+B: buka halaman beli · Esc: tutup",
             muted,
         )),
         Line::from(Span::styled(spinner, Style::default().fg(Color::Yellow))),
     ];
+    let mut lines = lines;
+    lines.extend(benefit_lines(&palette));
     f.render_widget(Paragraph::new(lines), inner);
 
     let w = |s: &str| catui::text::width(s) as u16;
@@ -857,6 +888,36 @@ pub fn draw_upgrade_modal(f: &mut Frame, app: &mut CockpitApp, area: Rect) {
         Rect::new(x_close, y_btn, w(close), 1),
         HitboxAction::CloseUpgradeModal,
     );
+}
+
+/// "Free selamanya" / "Pro menambahkan" blocks, used by the Get Pro modal
+/// and the About tab.
+pub fn benefit_lines(palette: &catui::Theme) -> Vec<Line<'static>> {
+    let head = |t: &'static str, c: Color| {
+        Line::from(Span::styled(
+            t,
+            Style::default().fg(c).add_modifier(Modifier::BOLD),
+        ))
+    };
+    let item = |mark: &'static str, c: Color, t: &'static str| {
+        Line::from(vec![
+            Span::styled(mark, Style::default().fg(c)),
+            Span::styled(t, Style::default().fg(palette.text)),
+        ])
+    };
+    let mut v = vec![Line::from(""), head("FREE — selamanya", palette.success)];
+    v.extend(
+        FREE_BENEFITS
+            .iter()
+            .map(|t| item("  ✓ ", palette.success, t)),
+    );
+    v.push(Line::from(""));
+    v.push(head(
+        "PRO — tambahan untuk tim & multi-perangkat",
+        Color::Yellow,
+    ));
+    v.extend(PRO_BENEFITS.iter().map(|t| item("  ★ ", Color::Yellow, t)));
+    v
 }
 
 pub fn poll_license_async(app: &mut CockpitApp) {
@@ -2058,7 +2119,7 @@ mod tests {
                 .is_some_and(|n| n.0.contains(BUY_URL)));
             handle_upgrade_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &mut app);
             assert!(!app.show_upgrade_modal);
-            assert_eq!(BUY_URL, "https://caterm.fathforce.com");
+            assert_eq!(BUY_URL, "https://cashell.fathforce.com");
         });
     }
 
