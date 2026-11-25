@@ -250,8 +250,13 @@ fn scan_fds(pid: u32) -> Option<FdScan> {
 
 // ── TCP byte counters via NETLINK_SOCK_DIAG (same source as `ss -ti`) ───────
 
+#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
 const SOCK_DIAG_BY_FAMILY: u16 = 20;
 const INET_DIAG_INFO: u16 = 2;
+/// Netlink message types (linux/netlink.h). Spelled out so the parser, which
+/// is pure byte handling, also builds and tests on non-Linux hosts.
+const NLMSG_ERROR: u16 = 2;
+const NLMSG_DONE: u16 = 3;
 /// Offsets inside `struct tcp_info` (linux/tcp.h, stable since 4.1/4.2).
 const TCPI_BYTES_ACKED_OFF: usize = 120;
 const TCPI_BYTES_RECEIVED_OFF: usize = 128;
@@ -281,7 +286,7 @@ pub fn parse_sock_diag(buf: &[u8], out: &mut HashMap<u64, (u64, u64)>) -> bool {
             break;
         }
         let ty = read_u16_ne(buf, off + 4).unwrap_or(0);
-        if ty == libc::NLMSG_DONE as u16 || ty == libc::NLMSG_ERROR as u16 {
+        if ty == NLMSG_DONE || ty == NLMSG_ERROR {
             return true;
         }
         let body = off + NLMSG_HDR;
@@ -312,8 +317,15 @@ pub fn parse_sock_diag(buf: &[u8], out: &mut HashMap<u64, (u64, u64)>) -> bool {
     false
 }
 
+/// Per-socket TCP byte counters need NETLINK_SOCK_DIAG, which only Linux has.
+#[cfg(not(target_os = "linux"))]
+fn tcp_socket_bytes() -> Option<HashMap<u64, (u64, u64)>> {
+    None
+}
+
 /// Dump every TCP socket (v4 + v6) with its byte counters. Unprivileged:
 /// the kernel returns all sockets, the inode tells us who owns them.
+#[cfg(target_os = "linux")]
 fn tcp_socket_bytes() -> Option<HashMap<u64, (u64, u64)>> {
     // SAFETY: plain socket(2); the fd is closed below on every path.
     let fd = unsafe {
@@ -584,6 +596,7 @@ pub enum AppSignal {
     Resume,
 }
 
+#[cfg(unix)]
 impl AppSignal {
     fn raw(self) -> libc::c_int {
         match self {
@@ -608,14 +621,7 @@ pub fn signal_pids(pids: &[u32], sig: AppSignal) -> (usize, usize) {
             failed += 1;
             continue;
         }
-        let Ok(raw_pid) = libc::pid_t::try_from(pid) else {
-            failed += 1;
-            continue;
-        };
-        // SAFETY: kill(2) has no memory-safety preconditions; we pass a
-        // positive pid (never 0/-1 process-group broadcasts).
-        let rc = unsafe { libc::kill(raw_pid, sig.raw()) };
-        if rc == 0 {
+        if send_signal(pid, sig) {
             ok += 1;
         } else {
             failed += 1;
@@ -624,8 +630,46 @@ pub fn signal_pids(pids: &[u32], sig: AppSignal) -> (usize, usize) {
     (ok, failed)
 }
 
+#[cfg(unix)]
+fn send_signal(pid: u32, sig: AppSignal) -> bool {
+    let Ok(raw_pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    // SAFETY: kill(2) has no memory-safety preconditions; we pass a
+    // positive pid (never 0/-1 process-group broadcasts).
+    unsafe { libc::kill(raw_pid, sig.raw()) == 0 }
+}
+
+/// Windows has no signals: End/Kill map to `taskkill` (graceful / `/F`).
+/// Pause/Resume have no safe equivalent and are reported as failed.
+#[cfg(windows)]
+fn send_signal(pid: u32, sig: AppSignal) -> bool {
+    let pid = pid.to_string();
+    let mut cmd = std::process::Command::new("taskkill");
+    cmd.args(["/PID", &pid]);
+    match sig {
+        AppSignal::End => {}
+        AppSignal::Kill => {
+            cmd.arg("/F");
+        }
+        AppSignal::Pause | AppSignal::Resume => return false,
+    }
+    cmd.stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Lowering priority is only implemented for Linux (setpriority + errno).
+#[cfg(not(target_os = "linux"))]
+pub fn lower_priority(pids: &[u32]) -> (usize, usize) {
+    (0, pids.len())
+}
+
 /// Lower scheduling priority (`nice +10`, capped at 19). Unprivileged users
 /// can only lower priority, which is what this does.
+#[cfg(target_os = "linux")]
 pub fn lower_priority(pids: &[u32]) -> (usize, usize) {
     if !crate::host_guard::allowed() {
         return (0, pids.len());
@@ -729,7 +773,7 @@ mod tests {
         b[a + 4 + 128..a + 4 + 136].copy_from_slice(&9000u64.to_ne_bytes());
         // Trailing NLMSG_DONE.
         b[total..total + 4].copy_from_slice(&16u32.to_ne_bytes());
-        b[total + 4..total + 6].copy_from_slice(&(libc::NLMSG_DONE as u16).to_ne_bytes());
+        b[total + 4..total + 6].copy_from_slice(&NLMSG_DONE.to_ne_bytes());
         let mut out = HashMap::new();
         assert!(parse_sock_diag(&b, &mut out));
         assert_eq!(out.get(&777), Some(&(5000, 9000)));

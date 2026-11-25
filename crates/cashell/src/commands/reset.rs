@@ -236,8 +236,6 @@ fn deactivate_license() {
 /// Uses the `tar` binary via Command (not a new crate dependency — checked
 /// Cargo.lock: no `tar`/`flate2` available; system `tar` is std tooling).
 fn create_backup(out: &PathBuf) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
     // Collect paths that actually exist, relative to a stable parent so the
     // tar member names are meaningful.
     let existing: Vec<PathBuf> = paths::resettable_paths()
@@ -269,8 +267,14 @@ fn create_backup(out: &PathBuf) -> Result<()> {
     }
 
     // 0600: the archive contains secrets (config tokens, license key, vault).
-    fs::set_permissions(out, fs::Permissions::from_mode(0o600))
-        .map_err(|e| anyhow!("failed to set 0600 on {}: {e}", out.display()))?;
+    // On Windows the file inherits the user-profile ACL, which is already
+    // private to the current user.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(out, fs::Permissions::from_mode(0o600))
+            .map_err(|e| anyhow!("failed to set 0600 on {}: {e}", out.display()))?;
+    }
 
     Ok(())
 }

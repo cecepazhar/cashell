@@ -285,6 +285,7 @@ mod tests {
         assert!(
             p.to_str()
                 .unwrap()
+                .replace('\\', "/")
                 .contains(".local/share/cashell/license.json"),
             "unexpected path: {p:?}"
         );

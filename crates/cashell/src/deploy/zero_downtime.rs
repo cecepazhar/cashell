@@ -139,7 +139,11 @@ pub mod tests {
             loop {
                 if let Ok((mut socket, _)) = listener_a.accept().await {
                     tokio::spawn(async move {
-                        use tokio::io::AsyncWriteExt;
+                        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                        // Read the request first: closing a socket with unread data makes
+                        // Windows send RST, and the client sees "connection reset".
+                        let mut req = [0u8; 1024];
+                        let _ = socket.read(&mut req).await;
                         let resp = "HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nVersion 1";
                         let _ = socket.write_all(resp.as_bytes()).await;
                         let _ = socket.shutdown().await;
@@ -157,7 +161,11 @@ pub mod tests {
             loop {
                 if let Ok((mut socket, _)) = listener_b.accept().await {
                     tokio::spawn(async move {
-                        use tokio::io::AsyncWriteExt;
+                        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                        // Read the request first: closing a socket with unread data makes
+                        // Windows send RST, and the client sees "connection reset".
+                        let mut req = [0u8; 1024];
+                        let _ = socket.read(&mut req).await;
                         let resp = "HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nVersion 2";
                         let _ = socket.write_all(resp.as_bytes()).await;
                         let _ = socket.shutdown().await;

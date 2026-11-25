@@ -51,6 +51,9 @@ impl BollardDocker {
             }
         }
 
+        // Unix sockets (Docker / Podman). On Windows the fallback below uses
+        // bollard's default named pipe, i.e. Docker Desktop.
+        #[cfg(unix)]
         if std::path::Path::new("/var/run/docker.sock").exists() {
             let client = Docker::connect_with_unix(
                 "/var/run/docker.sock",
@@ -62,16 +65,21 @@ impl BollardDocker {
         }
 
         // Check rootless podman socket
-        let uid_str = std::env::var("UID").unwrap_or_else(|_| "1000".to_string());
-        let user_sock = format!("/run/user/{uid_str}/podman/podman.sock");
-        if std::path::Path::new(&user_sock).exists() {
-            let client = Docker::connect_with_unix(&user_sock, 120, bollard::API_DEFAULT_VERSION)
-                .map_err(|e| {
-                anyhow!("Failed to connect to podman socket at {user_sock}: {e}")
-            })?;
-            return Ok(Self { client });
+        #[cfg(unix)]
+        {
+            let uid_str = std::env::var("UID").unwrap_or_else(|_| "1000".to_string());
+            let user_sock = format!("/run/user/{uid_str}/podman/podman.sock");
+            if std::path::Path::new(&user_sock).exists() {
+                let client =
+                    Docker::connect_with_unix(&user_sock, 120, bollard::API_DEFAULT_VERSION)
+                        .map_err(|e| {
+                            anyhow!("Failed to connect to podman socket at {user_sock}: {e}")
+                        })?;
+                return Ok(Self { client });
+            }
         }
 
+        #[cfg(unix)]
         if std::path::Path::new("/run/podman/podman.sock").exists() {
             let client = Docker::connect_with_unix(
                 "/run/podman/podman.sock",
