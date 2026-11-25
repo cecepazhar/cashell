@@ -2084,23 +2084,8 @@ pub fn probe_storage_health() -> Vec<DiskHealthInfo> {
         }
     }
 
-    // If no devices were detected (e.g. strict container or virtual environment), provide a fallback NVMe entry
-    if disks.is_empty() {
-        disks.push(DiskHealthInfo {
-            device: "/dev/nvme0n1".to_string(),
-            model: "Standard NVMe SSD".to_string(),
-            health_status: "HEALTHY (99%)".to_string(),
-            temperature_c: 42.0,
-            read_bytes_tb: 1.25,
-            written_bytes_tb: 0.45,
-            power_on_hours: 1420,
-            power_cycles: 380,
-            unsafe_shutdowns: 4,
-            wear_level_pct: 1,
-            critical_warnings: 0,
-        });
-    }
-
+    // No readable drives (container, VM, missing smartctl, non-Linux): return an empty
+    // list. Callers render "not detected" — never report a health status we didn't read.
     disks
 }
 
@@ -2944,12 +2929,17 @@ mod tests {
 
     #[test]
     fn test_storage_health_probe_live() {
-        let disks = probe_storage_health();
-        assert!(!disks.is_empty(), "Should detect at least 1 storage disk");
-        let first = &disks[0];
-        assert!(!first.device.is_empty());
-        assert!(!first.model.is_empty());
-        assert!(!first.health_status.is_empty());
+        // CI runners, containers and non-Linux hosts may expose no readable drives;
+        // an empty list is the honest answer there. Whatever is reported must be real.
+        for d in probe_storage_health() {
+            assert!(!d.device.is_empty());
+            assert!(!d.model.is_empty());
+            assert!(!d.health_status.is_empty());
+            assert_ne!(
+                d.model, "Standard NVMe SSD",
+                "placeholder disk must not be reported"
+            );
+        }
     }
 
     #[test]

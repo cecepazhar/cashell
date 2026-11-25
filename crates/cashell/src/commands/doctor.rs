@@ -253,6 +253,12 @@ fn check_storage(mounts: &[String]) -> Vec<CheckResult> {
 
     // SMART / SSD Health checks
     let disks = crate::systat::probe_storage_health();
+    if disks.is_empty() {
+        results.push(CheckResult::warn(
+            "SSD SMART",
+            "not detected (no readable drives; install smartctl or run with disk permissions)",
+        ));
+    }
     for d in disks {
         if d.critical_warnings > 0 {
             results.push(CheckResult::fail(
