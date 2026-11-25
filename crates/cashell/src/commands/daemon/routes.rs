@@ -545,31 +545,29 @@ pub async fn collect_analytics_handler(
         .map(|v| v as i32);
     let duration_secs = payload.get("duration_secs").and_then(|v| v.as_i64());
 
-    let db = crate::db::Database::open();
-    let result = db.map(|d| {
-        d.record_analytics_event(
-            &website_id,
-            &session_id,
-            &url,
-            &referrer,
-            &title,
-            &browser,
-            &os,
-            &device,
-            &country,
-            &visitor_hash,
-            &event_type,
-            event_name.as_deref(),
-            event_data.as_deref(),
-            click_x,
-            click_y,
-            scroll_depth,
-            duration_secs,
-        )
+    // Queue for the batched writer thread; never touches SQLite on this task.
+    let result = crate::analytics_writer::submit(crate::db::AnalyticsEvent {
+        website_id,
+        session_id,
+        url,
+        referrer,
+        page_title: title,
+        browser,
+        os,
+        device,
+        country,
+        visitor_hash,
+        event_type,
+        event_name,
+        event_data,
+        click_x,
+        click_y,
+        scroll_depth,
+        duration_secs,
     });
 
     match result {
-        Ok(Ok(())) => (
+        Ok(()) => (
             StatusCode::OK,
             [
                 ("access-control-allow-origin", "*"),
@@ -579,7 +577,18 @@ pub async fn collect_analytics_handler(
             Json(serde_json::json!({"status": "ok"})),
         )
             .into_response(),
-        _ => (
+        Err(crate::analytics_writer::SubmitError::Busy) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [
+                ("access-control-allow-origin", "*"),
+                ("access-control-allow-methods", "POST, GET, OPTIONS"),
+                ("access-control-allow-headers", "*"),
+                ("retry-after", "5"),
+            ],
+            Json(serde_json::json!({"error": "collector_busy"})),
+        )
+            .into_response(),
+        Err(crate::analytics_writer::SubmitError::Unavailable) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             [
                 ("access-control-allow-origin", "*"),

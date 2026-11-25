@@ -1899,26 +1899,38 @@ impl CockpitApp {
         // 1. Local node
         results.push((local_node_label(), Some(0u128)));
 
-        // 2. Nodes in config
-        for (name, node) in &self.cfg.daemon.nodes {
-            let port = node.services.first().map(|s| s.port).unwrap_or(22);
-            let addr_str = format!("{}:{}", node.ip, port);
-            let probe = if node.active {
-                if let Ok(addr) = addr_str.parse::<SocketAddr>() {
-                    let start = Instant::now();
-                    match TcpStream::connect_timeout(&addr, Duration::from_millis(50)) {
-                        Ok(_) => Some(start.elapsed().as_millis()),
-                        Err(_) => None,
+        // 2. Nodes in config — probed in parallel so the UI waits for the
+        // slowest node once, not the sum of all of them. The timeout was
+        // 50 ms, which marked any server outside the LAN (typical WAN RTT
+        // 80–250 ms) as DOWN; 800 ms is still well under a perceptible stall.
+        use rayon::prelude::*;
+        const FLEET_PROBE_TIMEOUT: Duration = Duration::from_millis(800);
+        let probed: Vec<(String, Option<u128>)> = self
+            .cfg
+            .daemon
+            .nodes
+            .par_iter()
+            .map(|(name, node)| {
+                let port = node.services.first().map(|s| s.port).unwrap_or(22);
+                let addr_str = format!("{}:{}", node.ip, port);
+                let probe = if node.active {
+                    if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+                        let start = Instant::now();
+                        match TcpStream::connect_timeout(&addr, FLEET_PROBE_TIMEOUT) {
+                            Ok(_) => Some(start.elapsed().as_millis()),
+                            Err(_) => None,
+                        }
+                    } else {
+                        None
                     }
                 } else {
-                    None
-                }
-            } else {
-                // Skip inactive nodes during probing: they are dormant by design.
-                Some(0u128)
-            };
-            results.push((name.clone(), probe));
-        }
+                    // Skip inactive nodes during probing: they are dormant by design.
+                    Some(0u128)
+                };
+                (name.clone(), probe)
+            })
+            .collect();
+        results.extend(probed);
 
         // Probe user-configured daemon nodes
         results.sort_by(|a, b| a.0.cmp(&b.0));
@@ -2214,7 +2226,10 @@ impl CockpitApp {
 
     pub fn probe_all_ports(&mut self) {
         self.latest_snap.uptime_monitors = crate::systat::probe_uptime_monitors();
-        for app in &mut self.apps {
+        // Probe every app port in parallel: a sequential loop stalled the UI
+        // for 40 ms per closed port.
+        use rayon::prelude::*;
+        self.apps.par_iter_mut().for_each(|app| {
             if let Some(port) = app.port {
                 let target_ip =
                     if app.target.starts_with("http") || app.target.starts_with("coolify:") {
@@ -2245,7 +2260,7 @@ impl CockpitApp {
                     }
                 }
             }
-        }
+        });
         // Update header indicators
         self.is_9router_online = self
             .apps

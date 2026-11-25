@@ -225,6 +225,7 @@ impl Database {
         self.conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
+             PRAGMA busy_timeout = 5000;
              CREATE TABLE IF NOT EXISTS schema_migrations (
                  version INTEGER PRIMARY KEY,
                  applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -688,6 +689,17 @@ impl Database {
                  );
                  CREATE INDEX IF NOT EXISTS idx_ssh_bans_status ON ssh_bans(status, unban_at);
                  INSERT OR IGNORE INTO schema_migrations (version) VALUES (11);",
+            )?;
+        }
+
+        // v12: time-range indexes for analytics. Summary, "active now" and
+        // daily-traffic queries filter on (website_id, created_at); without
+        // these every dashboard refresh scanned the whole events table.
+        if !applied.contains(&12) {
+            self.conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_analytics_events_site_time ON analytics_events(website_id, created_at);
+                 CREATE INDEX IF NOT EXISTS idx_analytics_events_time ON analytics_events(created_at);
+                 INSERT OR IGNORE INTO schema_migrations (version) VALUES (12);",
             )?;
         }
 
@@ -2169,6 +2181,47 @@ impl Database {
         Ok(())
     }
 
+    /// Insert many analytics events in a single transaction with one prepared
+    /// statement. One fsync per batch instead of one per event, which is what
+    /// lets the collector keep up with real traffic.
+    pub fn record_analytics_events_batch(&self, events: &[AnalyticsEvent]) -> Result<()> {
+        if events.is_empty() {
+            return Ok(());
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO analytics_events
+                 (website_id, session_id, url, referrer, page_title, browser, os, device, country, visitor_hash,
+                  event_type, event_name, event_data, click_x, click_y, scroll_depth, duration_secs)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            )?;
+            for e in events {
+                stmt.execute(params![
+                    e.website_id,
+                    e.session_id,
+                    e.url,
+                    e.referrer,
+                    e.page_title,
+                    e.browser,
+                    e.os,
+                    e.device,
+                    e.country,
+                    e.visitor_hash,
+                    e.event_type,
+                    e.event_name,
+                    e.event_data,
+                    e.click_x,
+                    e.click_y,
+                    e.scroll_depth,
+                    e.duration_secs,
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Query scroll depth distribution: for each threshold, how many sessions reached it.
     pub fn get_scroll_depth_distribution(
         &self,
@@ -2251,12 +2304,20 @@ impl Database {
     ) -> Result<crate::systat::AnalyticsSummary> {
         let target = website_id.map(|id| id.to_string());
         let ref_val = target.as_deref();
+        // `(?1 IS NULL OR website_id = ?1)` stops SQLite from using the
+        // website_id/created_at indexes, so pick the filter up front instead.
+        // Both forms still bind ?1, keeping the params identical.
+        let w = if ref_val.is_some() {
+            "website_id = ?1"
+        } else {
+            "?1 IS NULL"
+        };
 
         // Total pageviews
         let pageviews = self
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1)",
+                &format!("SELECT COUNT(*) FROM analytics_events WHERE {w}"),
                 params![ref_val],
                 |row| row.get(0),
             )
@@ -2266,7 +2327,7 @@ impl Database {
         let unique_visitors = self
             .conn
             .query_row(
-                "SELECT COUNT(DISTINCT visitor_hash) FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1)",
+                &format!("SELECT COUNT(DISTINCT visitor_hash) FROM analytics_events WHERE {w}"),
                 params![ref_val],
                 |row| row.get(0),
             )
@@ -2276,7 +2337,7 @@ impl Database {
         let active_visitors = self
             .conn
             .query_row(
-                "SELECT COUNT(DISTINCT visitor_hash) FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) AND created_at >= datetime('now', '-5 minutes')",
+                &format!("SELECT COUNT(DISTINCT visitor_hash) FROM analytics_events WHERE {w} AND created_at >= datetime('now', '-5 minutes')"),
                 params![ref_val],
                 |row| row.get(0),
             )
@@ -2286,8 +2347,8 @@ impl Database {
         let bounce_rate = self
             .conn
             .query_row(
-                "SELECT COALESCE(SUM(CASE WHEN pv = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 0.0)
-                 FROM (SELECT session_id, COUNT(*) as pv FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) GROUP BY session_id)",
+                &format!("SELECT COALESCE(SUM(CASE WHEN pv = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 0.0)
+                 FROM (SELECT session_id, COUNT(*) as pv FROM analytics_events WHERE {w} GROUP BY session_id)"),
                 params![ref_val],
                 |row| row.get(0),
             )
@@ -2296,7 +2357,7 @@ impl Database {
         // Top 5 pages
         let mut top_pages: Vec<(String, u64)> = Vec::new();
         let mut stmt = self.conn.prepare(
-            "SELECT url, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) GROUP BY url ORDER BY c DESC LIMIT 5",
+            &format!("SELECT url, COUNT(*) as c FROM analytics_events WHERE {w} GROUP BY url ORDER BY c DESC LIMIT 5"),
         )?;
         let mut rows = stmt.query(params![ref_val])?;
         while let Some(row) = rows.next()? {
@@ -2306,7 +2367,7 @@ impl Database {
         // Top 5 referrers
         let mut top_referrers: Vec<(String, u64)> = Vec::new();
         let mut stmt = self.conn.prepare(
-            "SELECT COALESCE(referrer, 'Direct') as ref, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) AND referrer IS NOT NULL AND referrer != '' GROUP BY ref ORDER BY c DESC LIMIT 5",
+            &format!("SELECT COALESCE(referrer, 'Direct') as ref, COUNT(*) as c FROM analytics_events WHERE {w} AND referrer IS NOT NULL AND referrer != '' GROUP BY ref ORDER BY c DESC LIMIT 5"),
         )?;
         let mut rows = stmt.query(params![ref_val])?;
         while let Some(row) = rows.next()? {
@@ -2316,7 +2377,7 @@ impl Database {
         // Device breakdown
         let mut device_breakdown: Vec<crate::systat::AnalyticsBreakdown> = Vec::new();
         let mut stmt = self.conn.prepare(
-            "SELECT COALESCE(NULLIF(device, ''), 'Desktop') as dev, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) GROUP BY dev ORDER BY c DESC LIMIT 5",
+            &format!("SELECT COALESCE(NULLIF(device, ''), 'Desktop') as dev, COUNT(*) as c FROM analytics_events WHERE {w} GROUP BY dev ORDER BY c DESC LIMIT 5"),
         )?;
         let mut rows = stmt.query(params![ref_val])?;
         while let Some(row) = rows.next()? {
@@ -2333,7 +2394,7 @@ impl Database {
         // Browser breakdown
         let mut browser_breakdown: Vec<crate::systat::AnalyticsBreakdown> = Vec::new();
         let mut stmt = self.conn.prepare(
-            "SELECT COALESCE(NULLIF(browser, ''), 'Unknown') as b, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) GROUP BY b ORDER BY c DESC LIMIT 5",
+            &format!("SELECT COALESCE(NULLIF(browser, ''), 'Unknown') as b, COUNT(*) as c FROM analytics_events WHERE {w} GROUP BY b ORDER BY c DESC LIMIT 5"),
         )?;
         let mut rows = stmt.query(params![ref_val])?;
         while let Some(row) = rows.next()? {
@@ -2350,7 +2411,7 @@ impl Database {
         // OS breakdown
         let mut os_breakdown: Vec<crate::systat::AnalyticsBreakdown> = Vec::new();
         let mut stmt = self.conn.prepare(
-            "SELECT COALESCE(NULLIF(os, ''), 'Unknown') as o, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) GROUP BY o ORDER BY c DESC LIMIT 5",
+            &format!("SELECT COALESCE(NULLIF(os, ''), 'Unknown') as o, COUNT(*) as c FROM analytics_events WHERE {w} GROUP BY o ORDER BY c DESC LIMIT 5"),
         )?;
         let mut rows = stmt.query(params![ref_val])?;
         while let Some(row) = rows.next()? {
@@ -2367,7 +2428,7 @@ impl Database {
         // Country breakdown
         let mut country_breakdown: Vec<crate::systat::AnalyticsBreakdown> = Vec::new();
         let mut stmt = self.conn.prepare(
-            "SELECT COALESCE(NULLIF(country, ''), 'Unknown') as co, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) GROUP BY co ORDER BY c DESC LIMIT 5",
+            &format!("SELECT COALESCE(NULLIF(country, ''), 'Unknown') as co, COUNT(*) as c FROM analytics_events WHERE {w} GROUP BY co ORDER BY c DESC LIMIT 5"),
         )?;
         let mut rows = stmt.query(params![ref_val])?;
         while let Some(row) = rows.next()? {
@@ -2384,7 +2445,7 @@ impl Database {
         // Daily traffic history (last 7 days)
         let mut daily_traffic: Vec<(String, u64)> = Vec::new();
         let mut stmt = self.conn.prepare(
-            "SELECT date(created_at) as day, COUNT(*) as c FROM analytics_events WHERE (?1 IS NULL OR website_id = ?1) AND created_at >= date('now', '-7 day') GROUP BY day ORDER BY day ASC",
+            &format!("SELECT date(created_at) as day, COUNT(*) as c FROM analytics_events WHERE {w} AND created_at >= date('now', '-7 day') GROUP BY day ORDER BY day ASC"),
         )?;
         let mut rows = stmt.query(params![ref_val])?;
         while let Some(row) = rows.next()? {
@@ -2596,6 +2657,28 @@ impl Database {
 /// Return the default DB path.
 pub fn default_path() -> PathBuf {
     Database::default_path()
+}
+
+/// One row for `analytics_events`, used by the batched collector writer.
+#[derive(Debug, Clone, Default)]
+pub struct AnalyticsEvent {
+    pub website_id: String,
+    pub session_id: String,
+    pub url: String,
+    pub referrer: String,
+    pub page_title: String,
+    pub browser: String,
+    pub os: String,
+    pub device: String,
+    pub country: String,
+    pub visitor_hash: String,
+    pub event_type: String,
+    pub event_name: Option<String>,
+    pub event_data: Option<String>,
+    pub click_x: Option<f64>,
+    pub click_y: Option<f64>,
+    pub scroll_depth: Option<i32>,
+    pub duration_secs: Option<i64>,
 }
 
 /// Open the default database.
@@ -3306,12 +3389,12 @@ mod tests {
 
         // Verify migrations 1..=4 applied
         let applied = db.applied_migrations()?;
-        assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
 
         // Idempotent migration run: running migrations second time must succeed
         db.run_migrations()?;
         let applied2 = db.applied_migrations()?;
-        assert_eq!(applied2, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        assert_eq!(applied2, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
 
         // Test telegram state and allowlist (T-01, T-02)
         assert_eq!(db.get_telegram_offset()?, 0);

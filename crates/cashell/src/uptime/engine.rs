@@ -9,10 +9,20 @@ use colored::Colorize;
 use super::heartbeat::send_heartbeat_ping;
 use super::prober::probe_endpoint;
 use super::ssl::evaluate_ssl_alert_tier;
-use super::types::{IncidentStateMachine, StateTransition};
+use super::types::{IncidentStateMachine, MonitorConfig, StateTransition};
 use crate::config::Config;
 use crate::db::Database;
 use crate::notify::{send_alert, NotificationEvent};
+
+/// Upper bound on probes in flight at once, so a large monitor list cannot
+/// exhaust sockets on a small VPS.
+const MAX_CONCURRENT_PROBES: usize = 32;
+
+/// How often the scheduler wakes to check which monitors are due.
+const SCHEDULER_TICK_SECS: u64 = 5;
+
+/// Floor for a monitor's own `interval_secs`.
+const MIN_MONITOR_INTERVAL_SECS: u64 = 10;
 
 /// Uptime Engine background worker running state machines and heartbeat pings.
 pub struct UptimeEngine {
@@ -37,8 +47,30 @@ impl UptimeEngine {
             super::load_configured_monitors(&self.config, &db)
         };
 
-        for m in monitors {
-            let res = probe_endpoint(&m).await;
+        self.probe_and_process(monitors).await;
+    }
+
+    /// Probe the given monitors concurrently (bounded by
+    /// `MAX_CONCURRENT_PROBES`) and handle each result as soon as it lands, so
+    /// one slow or timing-out endpoint never delays alerts for the others.
+    async fn probe_and_process(&self, monitors: Vec<MonitorConfig>) {
+        use futures_util::stream::{self, StreamExt};
+
+        // Each probe runs as its own task: if it were only a future inside
+        // this stream it would stop being polled while we await an alert
+        // below, and its wall-clock timeout could fire on a healthy endpoint.
+        let mut results = stream::iter(monitors.into_iter().map(|m| {
+            tokio::spawn(async move {
+                let res = probe_endpoint(&m).await;
+                (m, res)
+            })
+        }))
+        .buffer_unordered(MAX_CONCURRENT_PROBES);
+
+        while let Some(joined) = results.next().await {
+            let Ok((m, res)) = joined else {
+                continue; // probe task panicked; next tick retries it
+            };
 
             // 1. Record probe check to SQLite (U-04)
             {
@@ -158,7 +190,10 @@ impl UptimeEngine {
 
     /// Background loop running probes, prune rollups, and outgoing heartbeat (U-01..U-07).
     pub async fn run_loop(self: Arc<Self>) {
-        let mut probe_interval = tokio::time::interval(Duration::from_secs(30));
+        let mut probe_interval = tokio::time::interval(Duration::from_secs(SCHEDULER_TICK_SECS));
+        probe_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // Next-due time per monitor, honouring each monitor's own `interval_secs`.
+        let mut next_due: HashMap<String, tokio::time::Instant> = HashMap::new();
         let mut rollup_interval = tokio::time::interval(Duration::from_secs(3600)); // hourly rollup
         let hb_url = self.config.uptime.heartbeat.url.trim().to_string();
         let hb_interval_mins = self.config.uptime.heartbeat.interval_mins.max(1);
@@ -169,7 +204,25 @@ impl UptimeEngine {
         loop {
             tokio::select! {
                 _ = probe_interval.tick() => {
-                    self.run_tick().await;
+                    let now = tokio::time::Instant::now();
+                    let monitors = {
+                        let db = self.db.lock().unwrap();
+                        super::load_configured_monitors(&self.config, &db)
+                    };
+                    // Forget monitors that were removed from config/DB.
+                    next_due.retain(|name, _| monitors.iter().any(|m| &m.name == name));
+
+                    let due: Vec<MonitorConfig> = monitors
+                        .into_iter()
+                        .filter(|m| next_due.get(&m.name).map_or(true, |t| *t <= now))
+                        .collect();
+                    for m in &due {
+                        let every = m.interval_secs.max(MIN_MONITOR_INTERVAL_SECS);
+                        next_due.insert(m.name.clone(), now + Duration::from_secs(every));
+                    }
+                    if !due.is_empty() {
+                        self.probe_and_process(due).await;
+                    }
                 }
                 _ = rollup_interval.tick() => {
                     let db = self.db.lock().unwrap();

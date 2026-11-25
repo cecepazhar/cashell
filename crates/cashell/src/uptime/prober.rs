@@ -17,14 +17,28 @@ pub async fn probe_endpoint(config: &MonitorConfig) -> ProbeResult {
     }
 }
 
+/// One HTTP client shared by every probe. Building a `reqwest::Client` loads
+/// the root certificate store, so doing it per probe was the dominant CPU cost
+/// of the uptime engine. Idle pooling is disabled so each probe still opens a
+/// fresh connection (DNS + TCP + TLS) and the measured latency stays honest.
+fn shared_probe_client() -> Result<&'static Client, String> {
+    static CLIENT: std::sync::OnceLock<Result<Client, String>> = std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            Client::builder()
+                .danger_accept_invalid_certs(false)
+                .pool_max_idle_per_host(0)
+                .build()
+                .map_err(|e| e.to_string())
+        })
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
 /// HTTP(S) prober verifying status code, latency, keyword assertion, and SSL validity (U-01, U-03).
 pub async fn probe_http(config: &MonitorConfig) -> ProbeResult {
     let timeout = Duration::from_millis(config.timeout_ms.max(500));
-    let client = match Client::builder()
-        .timeout(timeout)
-        .danger_accept_invalid_certs(false)
-        .build()
-    {
+    let client = match shared_probe_client() {
         Ok(c) => c,
         Err(e) => {
             return ProbeResult {
@@ -41,7 +55,7 @@ pub async fn probe_http(config: &MonitorConfig) -> ProbeResult {
     };
 
     let start = Instant::now();
-    let res = client.get(&config.target).send().await;
+    let res = client.get(&config.target).timeout(timeout).send().await;
     let latency_ms = start.elapsed().as_millis() as u64;
 
     match res {
