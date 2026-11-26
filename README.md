@@ -1,4 +1,4 @@
-# CAShell (`cas`) v2.1.0-rc3
+# CAShell (`cas`) v2.1.0
 
 > **Sovereign DevOps Cockpit & Cloud Shell**  
 > All-in-One CLI, TUI, dan 24/7 daemon mandiri untuk server engineering: btop-grade hardware telemetry, Caddy reverse proxy dengan SSL otomatis, UFW firewall + SSH auto-ban, zero-downtime container deploy, Uptime monitoring, privacy-first web analytics, dan AI BYOK.

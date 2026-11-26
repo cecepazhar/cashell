@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="${VERSION:-2.0.0}"
+VERSION="${VERSION:-2.1.0}"
 BIN_NAME="cashell"
 INSTALL_SERVICE=false
 SYSTEM_MODE=false
