@@ -13,15 +13,14 @@ pub fn run(_cmd: &VersionCommand) -> Result<()> {
     let name = env!("CARGO_PKG_NAME");
     let authors = env!("CARGO_PKG_AUTHORS");
     let repo = env!("CARGO_PKG_REPOSITORY");
-    let built_at = chrono::Utc::now()
-        .format("%Y-%m-%d %H:%M:%S UTC")
-        .to_string();
 
     output::kv("name", name);
     output::kv("version", version);
     output::kv("author", authors.trim_end_matches(':').trim());
     output::kv("repo", repo);
-    output::kv("built", &built_at);
+    output::kv("build", env!("CASHELL_BUILD_NUMBER"));
+    output::kv("commit", env!("CASHELL_GIT_COMMIT"));
+    output::kv("built", env!("CASHELL_BUILT_AT"));
     output::success("cashell ready");
     Ok(())
 }
